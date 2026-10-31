@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html, useGLTF } from "@react-three/drei";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -8,13 +8,13 @@ import * as THREE from "three";
 import { classifySnowGesture } from "./snow64Gestures";
 import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landing";
 import { startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip } from "./snow64Physics";
+import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
 // No Nintendo/N64 game assets are used. All mountain scenery, board and track are procedural.
 const WEB_MODEL = "/models/pidgeonkitty-snowboard-v2.glb";
 const MOBILE_MODEL = "/models/pidgeonkitty-snowboard-v2-mobile.glb";
-const END_Z = -1050;
 const SLOPE = 0.077;
 const LANES = [-7.4, -3.8, 0, 3.8, 7.4];
 const DEG = Math.PI / 180;
@@ -81,50 +81,13 @@ function groundY(x, z) {
   return SLOPE * z + rolled + bank * bank * 0.055;
 }
 
-function buildCourse() {
-  const random = rand(108064);
-  const trees = [], rocks = [], ramps = [], coins = [], banners = [];
-  // A seeded random slot within each four-ramp group gives three SUPER AIR
-  // kickers distributed across the course, not all clustered at the start.
-  const superSlots = Array.from({length:3},()=>Math.floor(random()*4));
-  for (let row = 0; row < 185; row++) {
-    const z = 8 - row * 6.1;
-    if (row % 2 === 0) {
-      for (const sign of [-1, 1]) {
-        const x = sign * (16.1 + random() * 18);
-        trees.push({ id: `tree-${row}-${sign}`, x, z: z + random() * 3, size: 1.8 + random() * 3.1 });
-      }
-    }
-    if (row > 4 && row % 9 === 0) {
-      const lane = Math.floor(random() * LANES.length);
-      coins.push({ id: `coin-${row}`, x: LANES[lane], z: z - 1.2 });
-    }
-    if (row > 10 && row % 15 === 0) {
-      // One unpredictable but guaranteed mega kicker in each four-ramp segment.
-      const rampIndex=Math.floor(row/15)-1;
-      const superAir = rampIndex % 4 === superSlots[Math.floor(rampIndex/4)];
-      const height = superAir ? 2.9 + random() * 1.35 : .95 + random() * .62;
-      const length = superAir ? 4.2 + random() * .6 : 3.0;
-      ramps.push({ id: `ramp-${row}`, x: LANES[1 + Math.floor(random() * 3)],
-        z, index: row, height, length, superAir });
-    }
-    if (row > 12 && row % 7 === 0 && row % 15 !== 0) {
-      const lane = Math.floor(random() * LANES.length);
-      rocks.push({ id: `rock-${row}`, x: LANES[lane], z: z + 0.9, size: 0.6 + random() * 0.55 });
-    }
-    if (row % 21 === 0) banners.push({ z, side: row % 42 === 0 ? 1 : -1 });
-  }
-  return { trees, rocks, ramps, coins, banners };
-}
-const COURSE = buildCourse();
-
-function Terrain() {
+function Terrain({index}) {
   const geometry = useMemo(() => {
     const verts = [], colors = [], indices = [];
-    const w = 34, stepsX = 34, stepsZ = 295;
+    const w = 34, stepsX = 34, stepsZ = 55;
     const c = new THREE.Color();
     for (let i = 0; i <= stepsZ; i++) {
-      const z = 32 - i * 4;
+      const z = 32 - index * SNOW_CHUNK_LENGTH - i * (SNOW_CHUNK_LENGTH / stepsZ);
       for (let j = 0; j <= stepsX; j++) {
         const x = -w + (j / stepsX) * w * 2;
         const y = groundY(x, z);
@@ -148,12 +111,12 @@ function Terrain() {
     g.setIndex(indices);
     g.computeVertexNormals();
     return g;
-  }, []);
+  }, [index]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   return <mesh geometry={geometry} receiveShadow={false}><meshLambertMaterial vertexColors side={THREE.DoubleSide} /></mesh>;
 }
 
-function Forest() {
+function Forest({trees}) {
   // Instancing keeps the forest to four draw calls, even on mobile.
   const trunks=useRef(),bottoms=useRef(),tops=useRef(),caps=useRef();
   useEffect(()=>{
@@ -162,7 +125,7 @@ function Forest() {
       [0,.55,0], [0,1.08,0], [0,1.70,0], [0,2.13,0],
     ];
     const obj=new THREE.Object3D();
-    COURSE.trees.forEach((tree,i)=>{
+    trees.forEach((tree,i)=>{
       matrices.forEach((inst,j)=>{
         obj.position.set(tree.x,groundY(tree.x,tree.z)+dims[j][1]*tree.size,tree.z);
         obj.scale.setScalar(tree.size);obj.rotation.set(0,(i*1.37)%6.28,0);obj.updateMatrix();
@@ -170,8 +133,8 @@ function Forest() {
       });
     });
     matrices.forEach(inst=>{inst.instanceMatrix.needsUpdate=true;inst.computeBoundingSphere();});
-  },[]);
-  const n=COURSE.trees.length;
+  },[trees]);
+  const n=trees.length;
   return <>
     <instancedMesh ref={trunks} args={[null,null,n]}><cylinderGeometry args={[.09,.15,1.1,5]}/><meshLambertMaterial color="#64506f"/></instancedMesh>
     <instancedMesh ref={bottoms} args={[null,null,n]}><coneGeometry args={[.69,1.85,6]}/><meshLambertMaterial color="#17646e" flatShading/></instancedMesh>
@@ -241,30 +204,31 @@ function CourseMarker({ z, side }) {
     </group>
   );
 }
-function FinishGate() {
-  return <group position={[0,groundY(0,END_Z),END_Z]}>
-    {[-11,11].map(x => <mesh key={x} position={[x,4,0]}><boxGeometry args={[.42,8,.42]} /><meshLambertMaterial color="#21465f" /></mesh>)}
-    <mesh position={[0,7.7,0]}><boxGeometry args={[22.5,1.3,.65]} /><meshLambertMaterial color="#f6b963" /></mesh>
-  </group>;
-}
-function Course({ collectedRef }) {
+const CourseChunk = memo(function CourseChunk({index, collectedRef}) {
+  const data = useMemo(() => getSnowChunk(index), [index]);
   return <>
-    <Terrain />
-    <Forest />
-    {COURSE.rocks.map(r=><Rock key={r.id} {...r} />)}
-    {COURSE.ramps.map(r=><Ramp key={r.id} {...r} />)}
-    {COURSE.coins.map(c=><Coin key={c.id} {...c} collectedRef={collectedRef} />)}
-    {COURSE.banners.map(c=><CourseMarker key={c.z} {...c} />)}
-    <FinishGate />
+    <Terrain index={index} />
+    <Forest trees={data.trees} />
+    {data.rocks.map(r=><Rock key={r.id} {...r} />)}
+    {data.ramps.map(r=><Ramp key={r.id} {...r} />)}
+    {data.coins.map(c=><Coin key={c.id} {...c} collectedRef={collectedRef} />)}
+    {data.banners.map(c=><CourseMarker key={c.id} {...c} />)}
   </>;
+});
+function Course({ collectedRef, distance }) {
+  const center = snowChunkIndex(distance);
+  const indexes = useMemo(() => Array.from({length:5},(_,i)=>center+i-1).filter(i=>i>=0),[center]);
+  return <>{indexes.map(index=><CourseChunk key={index} index={index} collectedRef={collectedRef} />)}</>;
 }
 
-function Mountains() {
+function Mountains({stateRef}) {
+  const group=useRef();
+  useFrame(()=>{if(group.current){const z=stateRef.current.z;group.current.position.set(0,SLOPE*z,z);}});
   const positions = useMemo(() => {
     const random = rand(1998);
-    return Array.from({length:25},(_,i)=>({x:(i-12)*17, z:-1070-random()*130, height:28+random()*60, width:16+random()*20}));
+    return Array.from({length:25},(_,i)=>({x:(i-12)*17, z:-210-random()*130, height:28+random()*60, width:16+random()*20}));
   },[]);
-  return <group>
+  return <group ref={group}>
     {positions.map((p,i)=><mesh key={i} position={[p.x,groundY(p.x,p.z)+p.height*.46,p.z]} rotation={[0,Math.PI/4,0]}><coneGeometry args={[p.width,p.height,4]} /><meshLambertMaterial color={i%3===0?"#8ba7bd":"#b1c5d7"} flatShading /></mesh>)}
   </group>;
 }
@@ -369,9 +333,10 @@ function initialState(cameraMode = 0) {
     x:0,z:0,air:0,worldY:0,vy:0,speed:15.8,velX:0,steer:0,t:0,launchSource:"none",launchSpeed:0,
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
     peakAir:0, flightTime:0, recovery:null,
-    combo:0, score:0, coins:0, hits:0, lastText:"", textUntil:0,
+    combo:0, score:SNOW_INITIAL_SCORE, peakScore:SNOW_INITIAL_SCORE, drainRate:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, airQueue:[], completedAirTricks:[], airYaw:0, airPitch:0,
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
+    armedTrick:null, // Gesture drawn shortly before takeoff, activated on the next jump/ramp.
     launchSuper:false,
     consumedRamps:new Set(),consumedRocks:new Set(),
   };
@@ -379,7 +344,7 @@ function initialState(cameraMode = 0) {
 function safeHud(s) {
   return {
     speed:Math.round(s.speed*3.6),
-    score:s.score, distance:Math.floor(-s.z), time:s.t,
+    score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.floor(-s.z), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
     recovery:recoveryStage(s.recovery),
@@ -394,7 +359,7 @@ function smoothstep(t) { const v=clamp(t,0,1);return v*v*(3-2*v); }
 function beginSnowRecovery(s, kind, reason, onSound) {
   if (s.recovery) return;
   const penalty = (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
-  s.score -= penalty;
+  s.score = Math.max(0,s.score - penalty);
   s.combo = 0;
   s.hits += 1;
   s.recovery = { kind, t: 0, duration: recoveryDuration(kind) };
@@ -404,6 +369,7 @@ function beginSnowRecovery(s, kind, reason, onSound) {
   s.vy = 0;
   s.air = 0;
   s.worldY = groundY(s.x, s.z);
+  s.armedTrick = null;
   s.launchSource = "none";
   resetAirTrickChain(s);
   s.impact = 0;
@@ -413,6 +379,16 @@ function beginSnowRecovery(s, kind, reason, onSound) {
   onSound("crash");
 }
 
+
+function activateArmedTrick(s) {
+  const armed = s.armedTrick;
+  s.armedTrick = null;
+  if (armed && s.inAir && s.t <= armed.until) {
+    enqueueAirTrick(s, armed.trick);
+    beginNextAirTrick(s);
+  }
+}
+
 function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef, cameraOrbitRef, onHud, onFinish, onSound }) {
   const {scene, animations}=useGLTF(mobile?MOBILE_MODEL:WEB_MODEL);
   const character=useMemo(()=>cloneSkinned(scene),[scene]);
@@ -420,11 +396,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const actions=useMemo(()=>Object.fromEntries(animations.map(a=>[a.name,mixer.clipAction(a)])),[animations,mixer]);
   const root=useRef(), stance=useRef(), board=useRef(), riderCarrier=useRef(), riderModel=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),phaseRef=useRef(phase);
+  const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
   useEffect(()=>{phaseRef.current=phase;},[phase]);
   useEffect(()=>{
     stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;
+    nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
     if (root.current) root.current.position.set(0,.1,0);
@@ -433,6 +411,14 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
 
   useFrame((_, rawDt)=>{
     const dt=Math.min(rawDt,0.043),s=stateRef.current;
+    const chunkIndex=snowChunkIndex(-s.z);
+    if (nearby.current.index!==chunkIndex) {
+      nearby.current={index:chunkIndex,chunks:[chunkIndex-1,chunkIndex,chunkIndex+1].filter(i=>i>=0).map(getSnowChunk)};
+      pruneSnowVisited(s.consumedRamps,chunkIndex);
+      pruneSnowVisited(s.consumedRocks,chunkIndex);
+      pruneSnowVisited(collectedRef.current,chunkIndex);
+    }
+    const localChunks=nearby.current.chunks;
     const playing=phaseRef.current==="playing";
     const left=keyRef.current.left?1:0,right=keyRef.current.right?1:0;
     const tuck=(keyRef.current.tuck || keyRef.current.touchTuck) && playing;
@@ -446,19 +432,20 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const boost=clamp(command.boost || 0,0,1);
         startSnowJump(s,groundY(s.x,s.z),{velocity:7.9+(tuck?.8:0)+4.0*boost,source:"ollie"});
         resetAirTrickChain(s);
-        s.lastText = boost>.6 ? "CHARGED OLLIE!" : "OLLIE!";
+        activateArmedTrick(s);
+        s.lastText = s.trick ? `${s.trick.name} TAKEOFF!` : boost>.6 ? "CHARGED OLLIE!" : "OLLIE!";
         s.textUntil = s.t + .9;
         onSound("jump");
       }
       if (command.type === "trick") {
         const found=TRICKS.find(q=>q.key===command.key);
         const trick=found ? {...found,spins:found.spins&&command.direction===-1?-found.spins:found.spins} : null;
-        if(trick && !s.inAir && s.jumpCooldown<=0){
-          // Drawing a trick on the ground still makes a small ollie, but only
-          // the tall ramps supply the height needed for multiple huge tricks.
-          startSnowJump(s,groundY(s.x,s.z),{velocity:8.8,source:"ollie"});
-          resetAirTrickChain(s);
-          onSound("jump");
+        if(trick && !s.inAir){
+          // Ground drawings never silently become an Ollie. Buffer one trick
+          // for 1.5 seconds so a swipe made just before a ramp starts on launch.
+          s.armedTrick={trick,until:s.t+1.5};
+          s.lastText=`${trick.name} READY • HIT THE RAMP OR TAP OLLIE`;
+          s.textUntil=s.t+1.25;
         }
         if(trick && s.inAir){
           // Never ignore spam: queue up to 12 tricks and consume them immediately
@@ -473,6 +460,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
 
     if (playing) {
       s.t += dt;
+      // Endless survival timer: drains every frame, even while chasing a lost board.
+      s.drainRate=snowDrainPerSecond(Math.max(0,-s.z));
+      s.score=Math.max(0,s.score-s.drainRate*dt);
       s.jumpCooldown = Math.max(0, s.jumpCooldown - dt);
       s.impact = Math.max(0, s.impact - dt);
       if (s.recovery) {
@@ -496,12 +486,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const previousZ=s.z;
         s.z -= s.speed * dt;
         if (!s.inAir) {
-          for(const ramp of COURSE.ramps){
+          for(const chunk of localChunks) for(const ramp of chunk.ramps){
             if(s.consumedRamps.has(ramp.id)) continue;
             if(crossedRampLip(ramp,previousZ,s.z,s.x) && s.jumpCooldown<=0){
               const verticalSpeed=rampTakeoffSpeed(s.speed,ramp);
               startSnowJump(s,groundY(s.x,s.z),{velocity:verticalSpeed,source:"ramp",lift:ramp.height});
               resetAirTrickChain(s);
+              activateArmedTrick(s);
               s.launchSuper=ramp.superAir;
               s.consumedRamps.add(ramp.id);
               s.lastText=ramp.superAir?"✦ SUPER AIR! CHAIN THOSE TRICKS! ✦":s.speed>=28?"RAMP BIG AIR!":"RAMP TAKEOFF!";
@@ -541,7 +532,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           }
         }
         if (!s.inAir && !s.recovery) {
-          for (const rock of COURSE.rocks) {
+          for (const chunk of localChunks) for (const rock of chunk.rocks) {
             if (s.consumedRocks.has(rock.id)) continue;
             if (Math.abs(s.z - rock.z) < 1.1 && Math.abs(s.x - rock.x) < rock.size + .5) {
               s.consumedRocks.add(rock.id);
@@ -551,7 +542,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           }
         }
         if (!s.recovery) {
-          for (const coin of COURSE.coins) {
+          for (const chunk of localChunks) for (const coin of chunk.coins) {
             if (collectedRef.current.has(coin.id)) continue;
             if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
               collectedRef.current.add(coin.id); s.coins++; s.score += 250; onSound("pickup");
@@ -559,9 +550,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             }
           }
         }
-        if (s.z <= END_Z) {
-          phaseRef.current = "finished"; onSound("finish"); onFinish(safeHud(s));
-        }
+      }
+      s.peakScore=Math.max(s.peakScore,s.score);
+      if(s.score<=0){
+        s.score=0;
+        phaseRef.current="finished";
+        onSound("finish");
+        onFinish(safeHud(s));
       }
     }
 
@@ -569,7 +564,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const desired = recoveryMode === "falling" ? "SnowboardWipeout" :
       recoveryMode === "chasing" ? "Run" :
       recoveryMode === "remounting" ? "SnowboardRemount" :
-      s.inAir ? (s.trick?.pose || "SnowboardOllie") :
+      s.inAir ? (s.trick?.pose || (s.flightTime < .3 ? "SnowboardOllie" : "SnowboardCruise")) :
       s.impact > 0 ? "SnowboardLanding" : tuck ? "SnowboardTuck" :
       s.steer < -.16 ? "SnowboardCarveLeft" : s.steer > .16 ? "SnowboardCarveRight" :
       playing ? "SnowboardCruise" : "SnowboardIdle";
@@ -598,7 +593,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const cy = groundY(s.x, s.z);
     let rampRideLift = 0;
     if(!s.inAir && !s.recovery){
-      for(const ramp of COURSE.ramps){
+      for(const chunk of localChunks) for(const ramp of chunk.ramps){
         const half=ramp.length*.5;
         if(!s.consumedRamps.has(ramp.id) && Math.abs(s.x-ramp.x)<1.85
           && s.z <= ramp.z + half && s.z > ramp.z - half){
@@ -699,15 +694,15 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
 function Loading() {
   return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
 }
-function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef}){
+function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
   return <>
     <color attach="background" args={["#bfd9e6"]}/>
     <fog attach="fog" args={["#c1dce9",30,138]}/>
     <ambientLight intensity={1.7}/>
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
-    <Course collectedRef={collectedRef}/>
-    <Mountains/>
+    <Course collectedRef={collectedRef} distance={distance}/>
+    <Mountains stateRef={stateRef}/>
     <Suspense fallback={<Loading/>}>
       <Rider mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
     </Suspense>
@@ -796,17 +791,33 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
     e.preventDefault();
     drawing.current = null;
     if (!cancelled) {
-      const gesture = classifySnowGesture(d.points);
-      if (gesture) {
-        // A drawn trick also launches a jump when the rider is on the snow.
-        act({type:"trick",key:gesture.key,direction:gesture.direction});
-      } else {
-        const elapsed = performance.now() - d.time;
+      const elapsed = performance.now() - d.time;
+      const span = Math.hypot(
+        d.points[d.points.length - 1].x - d.points[0].x,
+        d.points[d.points.length - 1].y - d.points[0].y
+      );
+      const travelled = d.points.reduce((sum,p,i) => i ? sum + Math.hypot(p.x-d.points[i-1].x,p.y-d.points[i-1].y) : 0,0);
+      const tap = travelled < 25 && span < 18;
+      if (tap) {
+        // Tap is Ollie; while airborne a tap cannot restart the jump.
         act({type:"jump",boost:clamp((elapsed-120)/750,0,1)});
+      } else {
+        const gesture = classifySnowGesture(d.points);
+        if (gesture) {
+          // Draw in midair to start/queue tricks. On the ground, pre-arm a trick
+          // for the next ramp instead of auto-ollieing and missing that ramp.
+          act({type:"trick",key:gesture.key,direction:gesture.direction});
+        } else if (strokePath.current) {
+          // Reject unclear strokes rather than mistakenly turning them into Ollies.
+          strokePath.current.setAttribute("stroke", "#ff829e");
+        }
       }
     }
     clearTimeout(strokeTimeout.current);
-    strokeTimeout.current = setTimeout(() => strokePath.current?.setAttribute("d", ""), 350);
+    strokeTimeout.current = setTimeout(() => {
+      strokePath.current?.setAttribute("d", "");
+      strokePath.current?.setAttribute("stroke", "#ffe284");
+    }, 380);
   }
 
   const zone = {position:"absolute",top:192,bottom:0,zIndex:4,touchAction:"none",
@@ -906,7 +917,7 @@ export default function SnowboardGame(){
   const [retro,setRetro]=useState(false);
   const soundRef=useRef(true);
   const [best,setBest]=useState(0);
-  const [hud,setHud]=useState({speed:57,score:0,distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
+  const [hud,setHud]=useState({speed:57,score:SNOW_INITIAL_SCORE,peakScore:SNOW_INITIAL_SCORE,drainRate:snowDrainPerSecond(0),distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
   const [touchTuckFx,setTouchTuckFx]=useState(false);
   const sound=useCallback(kind=>{if(soundRef.current)synthSfx(kind);},[]);
   const input=useRef({left:false,right:false,tuck:false,steerAnalog:0,touchTuck:false});
@@ -931,7 +942,7 @@ export default function SnowboardGame(){
   },[sound,mobile]);
   const onFinish=useCallback(h=>{
     setHud(h);setPhase("finished");
-    setBest(b=>{const v=Math.max(b,h.score);try{localStorage.setItem("pidgeonkitty-snow-64-best",String(v));}catch{}return v;});
+    setBest(b=>{const v=Math.max(b,h.peakScore);try{localStorage.setItem("pidgeonkitty-snow-64-best",String(v));}catch{}return v;});
   },[]);
   const pause=useCallback(()=>setPhase(p=>p==="playing"?"paused":p==="paused"?"playing":p),[]);
   const act=useCallback((command)=>{queue.current.push(command);},[]);
@@ -971,7 +982,7 @@ export default function SnowboardGame(){
     window.addEventListener("keydown",down);window.addEventListener("keyup",up);window.addEventListener("blur",blur);
     return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",blur);};
   },[act,start,pause]);
-  const currentBest=Math.max(best,hud.score);
+  const currentBest=Math.max(best,hud.peakScore);
   return <main onContextMenu={e=>{if(mobile)e.preventDefault();}} style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif",touchAction:mobile?"none":"auto",overscrollBehavior:"none",userSelect:mobile?"none":"auto",WebkitUserSelect:mobile?"none":"auto"}}>
     <style>{`
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
@@ -986,7 +997,7 @@ export default function SnowboardGame(){
     `}</style>
     <div style={{position:"absolute",inset:0,zIndex:0}}>
       {mobile!==null && <Canvas key={retro ? "retro" : "hd"} dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.25:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
-        <Scene mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} onHud={setHud} onFinish={onFinish} onSound={sound}/>
+        <Scene mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>
     <SpeedRush active={phase==="playing" && (mobile?touchTuckFx:hud.pose==="SnowboardTuck")} speed={hud.speed}/>
@@ -1009,16 +1020,16 @@ export default function SnowboardGame(){
       {hud.combo>1&&<div style={{fontWeight:900,letterSpacing:".15em",color:"#f8ffff",textShadow:"2px 2px #285467"}}>COMBO ×{hud.combo}</div>}
     </div>}
     <div style={{position:"absolute",right:mobile?10:20,top:mobile?100:121,zIndex:3,pointerEvents:"none",textAlign:"right"}}>
-      <div className="snow64-label" style={{color:"#22546c",textShadow:"1px 1px #e6f7ff"}}>COURSE PROGRESS</div>
-      <div style={{width:mobile?90:155,height:10,border:"2px solid #23516a",background:"#d6f4ff99",borderRadius:9,overflow:"hidden"}}><div style={{height:"100%",width:`${clamp(hud.distance/1050*100,0,100)}%`,background:"#e995ae"}} /></div>
-      <div style={{fontSize:11,color:"#1d506b",fontWeight:900}}>{hud.distance} / 1050 m</div>
+      <div className="snow64-label" style={{color:"#22546c",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
+      <div style={{fontSize:mobile?15:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
+      <div style={{fontSize:mobile?10:12,color:hud.score<600?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
     </div>
     {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onPointerDown={()=>{phase==="paused"?setPhase("playing"):start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
       <div style={{maxWidth:560,width:"min(100%,560px)",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(20px,5vw,39px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
         <h1 style={{fontSize:"clamp(34px,7vw,70px)",fontStyle:"italic",fontWeight:1000,color:"#ffedb6",textShadow:"4px 5px #28586e",margin:"14px 0 8px",lineHeight:.94}}>PIDGEON KITTY<br/><span style={{color:"#f6a0bc"}}>SNOW 64</span></h1>
-        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 20px"}}>{phase==="ready"?"Carve through alpine powder. Launch from ramps. Pull massive spins and wild grabs. Big-air tricks only count if you really earn the height.":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`RUN COMPLETE! ${hud.score.toLocaleString()} points · ${hud.coins} tokens · ${hud.hits} wipeouts`}</p>
-        {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST: {currentBest.toLocaleString()} PTS</div>}
+        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 20px"}}>{phase==="ready"?"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`SCORE DEPLETED! Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
+        {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST PEAK: {currentBest.toLocaleString()} PTS</div>}
         {phase==="ready" && <button type="button" aria-pressed={retro}
           onPointerDown={e=>e.stopPropagation()}
           onClick={e=>{e.stopPropagation();setRetro(v=>!v);}}
