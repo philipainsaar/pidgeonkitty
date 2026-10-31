@@ -12,6 +12,7 @@ import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } fr
 import { recordSnowPoints, maybeSpawnSnowMushroom, mushroomCollision, activateSnowMushroom } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
+import { createCrashBoard, stepCrashBoard, riderRecoveryGroundLift } from "./snow64CrashPhysics";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
 // No Nintendo/N64 game assets are used. All mountain scenery, board and track are procedural.
@@ -33,7 +34,7 @@ const lerp = THREE.MathUtils.lerp;
 const TRICKS = [
   { key: "1", name: "180", points: 160, duration: 0.42, minHeight: 1.15, spins: 180, pose: "SnowboardIndy" },
   { key: "2", name: "360", points: 360, duration: 0.57, minHeight: 1.85, spins: 360, pose: "SnowboardIndy" },
-  { key: "3", name: "720", points: 800, duration: 0.86, minHeight: 3.2, minLaunchSpeed: 28, requiresRamp: true, spins: 720, pose: "SnowboardIndy" },
+  { key: "3", name: "720", points: 800, duration: 0.86, minHeight: 3.2, requiresRamp: true, spins: 720, pose: "SnowboardIndy" },
   { key: "4", name: "1080", points: 1600, duration: 1.22, minHeight: 5.0, minLaunchSpeed: 34, requiresRamp: true, spins: 1080, pose: "SnowboardIndy" },
   { key: "5", name: "METHOD", points: 450, duration: 0.65, minHeight: 1.85, roll: -0.58, pitch: -0.24, pose: "SnowboardMethod" },
   { key: "6", name: "INDY GRAB", points: 400, duration: 0.55, minHeight: 1.52, roll: 0.25, pitch: 0.16, pose: "SnowboardIndy" },
@@ -517,7 +518,9 @@ function beginSnowRecovery(s, kind, reason, onSound) {
   s.score = Math.max(0,s.score - penalty);
   s.combo = 0;
   s.hits += 1;
-  s.recovery = { kind, t: 0, duration: recoveryDuration(kind) };
+  // Snapshot momentum BEFORE slowing the rider: the board becomes a separate
+  // flying object for the whole wipeout/remount sequence.
+  s.recovery = { kind, t: 0, duration: recoveryDuration(kind), board: createCrashBoard(s,kind) };
   s.powerAutoJumpDelay=2.0;
   s.lastText = `${reason}  −${penalty} PTS`;
   s.textUntil = s.t + 1.85;
@@ -607,7 +610,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const character=useMemo(()=>cloneSkinned(scene),[scene]);
   const mixer=useMemo(()=>new THREE.AnimationMixer(character),[character]);
   const actions=useMemo(()=>Object.fromEntries(animations.map(a=>[a.name,mixer.clipAction(a)])),[animations,mixer]);
-  const root=useRef(), stance=useRef(), board=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
+  const riderBones=useMemo(()=>{
+    const bones=[];
+    character.traverse(o=>{if(o.isBone)bones.push(o);});
+    return bones;
+  },[character]);
+  const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
+  const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),phaseRef=useRef(phase);
   const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
@@ -619,6 +628,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
     if (root.current) root.current.position.set(0,.1,0);
+    if (crashBoard.current) crashBoard.current.visible=false;
   },[runKey,stateRef,collectedRef,queueRef,camera]);
   useEffect(()=>()=>mixer.stopAllAction(),[mixer]);
 
@@ -695,9 +705,16 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       if (s.recovery) {
         // The board slides just ahead while the rider falls, runs after it and remounts.
         s.recovery.t += dt;
+        // A single independent board rigid body bounces on terrain and ramp
+        // decks. Only a few substeps run during a crash, even on slow phones.
+        if (s.recovery.board) {
+          stepCrashBoard(s.recovery.board,dt,(x,z)=>snowSurfaceAt(x,z,localChunks,groundY).height);
+        }
         s.speed = lerp(s.speed, 1.35, Math.min(1, dt * 2.2));
         s.z -= s.speed * dt;
         s.velX = 0;
+        // Keep recovery ground contact current as the snow slope descends.
+        s.worldY = snowSurfaceAt(s.x,s.z,localChunks,groundY).height;
         if (s.recovery.t >= s.recovery.duration) {
           s.recovery = null;
           s.speed = 12;
@@ -945,7 +962,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const frontFloor=snowSurfaceAt(s.x,s.z-1.08,localChunks,groundY).height;
     const backFloor=snowSurfaceAt(s.x,s.z+1.08,localChunks,groundY).height;
     const boardFloor=Math.max(deck.height,frontFloor-.12,backFloor-.12);
-    const visualY=s.inAir ? s.worldY : s.recovery ? cy : Math.max(s.worldY,boardFloor);
+    const visualY=s.inAir ? s.worldY : s.recovery ? boardFloor : Math.max(s.worldY,boardFloor);
     if (hoverRing.current) {
       hoverRing.current.visible = s.frostHover && s.powerTime > 0;
       if (hoverRing.current.visible) {
@@ -957,6 +974,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     }
     if (root.current && stance.current && board.current && riderCarrier.current && riderModel.current) {
       root.current.position.set(s.x, visualY + .14, s.z);
+      // During a wipeout the normal board disappears; a second, physically
+      // independent copy renders in world space until the rider remounts.
+      board.current.visible = !s.recovery;
       const trick = s.trick;
       const progress = trick ? smoothstep(trick.t / trick.duration) : 0;
       const grabEnvelope = trick ? Math.sin(Math.PI * progress) : 0;
@@ -998,11 +1018,66 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const remountBlend = recoveryMode === "remounting"
           ? smoothstep((rec.t - chaseEnd) / .58) : 0;
         riderModel.current.position.y = lerp(.06, RIDER_BINDING_HEIGHT, remountBlend);
+        // Capsule-like pose/ground collision for the skinned rider. A sideways
+        // fall rotates its broad head/body below the feet; simply putting the
+        // model root at snow level was causing it to sink underground.
+        const riderX=s.x+riderCarrier.current.position.x;
+        const riderZ=s.z+riderCarrier.current.position.z;
+        const colliderFloor=Math.max(
+          snowSurfaceAt(riderX,riderZ,localChunks,groundY).height,
+          snowSurfaceAt(riderX-.34,riderZ,localChunks,groundY).height,
+          snowSurfaceAt(riderX+.34,riderZ,localChunks,groundY).height,
+          snowSurfaceAt(riderX,riderZ-.48,localChunks,groundY).height,
+          snowSurfaceAt(riderX,riderZ+.48,localChunks,groundY).height,
+        );
+        const lift=riderRecoveryGroundLift({
+          rootY:root.current.position.y,
+          carrierY:riderCarrier.current.position.y,
+          modelY:riderModel.current.position.y,
+          roll:riderCarrier.current.rotation.z,
+          yaw:riderModel.current.rotation.y,
+          floor:colliderFloor,
+        });
+        riderCarrier.current.position.y += lift;
+        // Bone-level contact is inexpensive (16 bones, crash frames only).
+        // It also catches animated paws/head parts that leave the rigid
+        // proxy's envelope during the original wipeout clip.
+        root.current.updateMatrixWorld(true);
+        let skeletonLift=0;
+        for(const bone of riderBones){
+          bone.getWorldPosition(boneWorld);
+          const boneFloor=snowSurfaceAt(boneWorld.x,boneWorld.z,localChunks,groundY).height;
+          skeletonLift=Math.max(skeletonLift,boneFloor+.085-boneWorld.y);
+        }
+        riderCarrier.current.position.y += Math.max(0,skeletonLift);
       } else {
         riderCarrier.current.position.set(0, 0, 0);
         riderCarrier.current.rotation.set(0, 0, 0);
         riderModel.current.rotation.y = Math.PI / 2;
         riderModel.current.position.y = RIDER_BINDING_HEIGHT;
+      }
+    }
+    if (crashBoard.current) {
+      const rec=s.recovery;
+      const loose=rec?.board;
+      crashBoard.current.visible=!!loose;
+      if (loose) {
+        // Chase the real settled board, then gently return it to the bindings
+        // during remount. No simulated body is left behind after recovery.
+        const fallEnd=rec.kind==="wipeout"?.95:.72;
+        const chaseEnd=fallEnd+(rec.kind==="wipeout"?1.62:1.25);
+        const remount=smoothstep((rec.t-chaseEnd)/Math.max(.3,rec.duration-chaseEnd));
+        const atX=lerp(loose.x,s.x,remount);
+        const atZ=lerp(loose.z,s.z,remount);
+        const landingY=Math.max(
+          snowSurfaceAt(atX,atZ,localChunks,groundY).height+.12,
+          snowSurfaceAt(atX,atZ-.95,localChunks,groundY).height+.06,
+          snowSurfaceAt(atX,atZ+.95,localChunks,groundY).height+.06,
+        );
+        crashBoard.current.position.set(atX,Math.max(landingY,lerp(loose.y,landingY,remount)),atZ);
+        crashBoard.current.rotation.set(
+          lerp(loose.pitch,0,remount),lerp(loose.yaw,0,remount),lerp(loose.roll,0,remount),"YXZ"
+        );
       }
     }
     // A draggable orbit stays anchored on the moving rider. Dragging never
@@ -1040,7 +1115,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     frame.current+=dt;
     if(frame.current>.12){frame.current=0;onHud(safeHud(s));}
   });
-  return <group ref={root}>
+  return <>
+  <group ref={crashBoard} visible={false}><Snowboard /></group>
+  <group ref={root}>
     <mesh ref={hoverRing} visible={false} rotation={[-Math.PI/2,0,0]}>
       <ringGeometry args={[.62,1.1,32]}/>
       <meshBasicMaterial color="#95ffed" transparent opacity={.58} depthWrite={false} side={THREE.DoubleSide}/>
@@ -1053,7 +1130,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         </group>
       </group>
     </group>
-  </group>;
+  </group>
+  </>;
 }
 
 function Loading() {
