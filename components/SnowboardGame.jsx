@@ -22,6 +22,10 @@ const LANES = [-7.4, -3.8, 0, 3.8, 7.4];
 const DEG = Math.PI / 180;
 const TOKEN_POINTS = 360;
 const RIDER_BINDING_HEIGHT = 0.33; // Keep feet just above the raised board bindings.
+const FROST_HOVER_HEIGHT = 1.28; // Snowboard floats above actual snow/ramp surfaces.
+const FROST_HOVER_BOB = 0.12;
+// The original mushroom boost lasts 9 seconds (snow64Powerup.js).
+const FROST_AUTO_TRICKS = ["6", "2", "5", "9", "7", "0", "3", "f", "8", "4"];
 const clamp = THREE.MathUtils.clamp;
 const lerp = THREE.MathUtils.lerp;
 
@@ -484,15 +488,16 @@ function initialState(cameraMode = 0) {
     launchSuper:false,
     mushroom:null, mushroomTime:0, mushroomCooldownTime:-200, mushroomCooldownDistance:-1000,
     mushroomCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
+    frostHover:false, frostAutoIndex:0, frostPaidTricks:0,
     scoreGainEvents:[],
     rockExplosions:[], rockShattered:0,
-    consumedRamps:new Set(),consumedRocks:new Set(),
+    consumedRamps:new Set(),consumedRocks:new Set(),hitRocks:new Set(),
   };
 }
 function safeHud(s) {
   return {
     speed:Math.round(s.speed*3.6),
-    score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.floor(-s.z), time:s.t,
+    score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.max(0,Math.floor(-s.z)), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
     powerRemaining:s.powerTime, mushroomReady:!!s.mushroom, rockShattered:s.rockShattered,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
@@ -506,7 +511,8 @@ function safeHud(s) {
 function smoothstep(t) { const v=clamp(t,0,1);return v*v*(3-2*v); }
 
 function beginSnowRecovery(s, kind, reason, onSound) {
-  if (s.recovery) return;
+  // Total invulnerability lasts only for the actual Frost Shroom boost.
+  if (s.recovery || s.powerTime > 0 || s.frostHover) return;
   const penalty = (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
   s.score = Math.max(0,s.score - penalty);
   s.combo = 0;
@@ -530,6 +536,63 @@ function beginSnowRecovery(s, kind, reason, onSound) {
 }
 
 
+/** Frost hover is intentionally NOT a ballistic jump: no unsafe landing checks.
+ * We still flag inAir so the embedded grab/spin/flip clips play continuously.
+ */
+function beginFrostHover(s, supportHeight) {
+  if (s.frostHover) return;
+  s.frostHover = true;
+  s.recovery = null;
+  s.inAir = true;
+  s.worldY = Math.max(s.worldY, supportHeight + FROST_HOVER_HEIGHT);
+  s.air = Math.max(FROST_HOVER_HEIGHT, s.worldY - supportHeight);
+  s.peakAir = s.air;
+  s.vy = 0;
+  s.flightTime = 0;
+  s.launchSource = "power";
+  s.launchSpeed = Math.max(s.speed, 55);
+  s.launchSuper = true;
+  s.jumpCooldown = 0;
+  s.impact = 0;
+  s.armedTrick = null;
+  s.frostAutoIndex = 0;
+  s.frostPaidTricks = 0;
+  resetAirTrickChain(s);
+}
+
+function finishFrostHover(s, supportHeight) {
+  if (!s.frostHover) return;
+  s.frostHover = false;
+  s.inAir = false;
+  s.worldY = supportHeight;
+  s.air = 0;
+  s.vy = 0;
+  s.flightTime = 0;
+  s.launchSource = "none";
+  s.launchSuper = false;
+  s.fakie = false;
+  s.jumpCooldown = .48; // Prevent a landing-frame ramp hit.
+  s.impact = .3;
+  s.frostPaidTricks = 0;
+  resetAirTrickChain(s);
+  s.lastText = "FROST MAGIC FADED • BACK ON SNOW";
+  s.textUntil = s.t + 1.1;
+}
+
+/** Pure horizontal swept test for magical impacts. Ignoring jump height ensures
+ * obstacles physically along the power-up path explode instead of being missed.
+ * It MUST only be called in the powered branch, never for ordinary collisions.
+ */
+function frostPathHit(from, to, obstacle, radius) {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const len2 = dx * dx + dz * dz;
+  const t = len2 > 1e-9
+    ? clamp(((obstacle.x - from.x) * dx + (obstacle.z - from.z) * dz) / len2, 0, 1)
+    : 0;
+  return Math.hypot(from.x + dx * t - obstacle.x, from.z + dz * t - obstacle.z) <= radius;
+}
+
 function activateArmedTrick(s) {
   const armed = s.armedTrick;
   s.armedTrick = null;
@@ -544,7 +607,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const character=useMemo(()=>cloneSkinned(scene),[scene]);
   const mixer=useMemo(()=>new THREE.AnimationMixer(character),[character]);
   const actions=useMemo(()=>Object.fromEntries(animations.map(a=>[a.name,mixer.clipAction(a)])),[animations,mixer]);
-  const root=useRef(), stance=useRef(), board=useRef(), riderCarrier=useRef(), riderModel=useRef();
+  const root=useRef(), stance=useRef(), board=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),phaseRef=useRef(phase);
   const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
@@ -566,6 +629,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       nearby.current={index:chunkIndex,chunks:[chunkIndex-1,chunkIndex,chunkIndex+1].filter(i=>i>=0).map(getSnowChunk)};
       pruneSnowVisited(s.consumedRamps,chunkIndex);
       pruneSnowVisited(s.consumedRocks,chunkIndex);
+      pruneSnowVisited(s.hitRocks,chunkIndex);
       pruneSnowVisited(collectedRef.current,chunkIndex);
     }
     const localChunks=nearby.current.chunks;
@@ -585,7 +649,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     for (const command of queue) {
       if (command.type === "camera") s.cameraMode = (s.cameraMode + 1) % 3;
       if (!playing || s.recovery) continue;
-      if (command.type === "jump" && !s.inAir && s.jumpCooldown <= 0) {
+      if (command.type === "jump" && !s.inAir && !s.frostHover && s.jumpCooldown <= 0) {
         const boost=clamp(command.boost || 0,0,1);
         startSnowJump(s,snowSurfaceAt(s.x,s.z,localChunks,groundY).height,{velocity:7.9+(tuck?.8:0)+4.0*boost,source:"ollie"});
         resetAirTrickChain(s);
@@ -621,6 +685,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       s.drainRate=snowDrainPerSecond(Math.max(0,-s.z));
       s.score=Math.max(0,s.score-s.drainRate*dt);
       s.powerTime=Math.max(0,s.powerTime-dt);
+      if (s.powerTime <= 0 && s.frostHover) {
+        finishFrostHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
+      }
       s.powerAutoJumpDelay=Math.max(0,s.powerAutoJumpDelay-dt);
       if(s.mushroom && s.z < s.mushroom.z - 8) s.mushroom=null;
       s.jumpCooldown = Math.max(0, s.jumpCooldown - dt);
@@ -639,14 +706,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           s.textUntil = s.t + 1.1;
         }
       } else {
-        if (s.powerTime>0 && !s.inAir && s.powerAutoJumpDelay<=0 && s.jumpCooldown<=0){
-          startSnowJump(s,snowSurfaceAt(s.x,s.z,localChunks,groundY).height,{velocity:23.5,source:"power"});
-          s.launchSuper=true;
-          s.powerTricksScheduled=false;
-          resetAirTrickChain(s);
-          s.powerAutoJumpDelay=3.05;
-          s.lastText="FROST SHROOM! AUTOMATIC SUPER AIR!";s.textUntil=s.t+1.2;
-          onSound("jump");
+        if (s.powerTime > 0 && !s.frostHover) {
+          beginFrostHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
         }
         const targetSpeed = (s.powerTime>0 ? (mobile?57:60) : tuck ? (mobile ? 42 : 38) : 21.5) - Math.abs(s.steer) * 2.6;
         // Higher acceleration, same controllable carving range.
@@ -663,7 +724,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const from={x:previousX,z:previousZ,y:previousY};
         const to={x:s.x,z:s.z,y:s.inAir?s.worldY:surface.height};
         for(const chunk of localChunks) for(const ramp of chunk.ramps){
-          if(s.powerTime<=0 && sweptRampSideHit(from,to,ramp,groundY)){
+          if(!s.frostHover && sweptRampSideHit(from,to,ramp,groundY)){
             s.x=previousX;s.z=previousZ;
             beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound);
             break;
@@ -672,7 +733,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         if(!s.recovery && !s.inAir) {
           s.worldY=surface.height;
         }
-        if (!s.inAir && !s.recovery) {
+        if (!s.inAir && !s.recovery && !s.frostHover) {
           for(const chunk of localChunks) for(const ramp of chunk.ramps){
             if(s.recovery || s.inAir) break;
             if(s.consumedRamps.has(ramp.id)) continue;
@@ -696,41 +757,61 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             }
           }
         }
-        if(s.inAir && !s.recovery){
-          if(s.powerTime>0 && !s.powerTricksScheduled && (s.launchSource==="power" || s.launchSuper)){
-            // Use existing baked clips and the ordinary trick queue, not fake points.
-            // Three moves fit the boosted ballistic flight when launched with power.
-            const packs=[["3","6","5"],["4","6"],["8","5"],["7","6","9"]];
-            const pack=packs[(s.mushroomCount+Math.floor(s.t))%packs.length];
-            for(const key of pack){const def=TRICKS.find(t=>t.key===key);if(def)enqueueAirTrick(s,def);}
-            beginNextAirTrick(s);
-            s.powerTricksScheduled=true;
+        if (s.frostHover && s.powerTime > 0) {
+          // Follow the solid snow/ramp support with a gentle floating bob.
+          // Flip poses gain a little clearance to keep the board out of the snow.
+          const flipProgress = s.trick ? clamp(s.trick.t / s.trick.duration,0,1) : 0;
+          const flipLift = s.trick?.flip ? Math.sin(Math.PI * flipProgress) * .85 : 0;
+          const hoverFloor = snowSurfaceAt(s.x,s.z,localChunks,groundY).height;
+          const hoverTarget = hoverFloor + FROST_HOVER_HEIGHT + Math.sin(s.t * 6.8) * FROST_HOVER_BOB + flipLift;
+          s.worldY = lerp(s.worldY, hoverTarget, Math.min(1,dt * 12));
+          s.air = Math.max(0, s.worldY - hoverFloor);
+          s.peakAir = Math.max(s.peakAir,s.air);
+          s.flightTime += dt;
+          // Keep a maximum of one ahead: manual mobile/keyboard input is still
+          // accepted and starts right after the current animation finishes.
+          if (!s.trick && s.airQueue.length === 0) {
+            const key = FROST_AUTO_TRICKS[s.frostAutoIndex++ % FROST_AUTO_TRICKS.length];
+            const definition = TRICKS.find(t => t.key === key);
+            if (definition) enqueueAirTrick(s,definition);
           }
-          // Animation time runs independently of physics. Every finished clip
-          // commits to the airborne chain and instantly starts the next one.
           advanceAirTricks(s,dt);
-          // When descending onto a ramp, land on its surface rather than falling through.
+          // Completed auto/manual magic tricks immediately earn points without
+          // requiring a landing, so no partial trick can cause a powered wipeout.
+          while (s.frostPaidTricks < s.completedAirTricks.length) {
+            const finished = s.completedAirTricks[s.frostPaidTricks++];
+            const bonus = Math.round(finished.points * 0.75);
+            s.score += bonus;
+            s.combo += 1;
+            s.lastText = `✦ FROST ${finished.name}! +${bonus} ✦`;
+            s.textUntil = s.t + .85;
+            onSound("trick");
+          }
+        } else if(s.inAir && !s.recovery){
+          // Standard non-magical jumps retain the original gravity and risky
+          // landing checks. The protection must never leak into normal riding.
+          advanceAirTricks(s,dt);
           const landingFloor=snowSurfaceAt(s.x,s.z,localChunks,groundY).height;
           const landed=stepSnowJump(s,dt,landingFloor);
           if(landed){
-            const outcome=judgeAirTrickChain(s,s.steer,judgeSnowLanding,s.launchSource==="power" ? 1 : Math.random());
+            const outcome=judgeAirTrickChain(s,s.steer,judgeSnowLanding,Math.random());
             if(outcome.grade === "clean"){
               if(outcome.trickCount===0){
                 s.impact=.45;
                 resetAirTrickChain(s);
               }else{
-              s.combo += outcome.trickCount;
-              const earned=outcome.basePoints*Math.min(5,Math.max(1,s.combo));
-              s.score+=earned;
-              recordSnowPoints(s,earned);
-              const spawnedMushroom=maybeSpawnSnowMushroom(s);
-              const turns=((s.airYaw/Math.PI)%2+2)%2;
-              if(turns>.8&&turns<1.2)s.fakie=!s.fakie;
-              s.lastText=spawnedMushroom ? "✦ RARE FROST SHROOM AHEAD! ✦" : `CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
-              s.textUntil=s.t+1.85;
-              s.impact=.45;
-              if(outcome.trickCount)onSound("trick");
-              resetAirTrickChain(s);
+                s.combo += outcome.trickCount;
+                const earned=outcome.basePoints*Math.min(5,Math.max(1,s.combo));
+                s.score+=earned;
+                recordSnowPoints(s,earned);
+                const spawnedMushroom=maybeSpawnSnowMushroom(s);
+                const turns=((s.airYaw/Math.PI)%2+2)%2;
+                if(turns>.8&&turns<1.2)s.fakie=!s.fakie;
+                s.lastText=spawnedMushroom ? "✦ RARE FROST SHROOM AHEAD! ✦" : `CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
+                s.textUntil=s.t+1.85;
+                s.impact=.45;
+                if(outcome.trickCount)onSound("trick");
+                resetAirTrickChain(s);
               }
             }else{
               const reason=outcome.reason||"BAD LANDING";
@@ -744,10 +825,18 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           // but safely jumping over a rock still works.
           const end={x:s.x,z:s.z,y:s.worldY};
           for (const chunk of localChunks) for (const rock of chunk.rocks) {
+            // A normal crash marks this rock as already HIT (not destroyed),
+            // avoiding a crash loop on the very next frame after recovery.
             if (s.consumedRocks.has(rock.id)) continue;
-            if (sweptRockHit(from,end,rock,groundY,s.powerTime>0?.72:.37)) {
-              s.consumedRocks.add(rock.id);
-              if(s.powerTime>0) {
+            const powered = s.frostHover && s.powerTime > 0;
+            if (!powered && s.hitRocks.has(rock.id)) continue;
+            const contact = powered
+              ? frostPathHit(from,end,rock,rock.size*1.18+.9)
+              : sweptRockHit(from,end,rock,groundY,.37);
+            if (contact) {
+              if(powered) {
+                // Destruction is exclusive to the active Frost Shroom.
+                s.consumedRocks.add(rock.id);
                 // The boost turns real collisions into shattering rock geometry.
                 // Don't award shatter points for distant rocks or rocks jumped over.
                 s.rockExplosions.push({x:rock.x,y:groundY(rock.x,rock.z)+rock.size*.65,
@@ -760,6 +849,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
                 onSound("shatter");
                 continue;
               }
+              // Normal collisions never destroy or hide a rock.
+              s.hitRocks.add(rock.id);
               s.x=previousX;s.z=previousZ;
               beginSnowRecovery(s, "wipeout", "ROCK COLLISION!", onSound);
               break;
@@ -778,6 +869,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         // Floating rare mushroom: collected by crossing its actual position.
         if (!s.recovery && mushroomCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
           activateSnowMushroom(s);
+          beginFrostHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
           s.score+=450; // bonus is intentionally not counted toward the next mushroom spawn
           s.lastText="✦ FROST SHROOM! SUPER SPEED + AUTO TRICKS! ✦";
           s.textUntil=s.t+2.4;
@@ -830,6 +922,15 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const backFloor=snowSurfaceAt(s.x,s.z+1.08,localChunks,groundY).height;
     const boardFloor=Math.max(deck.height,frontFloor-.12,backFloor-.12);
     const visualY=s.inAir ? s.worldY : s.recovery ? cy : Math.max(s.worldY,boardFloor);
+    if (hoverRing.current) {
+      hoverRing.current.visible = s.frostHover && s.powerTime > 0;
+      if (hoverRing.current.visible) {
+        hoverRing.current.position.y = boardFloor - visualY + .035;
+        const pulse = 1 + Math.sin(s.t * 9) * .08;
+        hoverRing.current.scale.set(pulse,pulse,pulse);
+        hoverRing.current.rotation.z = s.t * .9;
+      }
+    }
     if (root.current && stance.current && board.current && riderCarrier.current && riderModel.current) {
       root.current.position.set(s.x, visualY + .14, s.z);
       const trick = s.trick;
@@ -916,6 +1017,10 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     if(frame.current>.12){frame.current=0;onHud(safeHud(s));}
   });
   return <group ref={root}>
+    <mesh ref={hoverRing} visible={false} rotation={[-Math.PI/2,0,0]}>
+      <ringGeometry args={[.62,1.1,32]}/>
+      <meshBasicMaterial color="#95ffed" transparent opacity={.58} depthWrite={false} side={THREE.DoubleSide}/>
+    </mesh>
     <group ref={stance}>
       <group ref={board}><Snowboard /></group>
       <group ref={riderCarrier}>
