@@ -11,13 +11,14 @@ import * as THREE from "three";
  * A complete Next.js + React Three Fiber game.
  * Uses your EXISTING skinned animated GLBs in /public/models.
  * ------------------------------------------------------------ */
-const MODEL_HI = "/models/character-animated.glb";
-const MODEL_MOBILE = "/models/character-animated-mobile.glb";
+const MODEL_HI = "/models/character-face-rig.glb";
+const MODEL_MOBILE = "/models/character-face-rig-mobile.glb";
 const LANES = [-2.12, 0, 2.12];
 const STEP = 2.12;
 const PAD_Y = 0.05;
 const HOP_DURATION = 0.43;
 const MAX_HEARTS = 1; // Single-hit arcade mode
+const LONG_HOP_DURATION = 0.67;
 
 function randomGenerator(seed) {
   let state = seed >>> 0;
@@ -71,166 +72,82 @@ function newGame(seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0) {
   };
 }
 
-const faceTuning = {
-  // Approximate face locations in the ORIGINAL GLB's Y-up rest pose.
-  // These work without altering the GLB, and can be tuned for a future mesh revision.
-  leftEye: [-0.39, 1.17, -0.56],
-  rightEye: [0.39, 1.17, -0.56],
-  mouth: [0, 0.86, -1.10],
-  eyeRadius: 0.087,
-  jawOpenRadians: 0.32,
-};
-
-function createFaceParts(character) {
-  character.updateMatrixWorld(true);
-  const head = character.getObjectByName("Bone_015") || character.getObjectByName("Bone_002");
-  const jaw = character.getObjectByName("Bone_014");
-  if (!head) return { eyeParts: [], mouth: null, jaw, jawBase: jaw?.quaternion.clone(), dispose: () => {} };
-  const allMeshes = [];
-  const eyeParts = [];
-  const eyeGeo = new THREE.SphereGeometry(1, 16, 12);
-  const pupilGeo = new THREE.SphereGeometry(1, 12, 10);
-  const lidGeo = new THREE.SphereGeometry(1, 16, 12);
-  const dark = new THREE.MeshStandardMaterial({ color: 0x182126, roughness: 0.63 });
-  const gold = new THREE.MeshStandardMaterial({ color: 0xe5cd78, roughness: 0.48 });
-  const lidMat = new THREE.MeshStandardMaterial({ color: 0x70646b, roughness: 0.98 });
-  const mouthMat = new THREE.MeshStandardMaterial({ color: 0x24141f, roughness: 0.85, side: THREE.DoubleSide });
-  const white = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const materials = [dark, gold, lidMat, mouthMat, white];
-  const headQ = head.getWorldQuaternion(new THREE.Quaternion());
-
-  const anchor = (worldPos, outwardAngle = 0) => {
-    const group = new THREE.Group();
-    group.position.copy(head.worldToLocal(new THREE.Vector3(...worldPos)));
-    group.quaternion.copy(headQ.clone().invert().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, outwardAngle, 0))));
-    head.add(group);
-    return group;
-  };
-
-  for (const [idx, loc] of [faceTuning.leftEye, faceTuning.rightEye].entries()) {
-    const side = idx === 0 ? -1 : 1;
-    const pivot = anchor(loc, side * 0.54);
-    const iris = new THREE.Mesh(eyeGeo, gold);
-    iris.scale.set(faceTuning.eyeRadius, 0.089, 0.033);
-    pivot.add(iris);
-    const pupil = new THREE.Mesh(pupilGeo, dark);
-    pupil.position.z = -0.032;
-    pupil.scale.set(0.045, 0.056, 0.015);
-    pivot.add(pupil);
-    const glint = new THREE.Mesh(pupilGeo, white);
-    glint.position.set(-0.015, 0.023, -0.048);
-    glint.scale.set(0.011, 0.014, 0.005);
-    pivot.add(glint);
-    const lid = new THREE.Mesh(lidGeo, lidMat);
-    lid.position.set(0, 0.105, -0.054);
-    lid.scale.set(0.091, 0.005, 0.030);
-    pivot.add(lid);
-    allMeshes.push(pivot);
-    eyeParts.push({ iris, pupil, glint, lid });
-  }
-
-  const mouthGroup = anchor(faceTuning.mouth);
-  const mouth = new THREE.Mesh(eyeGeo, mouthMat);
-  mouth.scale.set(0.13, 0.009, 0.018);
-  mouthGroup.add(mouth);
-  allMeshes.push(mouthGroup);
-
-  return {
-    eyeParts,
-    mouth,
-    jaw,
-    jawBase: jaw?.quaternion.clone(),
-    dispose: () => {
-      allMeshes.forEach((o) => o.parent?.remove(o));
-      [eyeGeo, pupilGeo, lidGeo].forEach((geo) => geo.dispose());
-      materials.forEach((mat) => mat.dispose());
-    },
-  };
-}
-
-function SkinnedHopper({ animation, mobile, blinkSignal, croakSignal, playing }) {
+/** The facial controls now live IN the GLB as true skin-surface morph targets.
+ * No floating eyes, disks or extra black spheres are created at runtime.
+ */
+function SkinnedHopper({ animation, mobile, blinkSignal, croakSignal, playing, hopDuration = HOP_DURATION }) {
   const url = mobile ? MODEL_MOBILE : MODEL_HI;
   const { scene, animations } = useGLTF(url);
   const character = useMemo(() => cloneSkeleton(scene), [scene]);
   const { actions } = useAnimations(animations, character);
-  const currentAction = useRef(null);
-  const faceRef = useRef(null);
-  const eyesValue = useRef(0);
-  const eyesTarget = useRef(0);
-  const croakEnd = useRef(0);
-  const clock = useRef(0);
-  const nextBlink = useRef(2.4);
-  const previousBlink = useRef(blinkSignal);
-  const previousCroak = useRef(croakSignal);
-  const mouthOpen = useRef(0);
-  const jawEuler = useMemo(() => new THREE.Quaternion(), []);
-  const jawAxis = useMemo(() => new THREE.Vector3(1, 0, 0), []);
-
-  useEffect(() => {
-    const attachedFace = createFaceParts(character);
-    faceRef.current = attachedFace;
-    return () => {
-      attachedFace.dispose();
-      if (faceRef.current === attachedFace) faceRef.current = null;
-    };
+  const actionRef = useRef(null);
+  const morphMeshes = useMemo(() => {
+    const meshes = [];
+    character.traverse((node) => {
+      if (!node.isMesh || !node.morphTargetDictionary || !node.morphTargetInfluences) return;
+      const { BlinkLeft, BlinkRight, MouthOpen } = node.morphTargetDictionary;
+      if ([BlinkLeft, BlinkRight, MouthOpen].every((idx) => Number.isInteger(idx))) {
+        meshes.push({ mesh: node, left: BlinkLeft, right: BlinkRight, mouth: MouthOpen });
+      }
+    });
+    return meshes;
   }, [character]);
+
+  const clock = useRef(0);
+  const nextAutoBlink = useRef(1.7);
+  const blinkStart = useRef(-10);
+  const croakStart = useRef(-10);
+  const priorBlink = useRef(blinkSignal);
+  const priorCroak = useRef(croakSignal);
 
   useEffect(() => {
     const next = actions[animation] || actions.Idle;
-    if (!next || next === currentAction.current) return;
-    next.reset().setLoop(THREE.LoopRepeat, Infinity);
+    if (!next || next === actionRef.current) return;
+    const previous = actionRef.current;
+    next.reset();
     next.enabled = true;
-    next.setEffectiveTimeScale(animation === "Hop" ? 2.2 : 1);
     next.setEffectiveWeight(1);
-    next.fadeIn(0.12).play();
-    currentAction.current?.fadeOut(0.15);
-    currentAction.current = next;
-  }, [animation, actions]);
+    next.setLoop(animation === "Hop" ? THREE.LoopOnce : THREE.LoopRepeat, animation === "Hop" ? 1 : Infinity);
+    next.clampWhenFinished = animation === "Hop";
+    // One mesh hop completes during one physics hop. Never restart a looping hop mid-air.
+    next.setEffectiveTimeScale(animation === "Hop" ? next.getClip().duration / hopDuration : 1);
+    next.fadeIn(0.10).play();
+    if (previous) previous.fadeOut(0.10);
+    actionRef.current = next;
+  }, [animation, actions, hopDuration]);
 
   useFrame((_, delta) => {
-    if (!playing) {
-      for (const action of Object.values(actions)) if (action) action.paused = true;
-      return;
-    }
-    for (const action of Object.values(actions)) if (action) action.paused = false;
     const dt = Math.min(delta, 0.06);
+    for (const name of ["Idle", "Walk", "Run", "Hop", "Dance", "LookAround", "Sleep", "Celebrate"]) {
+      if (actions[name]) actions[name].paused = !playing;
+    }
+    if (!playing) return;
     clock.current += dt;
     const t = clock.current;
-
-    if (previousBlink.current !== blinkSignal) {
-      previousBlink.current = blinkSignal;
-      nextBlink.current = t;
+    if (priorBlink.current !== blinkSignal) {
+      priorBlink.current = blinkSignal;
+      blinkStart.current = t;
+      nextAutoBlink.current = t + 2.6;
     }
-    if (t >= nextBlink.current) {
-      eyesTarget.current = t + 0.18;
-      nextBlink.current = t + 2.7 + Math.random() * 2.4;
+    if (t >= nextAutoBlink.current) {
+      blinkStart.current = t;
+      nextAutoBlink.current = t + 2.5 + Math.random() * 2.2;
     }
-    const closing = t < eyesTarget.current;
-    eyesValue.current = THREE.MathUtils.damp(eyesValue.current, closing ? 1 : 0, 24, dt);
-
-    if (previousCroak.current !== croakSignal) {
-      previousCroak.current = croakSignal;
-      croakEnd.current = t + 0.70;
+    if (priorCroak.current !== croakSignal) {
+      priorCroak.current = croakSignal;
+      croakStart.current = t;
     }
-    const mouthTarget = t < croakEnd.current || animation === "Hop" ? 1 : 0;
-    mouthOpen.current = THREE.MathUtils.damp(mouthOpen.current, mouthTarget, 10, dt);
-    const face = faceRef.current;
-    if (!face) return;
-    for (const eye of face.eyeParts) {
-      const b = eyesValue.current;
-      eye.iris.scale.y = Math.max(0.012, 0.089 * (1 - b));
-      eye.pupil.scale.y = Math.max(0.006, 0.056 * (1 - b));
-      eye.glint.visible = b < 0.65;
-      eye.lid.position.y = 0.105 - 0.105 * b;
-      eye.lid.scale.y = Math.max(0.005, 0.092 * b);
-    }
-    if (face.mouth) face.mouth.scale.y = 0.009 + 0.083 * mouthOpen.current;
-    if (face.jaw && face.jawBase) {
-      jawEuler.setFromAxisAngle(jawAxis, -faceTuning.jawOpenRadians * mouthOpen.current);
-      face.jaw.quaternion.copy(face.jawBase).multiply(jawEuler);
+    // Morph weight is continuous and stays between 0 and 1.
+    const bp = (t - blinkStart.current) / 0.24;
+    const blink = bp >= 0 && bp <= 1 ? Math.pow(Math.sin(Math.PI * bp), 2) : 0;
+    const cp = (t - croakStart.current) / 0.65;
+    const mouth = cp >= 0 && cp <= 1 ? Math.pow(Math.sin(Math.PI * cp), 0.75) : 0;
+    for (const { mesh, left, right, mouth: jaw } of morphMeshes) {
+      mesh.morphTargetInfluences[left] = blink;
+      mesh.morphTargetInfluences[right] = blink;
+      mesh.morphTargetInfluences[jaw] = mouth;
     }
   });
-
   return <primitive object={character} dispose={null} />;
 }
 
@@ -350,10 +267,15 @@ function PondDetails({ centerRow }) {
 function GameScene({ game, motionRef, onLand, blinkSignal, croakSignal, mobile, pageVisible }) {
   const player = useRef();
   const shadow = useRef();
-  const cameraTarget = useMemo(() => new THREE.Vector3(), []);
   const cameraPlace = useMemo(() => new THREE.Vector3(), []);
   const lookAt = useMemo(() => new THREE.Vector3(), []);
   const [actorAnimation, setActorAnimation] = useState("Idle");
+  const [actorHopDuration, setActorHopDuration] = useState(HOP_DURATION);
+  // Keep the last settled position locally, independent of delayed React renders.
+  const settledRef = useRef({ row: game.row, lane: game.lane, seed: game.seed });
+  useEffect(() => {
+    settledRef.current = { row: game.row, lane: game.lane, seed: game.seed };
+  }, [game.row, game.lane, game.seed]);
   const landed = useRef(onLand);
   const actorAnimationRef = useRef("Idle");
   useEffect(() => { landed.current = onLand; }, [onLand]);
@@ -370,29 +292,39 @@ function GameScene({ game, motionRef, onLand, blinkSignal, croakSignal, mobile, 
     const motion = motionRef.current;
     if (motion && actorAnimationRef.current !== "Hop") {
       actorAnimationRef.current = "Hop";
+      setActorHopDuration(motion.duration);
       setActorAnimation("Hop");
     }
-    let x = LANES[g.lane];
-    let z = -g.row * STEP;
+    let x = LANES[settledRef.current.lane];
+    let z = -settledRef.current.row * STEP;
     let y = 0.17;
-    if (motion && pageVisible) {
-      motion.elapsed = Math.min(motion.duration, motion.elapsed + Math.min(delta, 0.06));
+    if (motion) {
+      // Pausing freezes the current hop instead of snapping back to its start.
+      if (pageVisible) motion.elapsed = Math.min(motion.duration, motion.elapsed + Math.min(delta, 0.06));
       const p = motion.elapsed / motion.duration;
       const ease = p * p * (3 - 2 * p);
       x = THREE.MathUtils.lerp(LANES[motion.fromLane], LANES[motion.toLane], ease);
       z = THREE.MathUtils.lerp(-motion.fromRow * STEP, -motion.toRow * STEP, ease);
-      y += Math.sin(Math.PI * p) * 1.10;
-      if (p >= 1) {
-        motionRef.current = null;
+      y += Math.sin(Math.PI * p) * (motion.longHop ? 1.30 : 0.75);
+      if (p >= 1 && pageVisible) {
+        // Update the logical location before clearing the motion ref.
+        // The very next frame must use the DESTINATION, not the previous pad.
+        settledRef.current = { row: motion.toRow, lane: motion.toLane, seed: g.seed };
         landed.current(motion);
+        motionRef.current = null;
         actorAnimationRef.current = motion.failed ? "Sleep" : motion.collected ? "Celebrate" : "Idle";
         setActorAnimation(actorAnimationRef.current);
       }
     }
-    if (actorAnimation === "Celebrate" && !motion && g.status === "playing") {
-      // Landed celebration lasts until next move, no separate per-frame setState.
-    }
     player.current.position.set(x, y, z);
+    // Face the direction of travel IN THE AIR, then turn back toward the viewer
+    // on landing so blinking/croaking can be seen between moves.
+    const heading = motion
+      ? Math.atan2(-(LANES[motion.toLane] - LANES[motion.fromLane]), (motion.toRow - motion.fromRow) * STEP)
+      : Math.PI;
+    const currentHeading = player.current.rotation.y;
+    const deltaHeading = Math.atan2(Math.sin(heading - currentHeading), Math.cos(heading - currentHeading));
+    player.current.rotation.y += deltaHeading * (1 - Math.exp(-Math.min(delta, 0.08) * 11));
     if (shadow.current) {
       shadow.current.position.set(x, PAD_Y + 0.106, z);
       const size = Math.max(0.55, 1 - (y - 0.17) * 0.24);
@@ -400,8 +332,7 @@ function GameScene({ game, motionRef, onLand, blinkSignal, croakSignal, mobile, 
       shadow.current.material.opacity = 0.21 * size;
     }
     cameraPlace.set(x * 0.32 + 5.0, 7.1, z + 8.1);
-    cameraTarget.copy(cameraPlace);
-    camera.position.lerp(cameraTarget, 1 - Math.exp(-Math.min(delta, 0.1) * 3.6));
+    camera.position.lerp(cameraPlace, 1 - Math.exp(-Math.min(delta, 0.1) * 3.6));
     lookAt.set(x * 0.14, 0.3, z - 3.1);
     camera.lookAt(lookAt);
   });
@@ -425,6 +356,20 @@ function GameScene({ game, motionRef, onLand, blinkSignal, croakSignal, mobile, 
       {visible.flatMap((r) => r.pads.map((pad, lane) => pad ? (
         <LilyPad key={`${r.index}-${lane}`} row={r.index} lane={lane} tile={pad} collected={collected.has(`${r.index}:${lane}`)} />
       ) : null))}
+      {game.status === "playing" && [game.row + 1, game.row + 2].flatMap((row) =>
+        (game.rows[row]?.pads || []).map((pad, lane) => {
+          if (!pad || pad.hazard || (row === game.row + 1 && Math.abs(lane - game.lane) > 1) ||
+             (row === game.row + 2 && lane !== game.lane)) return null;
+          return (
+            <mesh key={`guide-${row}-${lane}`} rotation={[-Math.PI / 2, 0, 0]}
+              position={[LANES[lane], PAD_Y + 0.189, -row * STEP]}>
+              <ringGeometry args={[0.68, 0.73, 32]} />
+              <meshBasicMaterial color={row === game.row + 2 ? "#ffef91" : "#d5ffd0"}
+                transparent opacity={row === game.row + 2 ? 0.45 : 0.66} depthWrite={false} />
+            </mesh>
+          );
+        })
+      )}
       <mesh ref={shadow} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_Y + 0.106, 0]}>
         <circleGeometry args={[0.56, 24]} />
         <meshBasicMaterial color="#244f43" transparent opacity={0.21} depthWrite={false} />
@@ -433,6 +378,7 @@ function GameScene({ game, motionRef, onLand, blinkSignal, croakSignal, mobile, 
         <Suspense fallback={<Html center><div style={{ color: "white", whiteSpace: "nowrap" }}>Loading character…</div></Html>}>
           <SkinnedHopper
             animation={actorAnimation}
+            hopDuration={actorHopDuration}
             playing={pageVisible}
             mobile={mobile}
             blinkSignal={blinkSignal}
@@ -476,63 +422,106 @@ export default function FrogHopperGame() {
 
   const start = useCallback(() => {
     motionRef.current = null;
-    setGame((g) => ({ ...g, status: "playing", message: "" }));
+    const next = { ...gameRef.current, status: "playing", message: "" };
+    gameRef.current = next;
+    setGame(next);
     showInstructions(false);
   }, []);
   const restart = useCallback(() => {
     motionRef.current = null;
-    setGame({ ...newGame(), status: "playing" });
+    const next = { ...newGame(), status: "playing" };
+    gameRef.current = next;
+    setGame(next);
     showInstructions(false);
   }, []);
 
   const land = useCallback((motion) => {
-    setGame((prev) => {
-      const lost = motion.failed;
-      const key = `${motion.toRow}:${motion.toLane}`;
-      const found = motion.collected && !prev.collected.includes(key);
-      const nextScore = lost ? prev.score : Math.max(prev.score, motion.toRow);
-      const next = {
-        ...prev,
-        row: motion.toRow,
-        lane: motion.toLane,
-        score: nextScore,
-        status: lost ? "lost" : "playing",
-        hearts: lost ? 0 : prev.hearts,
-        collected: found ? [...prev.collected, key] : prev.collected,
-        gems: prev.gems + (found ? 1 : 0),
-        message: lost ? (motion.reason === "water" ? "Splash! You missed the lily pad." : "Ouch! Watch out for thorns.") : found ? "+1 firefly!" : "",
-      };
-      if (next.row + 35 > next.rows.length) next.rows = makeRows(next.seed, next.row + 55);
-      return next;
-    });
-    if (motion.collected && !motion.failed) croak((v) => v + 1);
-    const nextBest = motion.failed ? gameRef.current.score : Math.max(gameRef.current.score, motion.toRow);
-    setBest((prev) => Math.max(prev, nextBest));
+    // Commit synchronously to the ref used by useFrame. A delayed React render
+    // must not move the player backwards to the previous pad for one frame.
+    const prev = gameRef.current;
+    const lost = motion.failed;
+    const key = `${motion.toRow}:${motion.toLane}`;
+    const found = motion.collected && !prev.collected.includes(key) && !lost;
+    const next = {
+      ...prev,
+      row: motion.toRow,
+      lane: motion.toLane,
+      score: lost ? prev.score : Math.max(prev.score, motion.toRow),
+      status: lost ? "lost" : "playing",
+      hearts: lost ? 0 : prev.hearts,
+      collected: found ? [...prev.collected, key] : prev.collected,
+      gems: prev.gems + (found ? 1 : 0),
+      message: lost
+        ? (motion.reason === "water" ? "Splash! You missed the lily pad." : "Ouch! Watch out for thorns.")
+        : found ? "+1 firefly!" : "",
+    };
+    if (next.row + 35 > next.rows.length) next.rows = makeRows(next.seed, next.row + 55);
+    gameRef.current = next;
+    setGame(next);
+    if (found) croak((v) => v + 1);
+    const nextBest = next.score;
+    setBest((value) => Math.max(value, nextBest));
     try {
-      const old = Number(window.localStorage.getItem("pidgeonkitty-hopper-best") || 0);
-      if (nextBest > old) window.localStorage.setItem("pidgeonkitty-hopper-best", String(nextBest));
-    } catch { /* storage disabled */ }
+      const previousBest = Number(window.localStorage.getItem("pidgeonkitty-hopper-best") || 0);
+      if (nextBest > previousBest) window.localStorage.setItem("pidgeonkitty-hopper-best", String(nextBest));
+    } catch { /* storage may be disabled */ }
   }, []);
 
   const move = useCallback((direction) => {
     const g = gameRef.current;
     if (g.status !== "playing" || motionRef.current || !pageVisible) return;
-    let newRow = g.row;
-    let newLane = g.lane;
-    if (direction === "up") newRow++;
-    else if (direction === "down") newRow--;
-    else if (direction === "left") newLane--;
-    else if (direction === "right") newLane++;
-    if (newRow < 0 || newLane < 0 || newLane > 2) return;
-    const tile = g.rows[newRow]?.pads[newLane];
+
+    const deltas = {
+      up: [1, 0], down: [-1, 0], left: [0, -1], right: [0, 1],
+      upLeft: [1, -1], upRight: [1, 1],
+      downLeft: [-1, -1], downRight: [-1, 1],
+      double: [2, 0],
+    };
+    const delta = deltas[direction];
+    if (!delta) return;
+    let [dr, dl] = delta;
+    let targetRow = g.row + dr;
+    let targetLane = g.lane + dl;
+    if (targetRow < 0 || targetLane < 0 || targetLane > 2) return;
+
+    // Forward assist only activates when a normal forward hop would hit water
+    // or a thorn. It chooses a reachable diagonal, then a double-length leap.
+    if (direction === "up") {
+      const straight = g.rows[targetRow]?.pads[targetLane];
+      if (!straight || straight.hazard) {
+        const possible = [-1, 1].map((offset) => {
+          const lane = g.lane + offset;
+          const pad = g.rows[g.row + 1]?.pads[lane];
+          if (!pad || pad.hazard) return null;
+          const follow = g.rows[g.row + 2]?.pads || [];
+          const continuations = follow.reduce((n, next, nextLane) =>
+            n + Number(Boolean(next && !next.hazard && Math.abs(nextLane - lane) <= 1)), 0);
+          return { lane, continuations, gem: Number(Boolean(pad.gem)) };
+        }).filter(Boolean);
+        possible.sort((a, b) => b.continuations - a.continuations || b.gem - a.gem);
+        if (possible.length) {
+          targetLane = possible[0].lane;
+        } else {
+          const longPad = g.rows[g.row + 2]?.pads[g.lane];
+          if (longPad && !longPad.hazard) {
+            targetRow = g.row + 2;
+          }
+        }
+      }
+    }
+
+    const tile = g.rows[targetRow]?.pads[targetLane];
     const failed = !tile || tile.hazard;
+    const longHop = targetRow - g.row === 2;
     motionRef.current = {
       fromRow: g.row,
       fromLane: g.lane,
-      toRow: newRow,
-      toLane: newLane,
+      direction,
+      toRow: targetRow,
+      toLane: targetLane,
       elapsed: 0,
-      duration: HOP_DURATION,
+      duration: longHop ? LONG_HOP_DURATION : HOP_DURATION,
+      longHop,
       failed,
       reason: !tile ? "water" : tile.hazard ? "thorn" : null,
       collected: Boolean(tile?.gem),
@@ -542,11 +531,17 @@ export default function FrogHopperGame() {
   useEffect(() => {
     const handle = (e) => {
       const key = e.key.toLowerCase();
-      const directions = { arrowup: "up", w: "up", " ": "up", arrowdown: "down", s: "down", arrowleft: "left", a: "left", arrowright: "right", d: "right" };
+      const directions = {
+        arrowup: "up", w: "up", " ": "up", arrowdown: "down", s: "down",
+        arrowleft: "left", a: "left", arrowright: "right", d: "right",
+        q: "upLeft", e: "upRight", z: "downLeft", c: "downRight", x: "double",
+      };
       if (directions[key]) {
         e.preventDefault();
+        const direction = (key === "arrowup" || key === "w" || key === " ") && e.shiftKey
+          ? "double" : directions[key];
         if (gameRef.current.status === "ready") start();
-        else move(directions[key]);
+        else move(direction);
       } else if (key === "enter" && gameRef.current.status !== "playing") {
         e.preventDefault();
         if (gameRef.current.status === "lost") restart(); else start();
@@ -561,8 +556,9 @@ export default function FrogHopperGame() {
   }, [move, start, restart]);
 
   const touchStart = (e) => {
+    if (e.target.closest("button")) return;
     const t = e.touches?.[0];
-    if (t) touchRef.current = { x: t.clientX, y: t.clientY };
+    if (t) touchRef.current = { x: t.clientX, y: t.clientY, fingers: e.touches.length };
   };
   const touchEnd = (e) => {
     const t = e.changedTouches?.[0];
@@ -572,6 +568,12 @@ export default function FrogHopperGame() {
     const dx = t.clientX - from.x;
     const dy = t.clientY - from.y;
     if (Math.hypot(dx, dy) < 36) return;
+    // Two-finger forward swipe performs a long hop.
+    const wasDouble = from.fingers >= 2;
+    if (wasDouble && dy < -32) return move("double");
+    const diagonal = Math.abs(dx) > 28 && Math.abs(dy) > 28 &&
+      Math.min(Math.abs(dx), Math.abs(dy)) / Math.max(Math.abs(dx), Math.abs(dy)) > 0.38;
+    if (diagonal) return move((dy < 0 ? "up" : "down") + (dx < 0 ? "Left" : "Right"));
     move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up");
   };
 
@@ -590,10 +592,10 @@ export default function FrogHopperGame() {
         .fh-actions{position:absolute;left:max(16px,env(safe-area-inset-left));bottom:max(18px,env(safe-area-inset-bottom));display:flex;gap:9px;align-items:flex-end}
         .fh-action{appearance:none;border:1px solid #ffffff60;border-radius:16px;background:#134f64c9;color:white;padding:11px 14px;font-size:12px;font-weight:850;box-shadow:0 6px 20px #114e5940;cursor:pointer;backdrop-filter:blur(10px)}
         .fh-action:active{transform:translateY(2px)}
-        .fh-dpad{position:absolute;right:max(16px,env(safe-area-inset-right));bottom:max(18px,env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(2,52px);gap:5px}
+        .fh-dpad{position:absolute;right:max(16px,env(safe-area-inset-right));bottom:max(18px,env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:5px}
         .fh-dpad button{border:1px solid #ffffffaa;background:rgba(18,85,92,.72);color:white;border-radius:16px;font-size:23px;font-weight:900;cursor:pointer;touch-action:manipulation;box-shadow:0 7px 20px #174d573d}
         .fh-dpad button:active{background:#8ac869;transform:scale(.95)}
-        .fh-dpad .up{grid-column:2;grid-row:1}.fh-dpad .left{grid-column:1;grid-row:2}.fh-dpad .down{grid-column:2;grid-row:2}.fh-dpad .right{grid-column:3;grid-row:2}
+        .fh-dpad .upLeft{grid-column:1;grid-row:1}.fh-dpad .up{grid-column:2;grid-row:1}.fh-dpad .upRight{grid-column:3;grid-row:1}.fh-dpad .left{grid-column:1;grid-row:2}.fh-dpad .double{grid-column:2;grid-row:2;background:rgba(146,103,52,.88);font-size:14px}.fh-dpad .right{grid-column:3;grid-row:2}.fh-dpad .down{grid-column:2;grid-row:3}
         .fh-help{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);font-weight:750;letter-spacing:.03em;font-size:12px;color:#e6ffed;text-shadow:0 1px 4px #105565;pointer-events:none;white-space:nowrap}
         .fh-modal{position:absolute;inset:0;display:grid;place-items:center;background:linear-gradient(180deg,rgba(11,66,83,.3),rgba(12,66,85,.64));backdrop-filter:blur(5px);z-index:4;padding:18px}
         .fh-card{border:2px solid #f0ffd0a6;background:linear-gradient(150deg,#176b68f2,#174663f4);box-shadow:0 20px 90px #053d5e7b, inset 0 1px #ffffff50;border-radius:30px;padding:clamp(22px,4vw,40px);max-width:470px;width:min(100%,470px);text-align:center}
@@ -603,7 +605,7 @@ export default function FrogHopperGame() {
         .fh-primary{border:none;border-radius:999px;background:linear-gradient(#ffec94,#e3cd5c);color:#205553;font-size:16px;font-weight:950;letter-spacing:.04em;padding:16px 38px;cursor:pointer;box-shadow:0 7px 0 #b59c39, 0 14px 20px #163d414f}
         .fh-primary:active{transform:translateY(5px);box-shadow:0 2px 0 #b59c39}
         .fh-shortcuts{font-size:11px;color:#bfe7db;margin-top:24px;letter-spacing:.02em}
-        @media(max-width:680px){.fh-brand{font-size:15px}.fh-stat{min-width:57px;padding:7px 9px;border-radius:12px}.fh-stat strong{font-size:20px}.fh-stats{gap:5px}.fh-action{font-size:11px;padding:10px}.fh-help{display:none}.fh-dpad{grid-template-columns:repeat(3,48px);grid-template-rows:repeat(2,48px)}.fh-card{padding:26px 20px}.fh-title{font-size:47px}}
+        @media(max-width:680px){.fh-brand{font-size:15px}.fh-stat{min-width:57px;padding:7px 9px;border-radius:12px}.fh-stat strong{font-size:20px}.fh-stats{gap:5px}.fh-action{font-size:11px;padding:10px}.fh-help{display:none}.fh-dpad{grid-template-columns:repeat(3,48px);grid-template-rows:repeat(3,48px)}.fh-card{padding:26px 20px}.fh-title{font-size:47px}}
         @media(max-height:600px){.fh-top{padding-top:7px}.fh-actions,.fh-dpad{bottom:7px}.fh-card{padding:16px}.fh-description{margin:9px auto 12px}}
       `}</style>
       <div className="fh-canvas">
@@ -630,12 +632,15 @@ export default function FrogHopperGame() {
         <button className="fh-action" type="button" onClick={() => setGame((g) => ({ ...g, status: g.status === "playing" ? "paused" : g.status === "paused" ? "playing" : g.status }))} aria-label="Pause or resume game">{game.status === "paused" ? "▶ RESUME" : "Ⅱ PAUSE"}</button>
       </div>
       <nav className="fh-dpad" aria-label="Character movement controls">
-        <button type="button" className="up" onClick={() => move("up")} aria-label="Hop forward">↑</button>
+        <button type="button" className="upLeft" onClick={() => move("upLeft")} aria-label="Hop diagonally forward left">↖</button>
+        <button type="button" className="up" onClick={() => move("up")} aria-label="Hop forward with safe diagonal assist">↑</button>
+        <button type="button" className="upRight" onClick={() => move("upRight")} aria-label="Hop diagonally forward right">↗</button>
         <button type="button" className="left" onClick={() => move("left")} aria-label="Hop left">←</button>
+        <button type="button" className="double" onClick={() => move("double")} aria-label="Double-length forward jump">2× ↑</button>
         <button type="button" className="down" onClick={() => move("down")} aria-label="Hop backward">↓</button>
         <button type="button" className="right" onClick={() => move("right")} aria-label="Hop right">→</button>
       </nav>
-      <div className="fh-help">ARROWS / WASD TO HOP · SWIPE ON MOBILE · B BLINK · M MOUTH · P PAUSE</div>
+      <div className="fh-help">WASD / ARROWS · Q/E DIAGONAL · SHIFT+↑ OR X DOUBLE · SWIPE · B BLINK · M CROAK</div>
       {(game.status === "ready" || game.status === "lost" || game.status === "paused") && (
         <div className="fh-modal" role="dialog" aria-modal="true" aria-label="Frog Hopper menu">
           <div className="fh-card">
@@ -643,12 +648,12 @@ export default function FrogHopperGame() {
             <h1 className="fh-title">{game.status === "lost" ? "SPLASH!" : game.status === "paused" ? "PAUSED" : "FROG HOPPER"}</h1>
             <div style={{ fontSize: 40 }} aria-hidden="true">{game.status === "lost" ? "💦" : game.status === "paused" ? "🍃" : "🐸 🪷 ✨"}</div>
             <p className="fh-description">
-              {game.status === "lost" ? `${game.message} You made ${game.score} hops and collected ${game.gems} fireflies.` : game.status === "paused" ? "The pond is taking a tiny nap. Resume when you're ready." : "Hop from lily pad to lily pad, collect glowing fireflies and dodge the prickly pink hazards. A missing pad means a splash!"}
+              {game.status === "lost" ? `${game.message} You made ${game.score} hops and collected ${game.gems} fireflies.` : game.status === "paused" ? "The pond is taking a tiny nap. Resume when you're ready." : "Hop from lily pad to lily pad, collect glowing fireflies and dodge the prickly pink hazards. Go diagonally with Q/E or ↖/↗. Use Shift+↑ or 2×↑ to leap over a missing pad. Straight ↑ helps choose a safe diagonal when blocked!"}
             </p>
             <button className="fh-primary" type="button" onClick={game.status === "lost" ? restart : start}>
               {game.status === "lost" ? "PLAY AGAIN ↻" : game.status === "paused" ? "RESUME ▶" : "START HOPPING →"}
             </button>
-            {(instructions || game.status !== "ready") && <div className="fh-shortcuts">↑ ↓ ← → / WASD / SPACE · swipe on phones · B to blink · M to open mouth</div>}
+            {(instructions || game.status !== "ready") && <div className="fh-shortcuts">Q/E ↖ ↗ · ↑ smart jump · Shift+↑ / X long leap · B blink · M croak</div>}
           </div>
         </div>
       )}
