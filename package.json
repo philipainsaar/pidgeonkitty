@@ -1,7 +1,18 @@
 {
+  "name": "pidgeonkitty",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
   "dependencies": {
-    "@react-three/drei": "^10.7.9",
+    "next": "16.4.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "three": "^0.187.0",
     "@react-three/fiber": "^9.8.2",
-    "three": "^0.187.0"
+    "@react-three/drei": "^10.7.9"
   }
 }
