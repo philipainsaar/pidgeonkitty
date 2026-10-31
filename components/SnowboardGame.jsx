@@ -233,20 +233,20 @@ function Mountains({stateRef}) {
   </group>;
 }
 
-function BoardTrail({stateRef}) {
-  // GPU points, not individual React meshes. More particles when tucked/fast.
-  const num=250;
+function BoardTrail({stateRef,mobile}) {
+  // Fewer dynamic points and spawn calls on mobile; never tie particle updates to React state.
+  const num=mobile?110:250;
   const ref=useRef(),next=useRef(0),spawnAccumulator=useRef(0);
-  const snow=useMemo(()=>Array.from({length:num},()=>({x:0,y:0,z:0,life:0,vx:0,vy:0,vz:0})),[]);
-  const coords=useMemo(()=>new Float32Array(num*3).fill(100000),[]);
+  const snow=useMemo(()=>Array.from({length:num},()=>({x:0,y:0,z:0,life:0,vx:0,vy:0,vz:0})),[num]);
+  const coords=useMemo(()=>new Float32Array(num*3).fill(100000),[num]);
   useFrame((_,rawDt)=>{
     if(!ref.current)return;
     const dt=Math.min(rawDt,.05),s=stateRef.current;
     const moving=s.speed>4 && !s.inAir && !s.recovery && s.t>0;
     if(moving){
-      const rate=clamp(28+s.speed*2.8+Math.abs(s.steer)*60,40,185);
+      const rate=clamp(22+s.speed*(mobile?1.35:2.8)+Math.abs(s.steer)*35,28,mobile?90:185);
       spawnAccumulator.current=Math.min(10,spawnAccumulator.current+rate*dt);
-      let emit=Math.min(8,Math.floor(spawnAccumulator.current));
+      let emit=Math.min(mobile?4:8,Math.floor(spawnAccumulator.current));
       spawnAccumulator.current-=emit;
       while(emit--){
         const i=next.current++%num,p=snow[i];
@@ -274,13 +274,13 @@ function BoardTrail({stateRef}) {
   </points>;
 }
 
-function Snowfall({ stateRef }) {
-  const count=180;
+function Snowfall({ stateRef,mobile }) {
+  const count=mobile?80:180;
   const data=useMemo(()=>{
     const r=rand(64); return Array.from({length:count},()=>({x:(r()-.5)*34,z:(r()-.5)*44,y:r()*15,speed:2+r()*4}));
-  },[]);
+  },[count]);
   const points=useRef();
-  const coords=useMemo(()=>new Float32Array(count*3),[]);
+  const coords=useMemo(()=>new Float32Array(count*3),[count]);
   useFrame((_,dt)=>{
     if(!points.current)return;
     const s=stateRef.current;
@@ -479,8 +479,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           s.textUntil = s.t + 1.1;
         }
       } else {
-        const targetSpeed = (tuck ? (mobile ? 41 : 38) : 21.5) - Math.abs(s.steer) * 2.6;
-        s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (tuck ? .95 : .45)));
+        const targetSpeed = (tuck ? (mobile ? 42 : 38) : 21.5) - Math.abs(s.steer) * 2.6;
+        // Higher acceleration, same controllable carving range.
+        s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (tuck ? (mobile ? 2.1 : 1.35) : .5)));
         s.velX = lerp(s.velX, s.steer * (s.inAir ? 5.0 : 9.2), Math.min(1, dt * (s.inAir ? 2.8 : 5.5)));
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
         const previousZ=s.z;
@@ -706,8 +707,8 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     <Suspense fallback={<Loading/>}>
       <Rider mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
     </Suspense>
-    <Snowfall stateRef={stateRef}/>
-    <BoardTrail stateRef={stateRef}/>
+    <Snowfall mobile={mobile} stateRef={stateRef}/>
+    <BoardTrail mobile={mobile} stateRef={stateRef}/>
   </>;
 }
 
@@ -715,22 +716,25 @@ function formatTime(s){const m=Math.floor(s/60);const sec=(s%60).toFixed(2).padS
 
 /** Two independent touch zones allow true two-thumb multi-touch: steering with the
  * left finger while drawing tricks on the right. No WebGL raycasting required. */
-function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
+function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckChange }) {
   const steering = useRef(null);
   const drawing = useRef(null);
   const strokePath = useRef(null);
   const strokeTimeout = useRef(null);
+  const lastTuck = useRef(false);
+  const tapSequence = useRef(0);
 
   useEffect(() => {
     // Explicitly release held controls after pausing, restarting or unmounting.
     inputRef.current.steerAnalog = 0;
     inputRef.current.touchTuck = false;
+    lastTuck.current = false;
     steering.current = null;
     drawing.current = null;
     return () => {
       inputRef.current.steerAnalog = 0;
       inputRef.current.touchTuck = false;
-        onTuckChange?.(false);
+      onTuckChange?.(false);
       clearTimeout(strokeTimeout.current);
     };
   }, [inputRef, phase, runKey]);
@@ -739,7 +743,6 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
     if (phase !== "playing" || steering.current) return;
     e.preventDefault();
     steering.current = {id:e.pointerId, x:e.clientX, y:e.clientY};
-    onTuckChange?.(false);
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   function moveSteer(e) {
@@ -750,14 +753,20 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
     inputRef.current.steerAnalog = clamp(dx / 68, -1, 1);
     const isTuck = dy < -43;
     inputRef.current.touchTuck = isTuck;
-    onTuckChange?.(isTuck);
+    if (lastTuck.current !== isTuck) {
+      lastTuck.current = isTuck;
+      onTuckChange?.(isTuck);
+    }
   }
   function endSteer(e) {
     if (!steering.current || steering.current.id !== e.pointerId) return;
     steering.current = null;
     inputRef.current.steerAnalog = 0;
     inputRef.current.touchTuck = false;
-    onTuckChange?.(false);
+    if (lastTuck.current) {
+      lastTuck.current = false;
+      onTuckChange?.(false);
+    }
   }
   function drawLine() {
     if (!strokePath.current || !drawing.current) return;
@@ -782,7 +791,7 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
     const pt = {x:e.clientX - d.rect.left, y:e.clientY - d.rect.top};
     const prev = d.points[d.points.length - 1];
     if (Math.hypot(pt.x - prev.x, pt.y - prev.y) < 2.5) return;
-    if (d.points.length < 320) d.points.push(pt);
+    if (d.points.length < 150) d.points.push(pt);
     drawLine();
   }
   function endDrawing(e, cancelled = false) {
@@ -797,18 +806,25 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
         d.points[d.points.length - 1].y - d.points[0].y
       );
       const travelled = d.points.reduce((sum,p,i) => i ? sum + Math.hypot(p.x-d.points[i-1].x,p.y-d.points[i-1].y) : 0,0);
-      const tap = travelled < 25 && span < 18;
+      const tap = travelled < 26 && span < 22;
       if (tap) {
-        // Tap is Ollie; while airborne a tap cannot restart the jump.
-        act({type:"jump",boost:clamp((elapsed-120)/750,0,1)});
+        if (stateRef.current.inAir && !stateRef.current.recovery) {
+          // Easy mode without buttons: tap mid-air to cycle four real grab clips.
+          // Taps queue immediately even during another grab animation.
+          const grabs = ["6", "5", "9", "0"];
+          act({type:"trick",key:grabs[tapSequence.current++ % grabs.length]});
+          // Tiny visible glint: the full gold stroke remains for drawn tricks.
+          strokePath.current?.setAttribute("d", `M${d.points[0].x-12} ${d.points[0].y+8} l24 -16`);
+        } else {
+          // Hold then release on the ground to charge the Ollie.
+          act({type:"jump",boost:clamp((elapsed-120)/750,0,1)});
+        }
       } else {
         const gesture = classifySnowGesture(d.points);
         if (gesture) {
-          // Draw in midair to start/queue tricks. On the ground, pre-arm a trick
-          // for the next ramp instead of auto-ollieing and missing that ramp.
+          // Flicks are easy; loops / flips are still drawing-only high-risk tricks.
           act({type:"trick",key:gesture.key,direction:gesture.direction});
         } else if (strokePath.current) {
-          // Reject unclear strokes rather than mistakenly turning them into Ollies.
           strokePath.current.setAttribute("stroke", "#ff829e");
         }
       }
@@ -841,27 +857,27 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
   </>;
 }
 
-/** Lightweight screen-space speed rush. No heavy postprocessing or extra Canvas. */
-function SpeedRush({active,speed}){
-  const power=clamp((speed-82)/52,0,1);
-  const show=active && power>.04;
-  const rays=useMemo(()=>Array.from({length:38},(_,i)=>{
-    const angle=2*Math.PI*(i+.37)/38;
-    const x1=500+Math.cos(angle)*(155+(i%5)*21);
-    const y1=350+Math.sin(angle)*(118+(i%6)*15);
-    const x2=500+Math.cos(angle)*(770+(i%4)*75);
-    const y2=350+Math.sin(angle)*(580+(i%3)*70);
-    return {x1,y1,x2,y2,width:i%4===0?3:1.4};
-  }),[]);
+/** Single compositor-friendly speed layer. No animated per-ray SVG or fullscreen blur. */
+function SpeedRush({active,speed,mobile}){
+  const power=clamp((speed-68)/65,0,1);
+  const show=active && power>.045;
+  const rays=useMemo(()=>Array.from({length:mobile?12:20},(_,i)=>{
+    const n=mobile?12:20;
+    const theta=2*Math.PI*(i+.31)/n;
+    const dx=Math.cos(theta),dy=Math.sin(theta);
+    return {
+      x1:500+dx*(230+(i%3)*38), y1:350+dy*(180+(i%3)*28),
+      x2:500+dx*(690+(i%4)*70), y2:350+dy*(525+(i%4)*55),
+      width:i%4===0?2.7:1.4,
+    };
+  }),[mobile]);
   if(!show)return null;
-  return <div className="snow64-speedfx" aria-hidden="true" style={{position:"absolute",inset:0,zIndex:2,pointerEvents:"none",overflow:"hidden",opacity:.22+power*.65,
-    WebkitMaskImage:"radial-gradient(ellipse at 50% 49%,transparent 0%,transparent 30%,black 75%)",maskImage:"radial-gradient(ellipse at 50% 49%,transparent 0%,transparent 30%,black 75%)"}}>
-    <svg viewBox="0 0 1000 700" preserveAspectRatio="none" style={{height:"100%",width:"100%",position:"absolute",inset:0}}>
-      {rays.map((r,i)=><line key={i} x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2} stroke={i%4===0?"#ffffff":"#d8f9ff"} strokeOpacity={.55} strokeWidth={r.width} strokeDasharray="40 65" style={{animation:`snow64Rush ${Math.max(.19,.46-power*.16)}s linear infinite`,animationDelay:`-${(i%9)*.062}s`}}/>)}
+  return <div aria-hidden="true" className="snow64-speedfx" style={{position:"absolute",inset:0,zIndex:2,pointerEvents:"none",overflow:"hidden",opacity:.3+power*.58}}>
+    <svg viewBox="0 0 1000 700" preserveAspectRatio="none" className="snow64-rush-layer"
+      style={{position:"absolute",inset:0,width:"100%",height:"100%",willChange:"transform,opacity"}}>
+      {rays.map((ray,i)=><line key={i} x1={ray.x1} y1={ray.y1} x2={ray.x2} y2={ray.y2}
+        stroke={i%3===0?"#ffffff":"#d5f6ff"} strokeOpacity={.56} strokeWidth={ray.width} strokeLinecap="round"/>)}
     </svg>
-    <div style={{position:"absolute",inset:0,
-      background:"linear-gradient(90deg,rgba(234,249,255,.52),transparent 20%,transparent 80%,rgba(234,249,255,.52))",
-      filter:`blur(${7+power*9}px)`,opacity:.22+power*.45}}/>
   </div>;
 }
 
@@ -987,7 +1003,8 @@ export default function SnowboardGame(){
     <style>{`
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
       @keyframes snowboardFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
-      @keyframes snow64Rush{from{stroke-dashoffset:105}to{stroke-dashoffset:0}}
+      @keyframes snow64RushLayer{from{transform:scale(.94);opacity:.4}to{transform:scale(1.13);opacity:1}}
+      .snow64-rush-layer{animation:snow64RushLayer .35s linear infinite;transform-origin:50% 50%;}
       @media (prefers-reduced-motion: reduce){.snow64-speedfx{display:none!important}}
       .snow64-panel{background:linear-gradient(130deg,#153b55ee,#0f2d46db);border:2px solid #c5eff4;border-radius:9px;box-shadow:3px 5px 0 #0e2a39bb;padding:8px 13px}
       .snow64-label{font-size:10px;font-weight:900;letter-spacing:.17em;color:#8feaf1}
@@ -996,11 +1013,11 @@ export default function SnowboardGame(){
       @media(max-width:680px){.snow64-label{font-size:8px}.snow64-panel{padding:5px 8px}.snow64-hud{gap:5px!important}}
     `}</style>
     <div style={{position:"absolute",inset:0,zIndex:0}}>
-      {mobile!==null && <Canvas key={retro ? "retro" : "hd"} dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.25:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
+      {mobile!==null && <Canvas key={retro ? "retro" : "hd"} dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.1:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
         <Scene mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>
-    <SpeedRush active={phase==="playing" && (mobile?touchTuckFx:hud.pose==="SnowboardTuck")} speed={hud.speed}/>
+    <SpeedRush mobile={mobile===true} active={phase==="playing" && (mobile?touchTuckFx:hud.pose==="SnowboardTuck")} speed={hud.speed}/>
     {/* Original retro filter, enabled only by the optional title-screen setting. */}
     {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
     <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,pointerEvents:"none"}}>
@@ -1039,11 +1056,11 @@ export default function SnowboardGame(){
           N64 FILTER: {retro?"ON":"OFF"}
         </button>}
         <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RIDE AGAIN"}</div>
-        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>RIGHT HALF: TAP TO JUMP · DRAW PATTERNS TO TRICK<br/>TOP CENTER: DRAG TO ROTATE FOLLOW CAMERA (CAMERA 2 DEFAULT)</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>1–0 / F = TRICKS (F = FRONTFLIP) &nbsp; • &nbsp; TOP CENTER DRAG = ORBIT &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
+        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS<br/>TOP CENTER: DRAG TO ROTATE FOLLOW CAMERA (CAMERA 2 DEFAULT)</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>1–0 / F = TRICKS (F = FRONTFLIP) &nbsp; • &nbsp; TOP CENTER DRAG = ORBIT &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
     {phase==="playing" && <FollowCameraDragArea cameraOrbitRef={cameraOrbit} mobile={mobile} />}
-    {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} act={act} phase={phase} runKey={runKey} onTuckChange={setTouchTuckFx} /> : null}
+    {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} stateRef={state} act={act} phase={phase} runKey={runKey} onTuckChange={setTouchTuckFx} /> : null}
     {phase==="playing" && <>
       <div style={{position:"absolute",bottom:mobile?14:18,left:mobile?10:24,zIndex:3,pointerEvents:"none",color:"#1a5268",fontSize:mobile?9:12,fontWeight:900,textShadow:"1px 1px #e9f8ff"}}>BEST {currentBest.toLocaleString()} &nbsp; ✦ {hud.coins} TOKENS</div>
       {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · TOP CENTER DRAG ORBIT · P PAUSE · C CAMERA</div>}

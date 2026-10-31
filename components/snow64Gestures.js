@@ -63,12 +63,12 @@ export function classifySnowGesture(points) {
   if (filtered.length < 2) return null;
   let length = 0;
   for (let i = 1; i < filtered.length; i++) length += distance(filtered[i], filtered[i - 1]);
-  if (length < 38) return null; // Ignore tiny finger jitter, but accept deliberate short phone strokes.
+  if (length < 25) return null; // Ignore tiny finger jitter, but accept deliberate short phone strokes.
   const xs = filtered.map(p => p.x), ys = filtered.map(p => p.y);
   const w = Math.max(...xs) - Math.min(...xs);
   const h = Math.max(...ys) - Math.min(...ys);
   const size = Math.max(w, h);
-  if (size < 29) return null;
+  if (size < 20) return null;
   const first = filtered[0], last = filtered[filtered.length - 1];
   const dx = last.x - first.x, dy = last.y - first.y;
   const direct = Math.hypot(dx, dy);
@@ -91,9 +91,9 @@ export function classifySnowGesture(points) {
   }
 
   // Straight strokes are reliably classified before the pattern templates.
-  if (direct > 35 && length / direct < 1.34) {
-    if (w > h * 1.3) return {key:'1', label:'180', shape: dx > 0 ? 'RIGHT SWIPE' : 'LEFT SWIPE', direction:dx>0?1:-1};
-    if (h > w * 1.3) return dy < 0 ? {key:'6', label:'INDY GRAB', shape:'UP SWIPE'} : {key:'9', label:'TAIL GRAB', shape:'DOWN SWIPE'};
+  if (direct > 23 && length / direct < 1.48) {
+    if (w > h * 1.15) return {key:'1', label:'180', shape: dx > 0 ? 'RIGHT SWIPE' : 'LEFT SWIPE', direction:dx>0?1:-1};
+    if (h > w * 1.15) return dy < 0 ? {key:'6', label:'INDY GRAB', shape:'UP SWIPE'} : {key:'9', label:'TAIL GRAB', shape:'DOWN SWIPE'};
     if (dx > 0 && dy < 0) return {key:'5', label:'METHOD', shape:'UP-RIGHT'};
     if (dx < 0 && dy < 0) return {key:'0', label:'NOSE GRAB', shape:'UP-LEFT'};
     if (dx > 0 && dy > 0) return {key:'6', label:'INDY GRAB', shape:'DOWN-RIGHT'};
