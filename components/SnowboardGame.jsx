@@ -5,8 +5,9 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html, useGLTF } from "@react-three/drei";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import * as THREE from "three";
-import { classifySnowGesture, MOBILE_TRICK_GUIDE } from "./snow64Gestures";
+import { classifySnowGesture } from "./snow64Gestures";
 import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landing";
+import { startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip, RAMP_LIP_HEIGHT } from "./snow64Physics";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
 // No Nintendo/N64 game assets are used. All mountain scenery, board and track are procedural.
@@ -14,7 +15,6 @@ const WEB_MODEL = "/models/pidgeonkitty-snowboard-v2.glb";
 const MOBILE_MODEL = "/models/pidgeonkitty-snowboard-v2-mobile.glb";
 const END_Z = -1050;
 const SLOPE = 0.077;
-const GRAVITY = 17.6;
 const LANES = [-7.4, -3.8, 0, 3.8, 7.4];
 const DEG = Math.PI / 180;
 const clamp = THREE.MathUtils.clamp;
@@ -24,15 +24,15 @@ const lerp = THREE.MathUtils.lerp;
 const TRICKS = [
   { key: "1", name: "180", points: 160, duration: 0.42, minHeight: 1.15, spins: 180, pose: "SnowboardIndy" },
   { key: "2", name: "360", points: 360, duration: 0.57, minHeight: 1.85, spins: 360, pose: "SnowboardIndy" },
-  { key: "3", name: "720", points: 800, duration: 0.86, minHeight: 3.05, spins: 720, pose: "SnowboardIndy" },
-  { key: "4", name: "1080", points: 1600, duration: 1.22, minHeight: 4.38, spins: 1080, pose: "SnowboardIndy" },
+  { key: "3", name: "720", points: 800, duration: 0.86, minHeight: 3.2, minLaunchSpeed: 28, requiresRamp: true, spins: 720, pose: "SnowboardIndy" },
+  { key: "4", name: "1080", points: 1600, duration: 1.22, minHeight: 5.0, minLaunchSpeed: 34, requiresRamp: true, spins: 1080, pose: "SnowboardIndy" },
   { key: "5", name: "METHOD", points: 450, duration: 0.65, minHeight: 1.85, roll: -0.58, pitch: -0.24, pose: "SnowboardMethod" },
   { key: "6", name: "INDY GRAB", points: 400, duration: 0.55, minHeight: 1.52, roll: 0.25, pitch: 0.16, pose: "SnowboardIndy" },
-  { key: "7", name: "BACKFLIP", points: 900, duration: 0.84, minHeight: 2.3, flip: -360, pose: "SnowboardOllie" },
-  { key: "8", name: "CORK 720", points: 1350, duration: 1.05, minHeight: 3.45, spins: 720, flip: -360, pose: "SnowboardMethod" },
+  { key: "7", name: "BACKFLIP", points: 900, duration: 0.84, minHeight: 2.65, bigAir: true, flip: -360, pose: "SnowboardOllie" },
+  { key: "8", name: "CORK 720", points: 1350, duration: 1.05, minHeight: 4.25, minLaunchSpeed: 32, requiresRamp: true, spins: 720, flip: -360, pose: "SnowboardMethod" },
   { key: "9", name: "TAIL GRAB", points: 510, duration: 0.64, minHeight: 1.87, roll: -0.18, pitch: 0.49, pose: "SnowboardTailgrab" },
   { key: "0", name: "NOSE GRAB", points: 520, duration: 0.64, minHeight: 1.87, roll: 0.16, pitch: -0.49, pose: "SnowboardNosegrab" },
-  { key: "f", name: "FRONTFLIP", points: 960, duration: 0.88, minHeight: 2.52, flip: 360, pose: "SnowboardFrontflip" },
+  { key: "f", name: "FRONTFLIP", points: 960, duration: 0.88, minHeight: 2.8, bigAir: true, flip: 360, pose: "SnowboardFrontflip" },
 ];
 
 let snowAudioContext;
@@ -236,24 +236,35 @@ function Mountains() {
 }
 
 function BoardTrail({stateRef}) {
-  const num=90;
-  const ref=useRef(),next=useRef(0);
-  const sparks=useMemo(()=>Array.from({length:num},()=>({x:0,y:0,z:0,life:0,vx:0,vy:0})),[]);
+  // GPU points, not individual React meshes. More particles when tucked/fast.
+  const num=250;
+  const ref=useRef(),next=useRef(0),spawnAccumulator=useRef(0);
+  const snow=useMemo(()=>Array.from({length:num},()=>({x:0,y:0,z:0,life:0,vx:0,vy:0,vz:0})),[]);
   const coords=useMemo(()=>new Float32Array(num*3).fill(100000),[]);
-  useFrame((_,dt)=>{
+  useFrame((_,rawDt)=>{
     if(!ref.current)return;
-    const s=stateRef.current;
-    if(s.speed>2 && !s.inAir && !s.recovery && s.t>0){
-      for(let k=0;k<2;k++){
-        const i=next.current++%num;const p=sparks[i];
-        const side=k===0?-1:1;
-        p.x=s.x+side*.31;p.y=groundY(s.x,s.z)+.14;p.z=s.z+.6;
-        p.life=.45;p.vx=side*(.8+s.speed*.05);p.vy=1.3;
+    const dt=Math.min(rawDt,.05),s=stateRef.current;
+    const moving=s.speed>4 && !s.inAir && !s.recovery && s.t>0;
+    if(moving){
+      const rate=clamp(28+s.speed*2.8+Math.abs(s.steer)*60,40,185);
+      spawnAccumulator.current=Math.min(10,spawnAccumulator.current+rate*dt);
+      let emit=Math.min(8,Math.floor(spawnAccumulator.current));
+      spawnAccumulator.current-=emit;
+      while(emit--){
+        const i=next.current++%num,p=snow[i];
+        const side=(i%2===0?-1:1),jitter=Math.sin(i*8.19+s.t*91.7);
+        p.x=s.x+side*(.31+jitter*.07);
+        p.y=groundY(s.x,s.z)+.12;
+        p.z=s.z+.57;
+        p.life=.30+Math.abs(jitter)*.34;
+        p.vx=side*(.7+s.speed*.045+Math.abs(s.steer)*1.4)+jitter*.65;
+        p.vy=.75+s.speed*.045+Math.abs(jitter)*1.8;
+        p.vz=1.4+s.speed*.27;
       }
     }
     for(let i=0;i<num;i++){
-      const p=sparks[i];p.life-=dt;
-      if(p.life>0){p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=1.6*dt;}
+      const p=snow[i];p.life-=dt;
+      if(p.life>0){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy-=6.4*dt;p.z+=p.vz*dt;}
       coords[i*3]=p.life>0?p.x:100000;
       coords[i*3+1]=p.y;coords[i*3+2]=p.z;
     }
@@ -261,7 +272,7 @@ function BoardTrail({stateRef}) {
   });
   return <points ref={ref} frustumCulled={false}>
     <bufferGeometry><bufferAttribute attach="attributes-position" array={coords} count={num} itemSize={3}/></bufferGeometry>
-    <pointsMaterial color="#f9ffff" size={.22} transparent opacity={.65} depthWrite={false}/>
+    <pointsMaterial color="#faffff" size={.18} transparent opacity={.86} depthWrite={false} sizeAttenuation/>
   </points>;
 }
 
@@ -319,13 +330,13 @@ function Snowboard() {
   </group>;
 }
 
-function initialState() {
+function initialState(cameraMode = 0) {
   return {
-    x:0,z:0,air:0,vy:0,speed:15.8,velX:0,steer:0,t:0,
+    x:0,z:0,air:0,worldY:0,vy:0,speed:15.8,velX:0,steer:0,t:0,launchSource:"none",launchSpeed:0,
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
     peakAir:0, flightTime:0, recovery:null,
     combo:0, score:0, coins:0, hits:0, lastText:"", textUntil:0,
-    trick:null, currentPose:"SnowboardIdle", cameraMode:0,
+    trick:null, currentPose:"SnowboardIdle", cameraMode,
     consumedRamps:new Set(),consumedRocks:new Set(),
   };
 }
@@ -353,6 +364,8 @@ function beginSnowRecovery(s, kind, reason, onSound) {
   s.inAir = false;
   s.vy = 0;
   s.air = 0;
+  s.worldY = groundY(s.x, s.z);
+  s.launchSource = "none";
   s.trick = null;
   s.impact = 0;
   s.speed = Math.min(8, s.speed * .34);
@@ -361,7 +374,7 @@ function beginSnowRecovery(s, kind, reason, onSound) {
   onSound("crash");
 }
 
-function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef, onHud, onFinish, onSound }) {
+function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef, cameraOrbitRef, onHud, onFinish, onSound }) {
   const {scene, animations}=useGLTF(mobile?MOBILE_MODEL:WEB_MODEL);
   const character=useMemo(()=>cloneSkinned(scene),[scene]);
   const mixer=useMemo(()=>new THREE.AnimationMixer(character),[character]);
@@ -371,11 +384,12 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const {camera}=useThree();
   useEffect(()=>{phaseRef.current=phase;},[phase]);
   useEffect(()=>{
-    stateRef.current=initialState(); collectedRef.current.clear(); queueRef.current.length=0;
+    stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;
+    delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
     if (root.current) root.current.position.set(0,.1,0);
-  },[runKey,stateRef,collectedRef,queueRef]);
+  },[runKey,stateRef,collectedRef,queueRef,camera]);
   useEffect(()=>()=>mixer.stopAllAction(),[mixer]);
 
   useFrame((_, rawDt)=>{
@@ -390,28 +404,25 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       if (command.type === "camera") s.cameraMode = (s.cameraMode + 1) % 3;
       if (!playing || s.recovery) continue;
       if (command.type === "jump" && !s.inAir && s.jumpCooldown <= 0) {
-        s.inAir = true;
-        s.vy = 8.6 + (tuck ? 1.15 : 0) + 4.2 * clamp(command.boost || 0, 0, 1);
-        s.air = .03; s.peakAir = 0; s.flightTime = 0;
-        s.jumpCooldown = .3; s.trick = null;
-        s.lastText = (command.boost || 0) > .5 ? "POWER OLLIE!" : "OLLIE!";
+        const boost=clamp(command.boost || 0,0,1);
+        startSnowJump(s,groundY(s.x,s.z),{velocity:7.9+(tuck?.8:0)+4.0*boost,source:"ollie"});
+        s.lastText = boost>.6 ? "CHARGED OLLIE!" : "OLLIE!";
         s.textUntil = s.t + .9;
         onSound("jump");
       }
       if (command.type === "trick") {
-        const found = TRICKS.find(q => q.key === command.key);
-        const trick = found ? { ...found, spins: found.spins && command.direction === -1 ? -found.spins : found.spins } : null;
-        if (trick && !s.inAir && s.jumpCooldown <= 0) {
-          // Quick tricks trigger an ollie, but do NOT guarantee sufficient height.
-          // For 720/1080/Cork tricks, use a ramp or a charged jump then trick in midair.
-          s.inAir = true; s.vy = 9.2;
-          s.air = .03; s.peakAir = 0; s.flightTime = 0;
-          s.jumpCooldown = .4; s.trick = null; onSound("jump");
+        const found=TRICKS.find(q=>q.key===command.key);
+        const trick=found ? {...found,spins:found.spins&&command.direction===-1?-found.spins:found.spins} : null;
+        if(trick && !s.inAir && s.jumpCooldown<=0){
+          // A ground-drawn trick launches only a short ollie. For big spins, time
+          // the drawing while airborne after taking off from a proper ramp.
+          startSnowJump(s,groundY(s.x,s.z),{velocity:8.8,source:"ollie"});
+          onSound("jump");
         }
-        if (trick && s.inAir && !s.trick) {
-          s.trick = { ...trick, t: 0 };
-          s.lastText = `${trick.name} • NEED ${trick.minHeight.toFixed(1)}m BIG AIR`;
-          s.textUntil = s.t + 1.4;
+        if(trick && s.inAir && !s.trick){
+          s.trick={...trick,t:0};
+          s.lastText=trick.requiresRamp?`${trick.name} • RAMP BIG AIR REQUIRED`:`${trick.name} • NEED ${trick.minHeight.toFixed(1)}m AIR`;
+          s.textUntil=s.t+1.4;
         }
       }
     }
@@ -438,30 +449,27 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (tuck ? .95 : .45)));
         s.velX = lerp(s.velX, s.steer * (s.inAir ? 5.0 : 9.2), Math.min(1, dt * (s.inAir ? 2.8 : 5.5)));
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
+        const previousZ=s.z;
         s.z -= s.speed * dt;
         if (!s.inAir) {
-          for (const ramp of COURSE.ramps) {
-            if (s.consumedRamps.has(ramp.id)) continue;
-            if (Math.abs(s.z - ramp.z) < 1.7 && Math.abs(s.x - ramp.x) < 1.95 && s.jumpCooldown <= 0) {
-              s.inAir = true; s.vy = 11.7; s.air = .02;
-              s.peakAir = 0; s.flightTime = 0;
-              s.jumpCooldown = .4; s.trick = null;
+          for(const ramp of COURSE.ramps){
+            if(s.consumedRamps.has(ramp.id)) continue;
+            if(crossedRampLip(ramp,previousZ,s.z,s.x) && s.jumpCooldown<=0){
+              const verticalSpeed=rampTakeoffSpeed(s.speed);
+              startSnowJump(s,groundY(s.x,s.z),{velocity:verticalSpeed,source:"ramp",lift:RAMP_LIP_HEIGHT});
               s.consumedRamps.add(ramp.id);
-              s.lastText = "BIG AIR!"; s.textUntil = s.t + 1.5;
-              onSound("jump"); break;
+              s.lastText=s.speed>=28?"RAMP BIG AIR!":"RAMP TAKEOFF!";
+              s.textUntil=s.t+1.5;
+              onSound("jump");break;
             }
           }
         }
-        if (s.inAir) {
-          s.vy -= GRAVITY * dt;
-          s.air += s.vy * dt;
-          s.flightTime += dt;
-          s.peakAir = Math.max(s.peakAir, s.air);
-          if (s.trick) s.trick.t += dt;
-          if (s.air <= 0) {
-            s.air = 0; s.vy = 0; s.inAir = false;
+        if(s.inAir){
+          const landed=stepSnowJump(s,dt,groundY(s.x,s.z));
+          if(s.trick)s.trick.t+=dt;
+          if(landed){
             if (s.trick) {
-              const result = judgeSnowLanding(s.trick, s.peakAir, s.steer, s.flightTime);
+              const result = judgeSnowLanding(s.trick, s.peakAir, s.steer, {flightTime:s.flightTime,launchSource:s.launchSource,launchSpeed:s.launchSpeed});
               if (result.grade === "clean") {
                 s.combo++;
                 const earned = s.trick.points * Math.min(5, s.combo);
@@ -473,7 +481,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
                 s.impact = .45;
                 s.trick = null;
               } else {
-                const label = result.grade === "wipeout" ? "WIPEOUT!" : "SKETCHY LANDING!";
+                const label = result.grade === "wipeout" ? (result.reason === "NO RAMP BIG AIR" ? "NO BIG AIR • WIPEOUT!" : "WIPEOUT!") : "SKETCHY LANDING!";
                 beginSnowRecovery(s, result.grade, label, onSound);
               }
             } else s.impact = .45;
@@ -574,16 +582,32 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         riderModel.current.position.y = .17;
       }
     }
-    // Close three-quarter camera, offset sideways to frame the rider's face and board.
-    const offsets=[[-3.0,2.25,5.6],[-.7,3.15,10.5],[-6.1,4.2,12.5]];
+    // A draggable orbit stays anchored on the moving rider. Dragging never
+    // rotates the rider, changes the race line, or disables follow tracking.
+    // Camera 2 is closer and centered on portrait devices.
+    const offsets=[[-3.0,2.25,5.6],mobile?[-.25,2.65,7.6]:[-.7,3.15,10.5],[-6.1,4.2,12.5]];
     const off=offsets[s.cameraMode];
-    const dest=new THREE.Vector3(s.x+off[0]+s.steer*.4,cy+s.air*.32+off[1],s.z+off[2]);
     const look=new THREE.Vector3(s.x,cy+1.14+s.air*.45,s.z-1.3);
+    const relX=off[0]+s.steer*.4;
+    const relY=off[1]-1.14-s.air*.13;
+    const relZ=off[2]+1.3;
+    const radius=Math.hypot(relX,relY,relZ);
+    const horizontal=Math.hypot(relX,relZ);
+    const orbit=cameraOrbitRef.current;
+    const azimuth=Math.atan2(relX,relZ)+orbit.yaw;
+    const elevation=clamp(Math.atan2(relY,horizontal)+orbit.pitch,.12,1.18);
+    const projected=radius*Math.cos(elevation);
+    const dest=new THREE.Vector3(
+      look.x+Math.sin(azimuth)*projected,
+      look.y+Math.sin(elevation)*radius,
+      look.z+Math.cos(azimuth)*projected,
+    );
     if(!cameraReady.current){camera.position.copy(dest);cameraReady.current=true;}
-    else camera.position.lerp(dest,Math.min(1,dt*4));
+    else camera.position.lerp(dest,Math.min(1,dt*(orbit.dragging?11:4.8)));
     const targetLook=camera.userData._look || (camera.userData._look=look.clone());
-    targetLook.lerp(look,Math.min(1,dt*5));camera.lookAt(targetLook);
-    camera.fov=lerp(camera.fov,42+Math.max(0,s.speed-20)*.16,Math.min(1,dt*2));camera.updateProjectionMatrix();
+    targetLook.lerp(look,Math.min(1,dt*7));camera.lookAt(targetLook);
+    const baseFov=mobile?43:42;
+    camera.fov=lerp(camera.fov,baseFov+Math.max(0,s.speed-20)*.16,Math.min(1,dt*2));camera.updateProjectionMatrix();
     frame.current+=dt;
     if(frame.current>.12){frame.current=0;onHud(safeHud(s));}
   });
@@ -602,7 +626,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
 function Loading() {
   return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
 }
-function Scene({mobile,phase,runKey,keyRef,queueRef,onHud,onFinish,onSound,collectedRef,stateRef}){
+function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef}){
   return <>
     <color attach="background" args={["#bfd9e6"]}/>
     <fog attach="fog" args={["#c1dce9",30,138]}/>
@@ -612,7 +636,7 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,onHud,onFinish,onSound,colle
     <Course collectedRef={collectedRef}/>
     <Mountains/>
     <Suspense fallback={<Loading/>}>
-      <Rider mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
+      <Rider mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
     </Suspense>
     <Snowfall stateRef={stateRef}/>
     <BoardTrail stateRef={stateRef}/>
@@ -626,13 +650,8 @@ function formatTime(s){const m=Math.floor(s/60);const sec=(s%60).toFixed(2).padS
 function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
   const steering = useRef(null);
   const drawing = useRef(null);
-  const stickBase = useRef(null);
-  const stickKnob = useRef(null);
   const strokePath = useRef(null);
-  const noticeTimeout = useRef(null);
   const strokeTimeout = useRef(null);
-  const [notice, setNotice] = useState("");
-  const [tuckFx, setTuckFx] = useState(false);
 
   useEffect(() => {
     // Explicitly release held controls after pausing, restarting or unmounting.
@@ -643,33 +662,17 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
     return () => {
       inputRef.current.steerAnalog = 0;
       inputRef.current.touchTuck = false;
-      setTuckFx(false);
-      onTuckChange?.(false);
-      clearTimeout(noticeTimeout.current);
+        onTuckChange?.(false);
       clearTimeout(strokeTimeout.current);
     };
   }, [inputRef, phase, runKey]);
 
-  function flash(message) {
-    clearTimeout(noticeTimeout.current);
-    setNotice(message);
-    noticeTimeout.current = setTimeout(() => setNotice(""), 1450);
-  }
   function startSteer(e) {
     if (phase !== "playing" || steering.current) return;
     e.preventDefault();
-    const r = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - r.left, y = e.clientY - r.top;
     steering.current = {id:e.pointerId, x:e.clientX, y:e.clientY};
-    setTuckFx(false);
     onTuckChange?.(false);
     e.currentTarget.setPointerCapture(e.pointerId);
-    if (stickBase.current) {
-      const el = stickBase.current;
-      el.style.left = `${x}px`; el.style.top = `${y}px`;
-      el.style.bottom = "auto"; el.style.opacity = "1";
-    }
-    if (stickKnob.current) stickKnob.current.style.transform = "translate(-50%,-50%)";
   }
   function moveSteer(e) {
     if (!steering.current || steering.current.id !== e.pointerId) return;
@@ -679,7 +682,6 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
     inputRef.current.steerAnalog = clamp(dx / 68, -1, 1);
     const isTuck = dy < -43;
     inputRef.current.touchTuck = isTuck;
-    setTuckFx(isTuck);
     onTuckChange?.(isTuck);
   }
   function endSteer(e) {
@@ -687,7 +689,6 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
     steering.current = null;
     inputRef.current.steerAnalog = 0;
     inputRef.current.touchTuck = false;
-    setTuckFx(false);
     onTuckChange?.(false);
   }
   function drawLine() {
@@ -726,24 +727,19 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
       if (gesture) {
         // A drawn trick also launches a jump when the rider is on the snow.
         act({type:"trick",key:gesture.key,direction:gesture.direction});
-        flash(`${gesture.shape}  →  ${gesture.label}`);
       } else {
         const elapsed = performance.now() - d.time;
         act({type:"jump",boost:clamp((elapsed-120)/750,0,1)});
-        flash(elapsed > 460 ? "POWER OLLIE!" : "OLLIE!");
       }
     }
     clearTimeout(strokeTimeout.current);
     strokeTimeout.current = setTimeout(() => strokePath.current?.setAttribute("d", ""), 350);
   }
 
-  const zone = {position:"absolute",top:0,bottom:0,zIndex:4,touchAction:"none",
+  const zone = {position:"absolute",top:192,bottom:0,zIndex:4,touchAction:"none",
     userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",overflow:"hidden"};
 
   return <>
-    {tuckFx && <div aria-hidden="true" style={{position:"absolute",inset:0,zIndex:4,pointerEvents:"none",
-      background:"radial-gradient(circle at 50% 50%, transparent 0 42%, rgba(255,255,255,0.08) 62%, transparent 78%), repeating-linear-gradient(110deg, transparent 0 12px, rgba(255,255,255,0.28) 12px 15px, transparent 15px 32px)",
-      opacity:.52, mixBlendMode:"screen", animation:"snow64SpeedLines .28s linear infinite"}} />}
     <div aria-label="Steering touchpad: drag left or right to carve and upward to tuck"
       style={{...zone,left:0,width:"50%"}} onPointerDown={startSteer}
       onPointerMove={moveSteer} onPointerUp={endSteer}
@@ -758,18 +754,82 @@ function MobileTouchControls({ inputRef, act, phase, runKey, onTuckChange }) {
           style={{filter:"drop-shadow(0 0 5px #ff9ca8)"}}/>
       </svg>
     </div>
-    {notice && <div aria-live="polite" style={{position:"absolute",zIndex:5,top:"18%",left:"50%",transform:"translateX(-50%)",
-      padding:"9px 14px",borderRadius:8,background:"#183e5bdd",color:"#ffe89b",font:"900 15px system-ui",
-      textShadow:"1px 1px #22405b",whiteSpace:"nowrap",pointerEvents:"none"}}>{notice}</div>}
   </>;
+}
+
+/** Lightweight screen-space speed rush. No heavy postprocessing or extra Canvas. */
+function SpeedRush({active,speed}){
+  const power=clamp((speed-82)/52,0,1);
+  const show=active && power>.04;
+  const rays=useMemo(()=>Array.from({length:38},(_,i)=>{
+    const angle=2*Math.PI*(i+.37)/38;
+    const x1=500+Math.cos(angle)*(155+(i%5)*21);
+    const y1=350+Math.sin(angle)*(118+(i%6)*15);
+    const x2=500+Math.cos(angle)*(770+(i%4)*75);
+    const y2=350+Math.sin(angle)*(580+(i%3)*70);
+    return {x1,y1,x2,y2,width:i%4===0?3:1.4};
+  }),[]);
+  if(!show)return null;
+  return <div className="snow64-speedfx" aria-hidden="true" style={{position:"absolute",inset:0,zIndex:2,pointerEvents:"none",overflow:"hidden",opacity:.22+power*.65,
+    WebkitMaskImage:"radial-gradient(ellipse at 50% 49%,transparent 0%,transparent 30%,black 75%)",maskImage:"radial-gradient(ellipse at 50% 49%,transparent 0%,transparent 30%,black 75%)"}}>
+    <svg viewBox="0 0 1000 700" preserveAspectRatio="none" style={{height:"100%",width:"100%",position:"absolute",inset:0}}>
+      {rays.map((r,i)=><line key={i} x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2} stroke={i%4===0?"#ffffff":"#d8f9ff"} strokeOpacity={.55} strokeWidth={r.width} strokeDasharray="40 65" style={{animation:`snow64Rush ${Math.max(.19,.46-power*.16)}s linear infinite`,animationDelay:`-${(i%9)*.062}s`}}/>)}
+    </svg>
+    <div style={{position:"absolute",inset:0,
+      background:"linear-gradient(90deg,rgba(234,249,255,.52),transparent 20%,transparent 80%,rgba(234,249,255,.52))",
+      filter:`blur(${7+power*9}px)`,opacity:.22+power*.45}}/>
+  </div>;
+}
+
+/** Transparent top-center drag region: no buttons, and both touch zones stay free. */
+function FollowCameraDragArea({ cameraOrbitRef, mobile }) {
+  const pointer = useRef(null);
+  const down = (e) => {
+    if(e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pointer.current={id:e.pointerId,x:e.clientX,y:e.clientY};
+    cameraOrbitRef.current.dragging=true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const move = (e) => {
+    const prev=pointer.current;
+    if(!prev || prev.id !== e.pointerId) return;
+    e.preventDefault();
+    const dx=e.clientX-prev.x, dy=e.clientY-prev.y;
+    const orbit=cameraOrbitRef.current;
+    orbit.yaw=(orbit.yaw+dx*.009)%(2*Math.PI);
+    orbit.pitch=clamp(orbit.pitch-dy*.0075,-.42,.98);
+    pointer.current={id:e.pointerId,x:e.clientX,y:e.clientY};
+  };
+  const release = (e) => {
+    if(!pointer.current || pointer.current.id !== e.pointerId) return;
+    pointer.current=null;
+    cameraOrbitRef.current.dragging=false;
+  };
+  const reset = (e) => {
+    e.preventDefault();
+    cameraOrbitRef.current.yaw=0;
+    cameraOrbitRef.current.pitch=0;
+  };
+  return <div role="region" aria-label="Camera orbit: drag left, right, up or down. Double click to reset the camera."
+    onPointerDown={down} onPointerMove={move} onPointerUp={release}
+    onPointerCancel={release} onLostPointerCapture={release} onDoubleClick={reset}
+    style={{position:"absolute",zIndex:5,left:"50%",transform:"translateX(-50%)",
+      top:mobile?82:9,height:mobile?108:119,width:mobile?"min(56vw,260px)":"min(36vw,420px)",
+      touchAction:"none",userSelect:"none",WebkitUserSelect:"none",cursor:"grab",
+      display:"flex",alignItems:"flex-start",justifyContent:"center"}}>
+    <span aria-hidden="true" style={{font:"800 10px system-ui, sans-serif",letterSpacing:1.2,
+      marginTop:mobile?4:14,opacity:.76,color:"#eaffff",pointerEvents:"none",
+      textShadow:"0 2px 4px #19445b, 0 0 7px #19445b"}}>↔ DRAG CAMERA ↕</span>
+  </div>;
 }
 
 export default function SnowboardGame(){
   const [phase,setPhase]=useState("ready");
   const [runKey,setRunKey]=useState(0);
   const [mobile,setMobile]=useState(null);
-  const [retro,setRetro]=useState(true);
-  const [soundEnabled,setSoundEnabled]=useState(true);
+  const retro = true;
   const soundRef=useRef(true);
   const [best,setBest]=useState(0);
   const [hud,setHud]=useState({speed:57,score:0,distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
@@ -777,6 +837,7 @@ export default function SnowboardGame(){
   const sound=useCallback(kind=>{if(soundRef.current)synthSfx(kind);},[]);
   const input=useRef({left:false,right:false,tuck:false,steerAnalog:0,touchTuck:false});
   const queue=useRef([]);
+  const cameraOrbit=useRef({yaw:0,pitch:0,dragging:false});
   const state=useRef(initialState());
   const collected=useRef(new Set());
   const lastPhase=useRef(phase);
@@ -789,9 +850,10 @@ export default function SnowboardGame(){
   },[]);
   const start=useCallback(()=>{
     input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;
-    queue.current.length=0;collected.current.clear();state.current=initialState();
+    queue.current.length=0;collected.current.clear();state.current=initialState(mobile?1:0);
+    cameraOrbit.current.yaw=0;cameraOrbit.current.pitch=0;cameraOrbit.current.dragging=false;
     setHud(safeHud(state.current));setRunKey(k=>k+1);setPhase("playing");sound("start");
-  },[sound]);
+  },[sound,mobile]);
   const onFinish=useCallback(h=>{
     setHud(h);setPhase("finished");
     setBest(b=>{const v=Math.max(b,h.score);try{localStorage.setItem("pidgeonkitty-snow-64-best",String(v));}catch{}return v;});
@@ -831,7 +893,8 @@ export default function SnowboardGame(){
     <style>{`
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
       @keyframes snowboardFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
-      @keyframes snow64SpeedLines{from{transform:translateX(0)}to{transform:translateX(-44px)}}
+      @keyframes snow64Rush{from{stroke-dashoffset:105}to{stroke-dashoffset:0}}
+      @media (prefers-reduced-motion: reduce){.snow64-speedfx{display:none!important}}
       .snow64-panel{background:linear-gradient(130deg,#153b55ee,#0f2d46db);border:2px solid #c5eff4;border-radius:9px;box-shadow:3px 5px 0 #0e2a39bb;padding:8px 13px}
       .snow64-label{font-size:10px;font-weight:900;letter-spacing:.17em;color:#8feaf1}
       .snow64-number{font-weight:1000;font-style:italic;font-size:clamp(17px,2.6vw,30px);letter-spacing:.025em;text-shadow:2px 2px #193447}
@@ -840,9 +903,10 @@ export default function SnowboardGame(){
     `}</style>
     <div style={{position:"absolute",inset:0,zIndex:0}}>
       {mobile!==null && <Canvas dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.25:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
-        <Scene mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} stateRef={state} collectedRef={collected} onHud={setHud} onFinish={onFinish} onSound={sound}/>
+        <Scene mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>
+    <SpeedRush active={phase==="playing" && (mobile?touchTuckFx:hud.pose==="SnowboardTuck")} speed={hud.speed}/>
     {/* Low-opacity scanlines and letterboxed arcade atmosphere, without intercepting controls. */}
     {retro&&<div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
     <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,pointerEvents:"none"}}>
@@ -855,7 +919,7 @@ export default function SnowboardGame(){
         {[{label:"SPEED",value:hud.speed,unit:"KM/H"},{label:"TIME",value:formatTime(hud.time)},{label:"SCORE",value:hud.score.toLocaleString()}].map(v=><div key={v.label} className="snow64-panel" style={{minWidth:mobile?65:100,textAlign:"center"}}><div className="snow64-label">{v.label}</div><div className="snow64-number">{v.value}<span style={{fontSize:9,marginLeft:2}}>{v.unit}</span></div></div>)}
       </div>
     </div>
-    {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?92:116,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none"}}>
+    {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?192:145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none"}}>
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
       {hud.air && <div style={{fontWeight:900,color:"#d7f8ff",textShadow:"2px 2px #285467",fontSize:12}}>AIR {hud.airHeight.toFixed(1)}m · PEAK {hud.peakAir.toFixed(1)}m</div>}
       {hud.recovery!=="riding" && <div style={{fontWeight:900,color:"#ffd89a",textShadow:"2px 2px #285467",fontSize:12}}> {hud.recovery==="chasing" ? "RUNNING BACK TO THE BOARD" : hud.recovery==="remounting" ? "REMOUNTING" : "RIDER DOWN"}</div>}
@@ -873,13 +937,14 @@ export default function SnowboardGame(){
         <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 20px"}}>{phase==="ready"?"Carve through alpine powder. Launch from ramps. Pull massive spins and wild grabs. Big-air tricks only count if you really earn the height.":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`RUN COMPLETE! ${hud.score.toLocaleString()} points · ${hud.coins} tokens · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST: {currentBest.toLocaleString()} PTS</div>}
         <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RIDE AGAIN"}</div>
-        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>RIGHT HALF: TAP TO JUMP · DRAW PATTERNS TO TRICK</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>1–0 / F = TRICKS (F = FRONTFLIP) &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
+        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>RIGHT HALF: TAP TO JUMP · DRAW PATTERNS TO TRICK<br/>TOP CENTER: DRAG TO ROTATE FOLLOW CAMERA (CAMERA 2 DEFAULT)</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>1–0 / F = TRICKS (F = FRONTFLIP) &nbsp; • &nbsp; TOP CENTER DRAG = ORBIT &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
+    {phase==="playing" && <FollowCameraDragArea cameraOrbitRef={cameraOrbit} mobile={mobile} />}
     {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} act={act} phase={phase} runKey={runKey} onTuckChange={setTouchTuckFx} /> : null}
     {phase==="playing" && <>
       <div style={{position:"absolute",bottom:mobile?14:18,left:mobile?10:24,zIndex:3,pointerEvents:"none",color:"#1a5268",fontSize:mobile?9:12,fontWeight:900,textShadow:"1px 1px #e9f8ff"}}>BEST {currentBest.toLocaleString()} &nbsp; ✦ {hud.coins} TOKENS</div>
-      {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · P PAUSE · C CAMERA</div>}
+      {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · TOP CENTER DRAG ORBIT · P PAUSE · C CAMERA</div>}
     </>}
   </main>;
 }
