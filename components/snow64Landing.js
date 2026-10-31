@@ -13,7 +13,7 @@ export function judgeSnowLanding(trick, peakHeight, steering = 0, context = {}) 
 
   // The biggest spins demand a steep fast ramp. A charged flat-ground ollie
   // can NEVER qualify for 720, 1080 or Cork 720, no matter how much it jumps.
-  if(trick.requiresRamp && (launchSource!=="ramp" || launchSpeed < (trick.minLaunchSpeed || 0))){
+  if(trick.requiresRamp && ((launchSource!=="ramp" && launchSource!=="power") || launchSpeed < (trick.minLaunchSpeed || 0))){
     return {grade:"wipeout",reason:"NO RAMP BIG AIR",progress,heightRatio};
   }
   // Height is measured from the actual ballistic flight over descending terrain.

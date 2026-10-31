@@ -1,11 +1,13 @@
 /** Snow 64 collision helpers. Physics only; no Three.js dependency. */
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const SIDE_PAD = 0.32; // rider/board overhang beyond visible 2m half-width
+const END_PAD = 0.24; // prevent narrow gaps near ramp ends
 
 /** Surface of the solid ramp deck, null when outside its rectangular footprint. */
 export function rampTopAt(ramp, x, z, terrainHeight) {
   const half = (ramp.length ?? 3) / 2;
-  if (Math.abs(x - ramp.x) > 1.96 || z < ramp.z - half || z > ramp.z + half) return null;
-  const t = clamp((ramp.z + half - z) / (2 * half), 0, 1);
+  if (Math.abs(x - ramp.x) > 2 + SIDE_PAD || z < ramp.z - half - END_PAD || z > ramp.z + half + END_PAD) return null;
+  const t = clamp((ramp.z + half + END_PAD - z) / (2 * half + END_PAD), 0, 1);
   return terrainHeight(ramp.x, ramp.z) + t * ramp.height;
 }
 
@@ -40,15 +42,16 @@ export function sweptRockHit(from, to, rock, terrainHeight, riderRadius = 0.37) 
 /** Do not let the rider teleport onto tall ramp sides when entering from the edge. */
 export function sweptRampSideHit(from, to, ramp, terrainHeight) {
   const half = (ramp.length ?? 3) / 2;
-  const side = from.x < ramp.x ? ramp.x - 1.96 : ramp.x + 1.96;
+  const halfWidth = 2 + SIDE_PAD;
+  const side = from.x < ramp.x ? ramp.x - halfWidth : ramp.x + halfWidth;
   const dx = to.x - from.x;
   if (Math.abs(dx) < 1e-8) return false;
   const crossed = (from.x < side && to.x >= side) || (from.x > side && to.x <= side);
-  if (!crossed || Math.abs(from.x - ramp.x) <= 1.96) return false;
+  if (!crossed || Math.abs(from.x - ramp.x) <= halfWidth) return false;
   const t = (side - from.x) / dx;
   if (t < 0 || t > 1) return false;
   const z = from.z + (to.z - from.z) * t;
-  if (z < ramp.z - half || z > ramp.z + half) return false;
+  if (z < ramp.z - half - END_PAD || z > ramp.z + half + END_PAD) return false;
   const height = terrainHeight(ramp.x, ramp.z) + ramp.height * clamp((ramp.z + half - z) / (2 * half), 0, 1);
   return from.y + (to.y - from.y) * t < height - 0.08;
 }

@@ -16,9 +16,13 @@ export function rampAirPotential(speed,ramp={}){
   return {velocity,peakHeight:(ramp.height||RAMP_LIP_HEIGHT)+velocity*velocity/(2*SNOW_GRAVITY),
     nominalAirtime:2*velocity/SNOW_GRAVITY};
 }
-export function crossedRampLip(ramp,previousZ,z,x){
-  const lipZ=ramp.z-(ramp.length??3)/2;
-  return previousZ>lipZ && z<=lipZ && Math.abs(x-ramp.x)<1.85;
+/** Swept crossing against lip, padded to accommodate board width and fast lateral steering. */
+export function crossedRampLip(ramp,previousZ,z,x,previousX=x){
+  const lipZ=ramp.z-(ramp.length??3)/2 + 0.12;
+  if(previousZ < lipZ || z > lipZ || previousZ===z) return false;
+  const t=Math.min(1,Math.max(0,(previousZ-lipZ)/(previousZ-z)));
+  const crossedX=previousX+(x-previousX)*t;
+  return Math.abs(crossedX-ramp.x) <= 2.32;
 }
 export function startSnowJump(s,groundHeight,{velocity,source='ollie',lift=0}){
   s.inAir=true;

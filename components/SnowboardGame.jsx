@@ -9,6 +9,7 @@ import { classifySnowGesture } from "./snow64Gestures";
 import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landing";
 import { startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip } from "./snow64Physics";
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit } from "./snow64Collision";
+import { recordSnowPoints, maybeSpawnSnowMushroom, mushroomCollision, activateSnowMushroom } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 
@@ -54,6 +55,7 @@ function synthSfx(kind) {
       trick: [[520,.00,.07],[780,.08,.09],[1040,.18,.17]],
       crash: [[140,.00,.14],[90,.12,.26]],
       finish: [[392,.00,.14],[494,.17,.15],[587,.35,.16],[784,.56,.32]],
+      power: [[590,.00,.10],[790,.12,.14],[1050,.27,.19]],
     }[kind] || [];
     const now=snowAudioContext.currentTime;
     notes.forEach(([freq,delay,duration])=>{
@@ -186,6 +188,26 @@ function Ramp({ x, z, index, height = 1.12, length = 3, superAir = false }) {
       </>}
     </group>
   );
+}
+
+/** Original frost-spark mushroom collectible: violet cap, icy dots and teal aura. */
+function FrostMushroom({stateRef}) {
+  const group=useRef();
+  useFrame(({clock})=>{
+    const g=group.current; if(!g)return;
+    const item=stateRef.current.mushroom;
+    g.visible=!!item;
+    if(!item)return;
+    g.position.set(item.x,groundY(item.x,item.z)+.92+Math.sin(clock.elapsedTime*3.5)*.20,item.z);
+    g.rotation.y=clock.elapsedTime*1.4;
+  });
+  return <group ref={group} visible={false}>
+    <mesh position={[0,.10,0]}><cylinderGeometry args={[.20,.28,.73,8]} /><meshLambertMaterial color="#fff9e5" /></mesh>
+    <mesh position={[0,.50,0]} scale={[.68,.34,.63]}><sphereGeometry args={[1,12,8]} /><meshStandardMaterial color="#b955e5" emissive="#4e166b" emissiveIntensity={.6} roughness={.35} /></mesh>
+    {[[.38,.63,.18],[-.32,.63,.13],[0,.81,0],[.16,.55,-.42],[-.25,.52,-.35]].map(([x,y,z],i)=><mesh key={i} position={[x,y,z]} scale={[.14,.055,.11]}><sphereGeometry args={[1,7,5]} /><meshBasicMaterial color="#9ffff4" /></mesh>)}
+    <mesh position={[0,-.30,0]} rotation={[-Math.PI/2,0,0]}><torusGeometry args={[.64,.045,5,18]} /><meshBasicMaterial color="#7afde6" /></mesh>
+    <mesh position={[0,.65,0]} scale={[.95,.62,.95]}><sphereGeometry args={[1,10,6]} /><meshBasicMaterial color="#ad54ff" transparent opacity={.12} depthWrite={false}/></mesh>
+  </group>;
 }
 
 function Coin({ x, z, id, collectedRef }) {
@@ -341,6 +363,9 @@ function initialState(cameraMode = 0) {
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
     armedTrick:null, // Gesture drawn shortly before takeoff, activated on the next jump/ramp.
     launchSuper:false,
+    mushroom:null, mushroomTime:0, mushroomCooldownTime:-200, mushroomCooldownDistance:-1000,
+    mushroomCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
+    scoreGainEvents:[],
     consumedRamps:new Set(),consumedRocks:new Set(),
   };
 }
@@ -349,6 +374,7 @@ function safeHud(s) {
     speed:Math.round(s.speed*3.6),
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.floor(-s.z), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
+    powerRemaining:s.powerTime, mushroomReady:!!s.mushroom,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
     recovery:recoveryStage(s.recovery),
     trick:s.recovery ? (s.textUntil>s.t ? s.lastText : (recoveryStage(s.recovery)==="chasing" ? "RUN FOR YOUR BOARD!" : "GETTING UP..."))
@@ -366,6 +392,7 @@ function beginSnowRecovery(s, kind, reason, onSound) {
   s.combo = 0;
   s.hits += 1;
   s.recovery = { kind, t: 0, duration: recoveryDuration(kind) };
+  s.powerAutoJumpDelay=2.0;
   s.lastText = `${reason}  −${penalty} PTS`;
   s.textUntil = s.t + 1.85;
   s.inAir = false;
@@ -425,7 +452,14 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const playing=phaseRef.current==="playing";
     const left=keyRef.current.left?1:0,right=keyRef.current.right?1:0;
     const tuck=(keyRef.current.tuck || keyRef.current.touchTuck) && playing;
-    const steerWanted=playing?clamp(right-left+(keyRef.current.steerAnalog||0),-1,1):0;
+    let steerWanted=playing?clamp(right-left+(keyRef.current.steerAnalog||0),-1,1):0;
+    if(playing && s.powerTime>0 && !s.recovery){
+      // Automatic slalom but still respect a player's strong steering input.
+      const ahead=localChunks.flatMap(c=>c.rocks).find(r=>r.z<s.z && r.z>s.z-24 && Math.abs(r.x-s.x)<2.9);
+      const autoX=ahead ? clamp(ahead.x+(s.x>ahead.x?3.4:-3.4),-8.8,8.8) : Math.sin(s.t*1.18)*2.9;
+      const autoSteer=clamp((autoX-s.x)*.38,-1,1);
+      steerWanted=clamp(steerWanted*.85+autoSteer*(Math.abs(steerWanted)>.30?.20:.9),-1,1);
+    }
     s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*6));
     const queue=queueRef.current.splice(0);
     for (const command of queue) {
@@ -466,6 +500,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       // Endless survival timer: drains every frame, even while chasing a lost board.
       s.drainRate=snowDrainPerSecond(Math.max(0,-s.z));
       s.score=Math.max(0,s.score-s.drainRate*dt);
+      s.powerTime=Math.max(0,s.powerTime-dt);
+      s.powerAutoJumpDelay=Math.max(0,s.powerAutoJumpDelay-dt);
+      if(s.mushroom && s.z < s.mushroom.z - 8) s.mushroom=null;
       s.jumpCooldown = Math.max(0, s.jumpCooldown - dt);
       s.impact = Math.max(0, s.impact - dt);
       if (s.recovery) {
@@ -482,9 +519,18 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           s.textUntil = s.t + 1.1;
         }
       } else {
-        const targetSpeed = (tuck ? (mobile ? 42 : 38) : 21.5) - Math.abs(s.steer) * 2.6;
+        if (s.powerTime>0 && !s.inAir && s.powerAutoJumpDelay<=0 && s.jumpCooldown<=0){
+          startSnowJump(s,snowSurfaceAt(s.x,s.z,localChunks,groundY).height,{velocity:23.5,source:"power"});
+          s.launchSuper=true;
+          s.powerTricksScheduled=false;
+          resetAirTrickChain(s);
+          s.powerAutoJumpDelay=3.05;
+          s.lastText="FROST SHROOM! AUTOMATIC SUPER AIR!";s.textUntil=s.t+1.2;
+          onSound("jump");
+        }
+        const targetSpeed = (s.powerTime>0 ? (mobile?57:60) : tuck ? (mobile ? 42 : 38) : 21.5) - Math.abs(s.steer) * 2.6;
         // Higher acceleration, same controllable carving range.
-        s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (tuck ? (mobile ? 2.1 : 1.35) : .5)));
+        s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (s.powerTime>0?3.6:tuck ? (mobile ? 2.1 : 1.35) : .5)));
         s.velX = lerp(s.velX, s.steer * (s.inAir ? 5.0 : 9.2), Math.min(1, dt * (s.inAir ? 2.8 : 5.5)));
         const previousX=s.x;
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
@@ -497,7 +543,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const from={x:previousX,z:previousZ,y:previousY};
         const to={x:s.x,z:s.z,y:s.inAir?s.worldY:surface.height};
         for(const chunk of localChunks) for(const ramp of chunk.ramps){
-          if(sweptRampSideHit(from,to,ramp,groundY)){
+          if(s.powerTime<=0 && sweptRampSideHit(from,to,ramp,groundY)){
             s.x=previousX;s.z=previousZ;
             beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound);
             break;
@@ -510,7 +556,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           for(const chunk of localChunks) for(const ramp of chunk.ramps){
             if(s.recovery || s.inAir) break;
             if(s.consumedRamps.has(ramp.id)) continue;
-            if(crossedRampLip(ramp,previousZ,s.z,s.x)){
+            if(crossedRampLip(ramp,previousZ,s.z,s.x,previousX)){
               if(s.jumpCooldown>0){
                 beginSnowRecovery(s,"wipeout","RAMP LIP COLLISION!",onSound);
                 break;
@@ -531,6 +577,15 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           }
         }
         if(s.inAir && !s.recovery){
+          if(s.powerTime>0 && !s.powerTricksScheduled && (s.launchSource==="power" || s.launchSuper)){
+            // Use existing baked clips and the ordinary trick queue, not fake points.
+            // Three moves fit the boosted ballistic flight when launched with power.
+            const packs=[["3","6","5"],["4","6"],["8","5"],["7","6","9"]];
+            const pack=packs[(s.mushroomCount+Math.floor(s.t))%packs.length];
+            for(const key of pack){const def=TRICKS.find(t=>t.key===key);if(def)enqueueAirTrick(s,def);}
+            beginNextAirTrick(s);
+            s.powerTricksScheduled=true;
+          }
           // Animation time runs independently of physics. Every finished clip
           // commits to the airborne chain and instantly starts the next one.
           advanceAirTricks(s,dt);
@@ -538,7 +593,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           const landingFloor=snowSurfaceAt(s.x,s.z,localChunks,groundY).height;
           const landed=stepSnowJump(s,dt,landingFloor);
           if(landed){
-            const outcome=judgeAirTrickChain(s,s.steer,judgeSnowLanding,Math.random());
+            const outcome=judgeAirTrickChain(s,s.steer,judgeSnowLanding,s.launchSource==="power" ? 1 : Math.random());
             if(outcome.grade === "clean"){
               if(outcome.trickCount===0){
                 s.impact=.45;
@@ -547,9 +602,11 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
               s.combo += outcome.trickCount;
               const earned=outcome.basePoints*Math.min(5,Math.max(1,s.combo));
               s.score+=earned;
+              recordSnowPoints(s,earned);
+              const spawnedMushroom=maybeSpawnSnowMushroom(s);
               const turns=((s.airYaw/Math.PI)%2+2)%2;
               if(turns>.8&&turns<1.2)s.fakie=!s.fakie;
-              s.lastText=`CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
+              s.lastText=spawnedMushroom ? "✦ RARE FROST SHROOM AHEAD! ✦" : `CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
               s.textUntil=s.t+1.85;
               s.impact=.45;
               if(outcome.trickCount)onSound("trick");
@@ -568,7 +625,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           const end={x:s.x,z:s.z,y:s.worldY};
           for (const chunk of localChunks) for (const rock of chunk.rocks) {
             if (s.consumedRocks.has(rock.id)) continue;
-            if (sweptRockHit(from,end,rock,groundY)) {
+            if (s.powerTime<=0 && sweptRockHit(from,end,rock,groundY)) {
               s.consumedRocks.add(rock.id);
               s.x=previousX;s.z=previousZ;
               beginSnowRecovery(s, "wipeout", "ROCK COLLISION!", onSound);
@@ -580,10 +637,18 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           for (const chunk of localChunks) for (const coin of chunk.coins) {
             if (collectedRef.current.has(coin.id)) continue;
             if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
-              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; onSound("pickup");
-              s.lastText = `SHRED TOKEN +${TOKEN_POINTS}`; s.textUntil = s.t + 1.25;
+              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; recordSnowPoints(s,TOKEN_POINTS); const spawnedMushroom=maybeSpawnSnowMushroom(s); onSound("pickup");
+              s.lastText = spawnedMushroom ? "✦ RARE FROST SHROOM AHEAD! ✦" : `SHRED TOKEN +${TOKEN_POINTS}`; s.textUntil = s.t + (spawnedMushroom ? 2 : 1.25);
             }
           }
+        }
+        // Floating rare mushroom: collected by crossing its actual position.
+        if (!s.recovery && mushroomCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
+          activateSnowMushroom(s);
+          s.score+=450; // bonus is intentionally not counted toward the next mushroom spawn
+          s.lastText="✦ FROST SHROOM! SUPER SPEED + AUTO TRICKS! ✦";
+          s.textUntil=s.t+2.4;
+          onSound("power");
         }
       }
       s.peakScore=Math.max(s.peakScore,s.score);
@@ -740,6 +805,7 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
     <Course collectedRef={collectedRef} distance={distance}/>
+    <FrostMushroom stateRef={stateRef}/>
     <Mountains stateRef={stateRef}/>
     <Suspense fallback={<Loading/>}>
       <Rider mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
@@ -1054,7 +1120,7 @@ export default function SnowboardGame(){
         <Scene mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>
-    <SpeedRush mobile={mobile===true} active={phase==="playing" && (mobile?touchTuckFx:hud.pose==="SnowboardTuck")} speed={hud.speed}/>
+    <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
     {/* Original retro filter, enabled only by the optional title-screen setting. */}
     {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
     <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,pointerEvents:"none"}}>
@@ -1068,6 +1134,7 @@ export default function SnowboardGame(){
       </div>
     </div>
     {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?192:145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none"}}>
+      {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".07em"}}>✦ FROST SHROOM {hud.powerRemaining.toFixed(1)}s ✦</div>}
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
       {hud.air && <div style={{fontWeight:900,color:"#d7f8ff",textShadow:"2px 2px #285467",fontSize:12}}>AIR {hud.airHeight.toFixed(1)}m · PEAK {hud.peakAir.toFixed(1)}m</div>}
       {hud.recovery!=="riding" && <div style={{fontWeight:900,color:"#ffd89a",textShadow:"2px 2px #285467",fontSize:12}}> {hud.recovery==="chasing" ? "RUNNING BACK TO THE BOARD" : hud.recovery==="remounting" ? "REMOUNTING" : "RIDER DOWN"}</div>}
