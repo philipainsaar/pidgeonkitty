@@ -1,116 +1,46 @@
-# Animated 3D Character for Next.js + Three.js
+# PidgeonKitty Frog Hopper update
 
-This kit is created **from your uploaded Meshy AI GLB** and is ready to integrate into a Next.js App Router project. It includes **actual animated `.glb` assets**, not just animation code.
+This update makes the game load at **https://pidgeonkitty.vercel.app/** directly, without redirecting to `/character`.
 
-## Contents
+## Installation
 
-- `public/models/character-animated.glb`: web-quality version, 2K textures, ~10 MB.
-- `public/models/character-animated-mobile.glb`: mobile-friendly version, 1K textures, ~3 MB.
-- `components/CharacterViewer.jsx`: complete 3D viewer, animation selector, speed slider, play/pause, mobile detection, and GLB quality selector.
-- `app/character/page.jsx`: an example Next.js App Router page at `/character`.
+1. Replace your repository's `app/page.jsx` with the supplied `app/page.jsx`.
+2. Add `components/FrogHopperGame.jsx` from this package to `components/`.
+3. Keep your **existing** `app/layout.jsx`, `package.json`, `components/CharacterViewer.jsx` and both `.glb` files in `public/models/` unchanged.
+4. Commit those two files to the `main` branch on GitHub. Vercel will redeploy.
+5. Visit `https://pidgeonkitty.vercel.app/` for the game. The original animated character viewer still works at `/character`.
 
-A separate `Character_Animated_Original_4K.glb` is available outside the ZIP for the original full-resolution texture version.
+Your existing dependencies (`three`, `@react-three/fiber`, `@react-three/drei`, `next`, `react`, `react-dom`) suffice.
 
-## 1. Install dependencies
+## Controls
 
-In your existing Next.js project:
+- Arrow keys / WASD: hop one lily pad forward, backward or sideways.
+- Space: hop forward.
+- Touch: swipe or use the onscreen directional buttons.
+- `B` or BLINK: blink on demand. Also blinks automatically during gameplay.
+- `M` or CROAK: open the mouth on demand; mouth also opens during hops and when collecting fireflies.
+- `P` / Esc: pause and resume.
+- `Enter`: start or restart.
 
-```bash
-npm install three @react-three/fiber @react-three/drei
-```
+## Game
 
-Choose dependency versions compatible with the React version already installed in your project. Do not install a second copy of React.
+- Infinite procedurally generated lily-pad rows, progressively requiring lane choices.
+- Glowing fireflies to collect; prickly hazards and missing lily pads to avoid.
+- Hopping animation on every move, automatic idle and context-appropriate celebration/sleep animations.
+- Smooth follow camera, pause controls, responsive mobile and desktop interface.
+- Best score saved locally in the browser (where storage is available).
+- Renders with your existing mobile 1K GLB or desktop 2K GLB.
+- No sound is used.
 
-## 2. Copy files
+## Facial movement: important limitation
 
-Copy this kit's `public/models/` directory into **your project's `public/models/`**, and `components/CharacterViewer.jsx` into your existing `components/` directory.
+The existing 16-bone Meshy rig does not have dedicated eyelid bones, eyelid morph targets or a full jaw rig. This code creates a lightweight pair of animated 3D eye/eyelid overlays anchored to `Bone_015` (face/head region), and animates the small weighted `Bone_014` beak-tip bone plus a dark mouth-opening overlay. The character **does blink and visually open its mouth**, but this is a practical game-ready facial approximation, not a sculpted morph-target/shape-key facial rig. For exact anatomically conforming eyelids and mouth deformations, create dedicated shapekeys or joints in Blender and export them in a new GLB.
 
-Optionally, copy `app/character/page.jsx` into your Next.js app if you want a complete demo route.
+Facial placement can be tuned via `faceTuning` near the top of `components/FrogHopperGame.jsx` if the eye or mouth overlays don't align perfectly on your particular model version.
 
-The GLBs use normal glTF skinning and animation, so no Draco / Meshopt decoder is needed.
+## Files touched
 
-## 3. Run the viewer
+- `app/page.jsx`: replace redirect-to-character with game on the root URL.
+- `components/FrogHopperGame.jsx`: new self-contained 3D game.
 
-The sample route becomes accessible at `http://localhost:3000/character` after running your Next.js app.
-
-To put a complete viewer on an existing page:
-
-```jsx
-import CharacterViewer from "@/components/CharacterViewer";
-
-export default function Page() {
-  return <CharacterViewer initialAnimation="Idle" height="600px" />;
-}
-```
-
-The viewer creates its own Canvas. **Do not nest it inside an existing Canvas.**
-
-## 4. Add to an existing Three.js / React Three Fiber scene
-
-If your existing `CosmicVoyage` already has a `<Canvas>`, import **`AnimatedCharacter`**, not `CharacterViewer`:
-
-```jsx
-import { AnimatedCharacter } from "@/components/CharacterViewer";
-
-function YourExistingScene({ isWalking }) {
-  return (
-    <>
-      {/* Your existing lights, water, planets and other meshes */}
-      <AnimatedCharacter
-        animation={isWalking ? "Walk" : "Idle"}
-        position={[0, 0, 0]}
-        scale={0.8}
-      />
-    </>
-  );
-}
-```
-
-You can control the state with React props (no imperative bone code needed):
-
-```jsx
-<AnimatedCharacter
-  animation="Celebrate"
-  modelUrl="/models/character-animated-mobile.glb"
-  playing={true}
-  speed={1.3}
-  fadeDuration={0.25}
-/>
-```
-
-All animations are looping in place. For a character walking along a path, combine the `Walk` animation with **position/rotation movement on a parent group**, controlled by your game logic. Do not assume `Walk` carries the character across the world automatically.
-
-## Animation clips
-
-| Clip | Duration | Behavior |
-| --- | ---: | --- |
-| `Idle` | 4.00 s | breathing and subtle swaying |
-| `Walk` | 1.20 s | alternating leg strides and body bounce |
-| `Run` | 0.78 s | faster strides and stronger bounce |
-| `Hop` | 1.40 s | crouch and upward hop |
-| `Dance` | 2.80 s | rhythmic head, body and legs |
-| `LookAround` | 5.00 s | head scanning side to side |
-| `Sleep` | 4.00 s | relaxed posture with breathing |
-| `Celebrate` | 2.40 s | excited bouncing and head motion |
-
-## Rig details and limitations
-
-The uploaded model already included a valid 16-joint `SmartRigArmature` with weighted vertices, but no animations. The kit **preserves** the original joint hierarchy, inverse bind matrices, mesh and original UVs. It bakes new joint rotation, root translation, and body-scale tracks into standard glTF `animations`.
-
-The movements are **procedurally authored**, not motion captured and not manually polished in Blender. They are intended as useful first-pass website/game motions. The source skeleton is a simple body/head/two-leg rig. It does **not** include facial blendshapes, independently animatable eyes, or full face controls. It is therefore not an advanced facial rig, and the clips do not contain true eye blinking, jaw/lip syncing, or finger articulation.
-
-If you need those, a separate Blender rigging pass (eye-region topology, weights and facial morph targets) is needed. We have not silently claimed that this was done.
-
-## Tips for mobile performance
-
-- The model has approximately 8,228 vertices and 9,914 triangles.
-- Use `character-animated-mobile.glb` for phones or multiple simultaneous characters.
-- Keep pixel ratio at about 1–1.5, and avoid heavy shadows/postprocessing.
-- Disable offscreen canvases or pause rendering where practical in a larger app.
-- Use `SkeletonUtils.clone` for repeated instances of the same skinned GLB; plain `.clone()` can break skinned character duplication.
-- Both files are self-contained GLBs, with all textures embedded.
-- Characters are modeled in **Y-up**, feet near y=0, height ~1.7 scene units; forward is roughly **negative Z**.
-
-## Validation
-
-Source was inspected for mesh, textures, bone influences, inverse bind matrices and animation support. The resulting GLBs were structurally checked for glTF v2 container boundaries, valid skin joint indices, input/output time arrays, animation interpolation, and exact skeleton preservation.
+No changes to the existing character GLB files are needed.
