@@ -47,6 +47,8 @@ const TEMPLATES = [
   makeTemplate('8', 'CORK 720', samples([{x:0,y:0},{x:1,y:0},{x:0,y:1},{x:1,y:1}])),
   makeTemplate('5', 'METHOD', samples([{x:0,y:0},{x:.5,y:1},{x:1,y:0}])),
   makeTemplate('7', 'BACKFLIP', samples([{x:0,y:0},{x:0,y:1},{x:1,y:1},{x:1,y:0}])),
+  // Reverse U: start bottom left, arc upward, finish bottom right.
+  makeTemplate('f', 'FRONTFLIP', samples([{x:0,y:1},{x:0,y:.32},{x:.2,y:0},{x:.8,y:0},{x:1,y:.32},{x:1,y:1}],12)),
   makeTemplate('0', 'NOSE GRAB', samples([{x:0,y:1},{x:.5,y:0},{x:1,y:1}])),
 ];
 function compareTemplate(points, template) {
@@ -103,7 +105,7 @@ export function classifySnowGesture(points) {
   const sorted = TEMPLATES.map(t=>({template:t, error:compareTemplate(normalized,t)})).sort((a,b)=>a.error-b.error);
   if (sorted[0].error < .28) {
     const {key,label}=sorted[0].template;
-    return {key,label,shape:key==='8'?'ZIGZAG':key==='7'?'U SHAPE':key==='5'?'V SHAPE':'CHEVRON'};
+    return {key,label,shape:key==='8'?'ZIGZAG':key==='7'?'U SHAPE':key==='f'?'INVERTED U':key==='5'?'V SHAPE':'CHEVRON'};
   }
   // Messy but deliberate drawing still pulls a trick. Avoid surprising 1080s
   // from indecipherable scribbles by using a simple grab fallback.
@@ -114,5 +116,5 @@ export function classifySnowGesture(points) {
 export const MOBILE_TRICK_GUIDE = [
   ['TAP', 'OLLIE'], ['→ / ←', '180'], ['↻', '360'], ['↻↻', '720'],
   ['↻↻↻', '1080'], ['Z', 'CORK 720'], ['V', 'METHOD'], ['∪', 'BACKFLIP'],
-  ['↑', 'INDY GRAB'], ['↓', 'TAIL GRAB'], ['↖', 'NOSE GRAB'],
+  ['↑', 'INDY GRAB'], ['↓', 'TAIL GRAB'], ['↖', 'NOSE GRAB'], ['∩', 'FRONTFLIP'],
 ];

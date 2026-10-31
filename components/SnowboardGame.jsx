@@ -6,11 +6,12 @@ import { Html, useGLTF } from "@react-three/drei";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import * as THREE from "three";
 import { classifySnowGesture, MOBILE_TRICK_GUIDE } from "./snow64Gestures";
+import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landing";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
 // No Nintendo/N64 game assets are used. All mountain scenery, board and track are procedural.
-const WEB_MODEL = "/models/pidgeonkitty-snowboard.glb";
-const MOBILE_MODEL = "/models/pidgeonkitty-snowboard-mobile.glb";
+const WEB_MODEL = "/models/pidgeonkitty-snowboard-v2.glb";
+const MOBILE_MODEL = "/models/pidgeonkitty-snowboard-v2-mobile.glb";
 const END_Z = -1050;
 const SLOPE = 0.077;
 const GRAVITY = 17.6;
@@ -19,17 +20,19 @@ const DEG = Math.PI / 180;
 const clamp = THREE.MathUtils.clamp;
 const lerp = THREE.MathUtils.lerp;
 
+// Minimum peak height and airtime matter: huge tricks need a charged jump or a ramp.
 const TRICKS = [
-  { key: "1", name: "180", points: 160, duration: 0.42, spins: 180, pose: "SnowboardIndy" },
-  { key: "2", name: "360", points: 360, duration: 0.57, spins: 360, pose: "SnowboardIndy" },
-  { key: "3", name: "720", points: 800, duration: 0.86, spins: 720, pose: "SnowboardIndy" },
-  { key: "4", name: "1080", points: 1600, duration: 1.22, spins: 1080, pose: "SnowboardIndy" },
-  { key: "5", name: "METHOD", points: 450, duration: 0.65, roll: -0.6, pose: "SnowboardMethod" },
-  { key: "6", name: "INDY GRAB", points: 400, duration: 0.55, roll: 0.38, pose: "SnowboardIndy" },
-  { key: "7", name: "BACKFLIP", points: 900, duration: 0.84, flip: -360, pose: "SnowboardOllie" },
-  { key: "8", name: "CORK 720", points: 1350, duration: 1.05, spins: 720, flip: -360, pose: "SnowboardMethod" },
-  { key: "9", name: "TAIL GRAB", points: 510, duration: 0.64, pose: "SnowboardTailgrab" },
-  { key: "0", name: "NOSE GRAB", points: 520, duration: 0.64, pose: "SnowboardNosegrab" },
+  { key: "1", name: "180", points: 160, duration: 0.42, minHeight: 1.15, spins: 180, pose: "SnowboardIndy" },
+  { key: "2", name: "360", points: 360, duration: 0.57, minHeight: 1.85, spins: 360, pose: "SnowboardIndy" },
+  { key: "3", name: "720", points: 800, duration: 0.86, minHeight: 3.05, spins: 720, pose: "SnowboardIndy" },
+  { key: "4", name: "1080", points: 1600, duration: 1.22, minHeight: 4.38, spins: 1080, pose: "SnowboardIndy" },
+  { key: "5", name: "METHOD", points: 450, duration: 0.65, minHeight: 1.85, roll: -0.58, pitch: -0.24, pose: "SnowboardMethod" },
+  { key: "6", name: "INDY GRAB", points: 400, duration: 0.55, minHeight: 1.52, roll: 0.25, pitch: 0.16, pose: "SnowboardIndy" },
+  { key: "7", name: "BACKFLIP", points: 900, duration: 0.84, minHeight: 2.3, flip: -360, pose: "SnowboardOllie" },
+  { key: "8", name: "CORK 720", points: 1350, duration: 1.05, minHeight: 3.45, spins: 720, flip: -360, pose: "SnowboardMethod" },
+  { key: "9", name: "TAIL GRAB", points: 510, duration: 0.64, minHeight: 1.87, roll: -0.18, pitch: 0.49, pose: "SnowboardTailgrab" },
+  { key: "0", name: "NOSE GRAB", points: 520, duration: 0.64, minHeight: 1.87, roll: 0.16, pitch: -0.49, pose: "SnowboardNosegrab" },
+  { key: "f", name: "FRONTFLIP", points: 960, duration: 0.88, minHeight: 2.52, flip: 360, pose: "SnowboardFrontflip" },
 ];
 
 let snowAudioContext;
@@ -240,7 +243,7 @@ function BoardTrail({stateRef}) {
   useFrame((_,dt)=>{
     if(!ref.current)return;
     const s=stateRef.current;
-    if(s.speed>2 && !s.inAir && s.t>0){
+    if(s.speed>2 && !s.inAir && !s.recovery && s.t>0){
       for(let k=0;k<2;k++){
         const i=next.current++%num;const p=sparks[i];
         const side=k===0?-1:1;
@@ -319,7 +322,8 @@ function Snowboard() {
 function initialState() {
   return {
     x:0,z:0,air:0,vy:0,speed:15.8,velX:0,steer:0,t:0,
-    inAir:false, crash:0, impact:0, jumpCooldown:0, fakie:false,
+    inAir:false, impact:0, jumpCooldown:0, fakie:false,
+    peakAir:0, flightTime:0, recovery:null,
     combo:0, score:0, coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, currentPose:"SnowboardIdle", cameraMode:0,
     consumedRamps:new Set(),consumedRocks:new Set(),
@@ -330,24 +334,46 @@ function safeHud(s) {
     speed:Math.round(s.speed*3.6),
     score:s.score, distance:Math.floor(-s.z), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
-    air:s.inAir, pose:s.currentPose,
-    trick:s.trick?.name || (s.textUntil>s.t ? s.lastText : ""),
+    air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
+    recovery:recoveryStage(s.recovery),
+    trick:s.recovery ? (s.textUntil>s.t ? s.lastText : (recoveryStage(s.recovery)==="chasing" ? "RUN FOR YOUR BOARD!" : "GETTING UP...")) : (s.trick ? `${s.trick.name}  ${s.peakAir.toFixed(1)} / ${s.trick.minHeight.toFixed(1)}m` : (s.textUntil>s.t ? s.lastText : "")),
   };
 }
 function smoothstep(t) { const v=clamp(t,0,1);return v*v*(3-2*v); }
+
+function beginSnowRecovery(s, kind, reason, onSound) {
+  if (s.recovery) return;
+  const penalty = (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
+  s.score -= penalty;
+  s.combo = 0;
+  s.hits += 1;
+  s.recovery = { kind, t: 0, duration: recoveryDuration(kind) };
+  s.lastText = `${reason}  −${penalty} PTS`;
+  s.textUntil = s.t + 1.85;
+  s.inAir = false;
+  s.vy = 0;
+  s.air = 0;
+  s.trick = null;
+  s.impact = 0;
+  s.speed = Math.min(8, s.speed * .34);
+  s.steer = 0;
+  s.fakie = false;
+  onSound("crash");
+}
 
 function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef, onHud, onFinish, onSound }) {
   const {scene, animations}=useGLTF(mobile?MOBILE_MODEL:WEB_MODEL);
   const character=useMemo(()=>cloneSkinned(scene),[scene]);
   const mixer=useMemo(()=>new THREE.AnimationMixer(character),[character]);
   const actions=useMemo(()=>Object.fromEntries(animations.map(a=>[a.name,mixer.clipAction(a)])),[animations,mixer]);
-  const root=useRef(), stance=useRef(), board=useRef(), riderModel=useRef();
+  const root=useRef(), stance=useRef(), board=useRef(), riderCarrier=useRef(), riderModel=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),phaseRef=useRef(phase);
   const {camera}=useThree();
   useEffect(()=>{phaseRef.current=phase;},[phase]);
   useEffect(()=>{
     stateRef.current=initialState(); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;
+    mixer.stopAllAction();active.current=null;
     if (root.current) root.current.position.set(0,.1,0);
   },[runKey,stateRef,collectedRef,queueRef]);
   useEffect(()=>()=>mixer.stopAllAction(),[mixer]);
@@ -360,112 +386,193 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const steerWanted=playing?clamp(right-left+(keyRef.current.steerAnalog||0),-1,1):0;
     s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*6));
     const queue=queueRef.current.splice(0);
-    for(const command of queue){
-      if(command.type==="camera")s.cameraMode=(s.cameraMode+1)%3;
-      if(!playing)continue;
-      if(command.type==="jump" && !s.inAir && s.jumpCooldown<=0 && s.crash<=0){
-        s.inAir=true;s.vy=8.5+(tuck?1.0:0)+4.2*clamp(command.boost||0,0,1);s.air=.03;s.jumpCooldown=.35;s.trick=null;
-        s.lastText=(command.boost||0)>.5?"POWER OLLIE!":"OLLIE!";s.textUntil=s.t+.9;onSound("jump");
+    for (const command of queue) {
+      if (command.type === "camera") s.cameraMode = (s.cameraMode + 1) % 3;
+      if (!playing || s.recovery) continue;
+      if (command.type === "jump" && !s.inAir && s.jumpCooldown <= 0) {
+        s.inAir = true;
+        s.vy = 8.6 + (tuck ? .8 : 0) + 4.2 * clamp(command.boost || 0, 0, 1);
+        s.air = .03; s.peakAir = 0; s.flightTime = 0;
+        s.jumpCooldown = .3; s.trick = null;
+        s.lastText = (command.boost || 0) > .5 ? "POWER OLLIE!" : "OLLIE!";
+        s.textUntil = s.t + .9;
+        onSound("jump");
       }
-      if(command.type==="trick"){
-        const found=TRICKS.find(q=>q.key===command.key);
-        const kind=found?{...found, spins:found.spins && command.direction===-1 ? -found.spins : found.spins}:null;
-        if(kind && !s.inAir && s.jumpCooldown<=0 && s.crash<=0){
-          // One-tap trick buttons work on phones: the first tap also launches an ollie.
-          s.inAir=true;s.vy=kind.duration>1.0?12.3:kind.duration>.78?10.0:8.7;
-          s.air=.18;s.jumpCooldown=.45;s.trick=null;onSound("jump");
+      if (command.type === "trick") {
+        const found = TRICKS.find(q => q.key === command.key);
+        const trick = found ? { ...found, spins: found.spins && command.direction === -1 ? -found.spins : found.spins } : null;
+        if (trick && !s.inAir && s.jumpCooldown <= 0) {
+          // Quick tricks trigger an ollie, but do NOT guarantee sufficient height.
+          // For 720/1080/Cork tricks, use a ramp or a charged jump then trick in midair.
+          s.inAir = true; s.vy = 9.8;
+          s.air = .03; s.peakAir = 0; s.flightTime = 0;
+          s.jumpCooldown = .4; s.trick = null; onSound("jump");
         }
-        if(kind && s.inAir && !s.trick){s.trick={...kind,t:0};s.lastText=kind.name;s.textUntil=s.t+1.5;}
+        if (trick && s.inAir && !s.trick) {
+          s.trick = { ...trick, t: 0 };
+          s.lastText = `${trick.name} • NEED ${trick.minHeight.toFixed(1)}m AIR`;
+          s.textUntil = s.t + 1.4;
+        }
       }
     }
 
-    if(playing){
-      s.t+=dt;s.crash=Math.max(0,s.crash-dt);s.impact=Math.max(0,s.impact-dt);
-      s.jumpCooldown=Math.max(0,s.jumpCooldown-dt);
-      const targetSpeed=(tuck?29:21.5) - Math.abs(s.steer)*2.6;
-      s.speed=lerp(s.speed,targetSpeed,Math.min(1,dt*(tuck?0.65:0.45)));
-      s.velX=lerp(s.velX,s.steer*(s.inAir?5.0:9.2),Math.min(1,dt*(s.inAir?2.8:5.5)));
-      s.x=clamp(s.x+s.velX*dt,-11.15,11.15);
-      s.z-=s.speed*dt;
-
-      if(!s.inAir){
-        for(const ramp of COURSE.ramps){
-          if(s.consumedRamps.has(ramp.id))continue;
-          if(Math.abs(s.z-ramp.z)<1.7 && Math.abs(s.x-ramp.x)<1.95 && s.jumpCooldown<=0){
-            s.inAir=true;s.vy=11.2;s.air=.02;s.jumpCooldown=.4;s.trick=null;
-            s.consumedRamps.add(ramp.id);s.lastText="BIG AIR!";s.textUntil=s.t+1.5;onSound("jump");
-            break;
-          }
+    if (playing) {
+      s.t += dt;
+      s.jumpCooldown = Math.max(0, s.jumpCooldown - dt);
+      s.impact = Math.max(0, s.impact - dt);
+      if (s.recovery) {
+        // The board slides just ahead while the rider falls, runs after it and remounts.
+        s.recovery.t += dt;
+        s.speed = lerp(s.speed, 1.35, Math.min(1, dt * 2.2));
+        s.z -= s.speed * dt;
+        s.velX = 0;
+        if (s.recovery.t >= s.recovery.duration) {
+          s.recovery = null;
+          s.speed = 12;
+          s.jumpCooldown = .45;
+          s.lastText = "BACK ON BOARD!";
+          s.textUntil = s.t + 1.1;
         }
-      }
-      if(s.inAir){
-        s.vy-=GRAVITY*dt;
-        s.air+=s.vy*dt;
-        if(s.trick)s.trick.t+=dt;
-        if(s.air<=0){
-          s.air=0;s.vy=0;s.inAir=false;s.impact=.45;
-          if(s.trick){
-            if(s.trick.t>=s.trick.duration*.92){
-              s.combo++;const earned=s.trick.points*Math.min(5,s.combo);
-              if(Math.abs((s.trick.spins||0)%360)===180)s.fakie=!s.fakie;
-              s.score+=earned;onSound("trick");s.lastText=`${s.trick.name} +${earned.toLocaleString()}`;
-              s.textUntil=s.t+1.9;
-            } else {
-              s.combo=0;s.speed*=.68;s.lastText="SKETCHY LANDING";s.textUntil=s.t+1.4;
+      } else {
+        const targetSpeed = (tuck ? 29 : 21.5) - Math.abs(s.steer) * 2.6;
+        s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (tuck ? .65 : .45)));
+        s.velX = lerp(s.velX, s.steer * (s.inAir ? 5.0 : 9.2), Math.min(1, dt * (s.inAir ? 2.8 : 5.5)));
+        s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
+        s.z -= s.speed * dt;
+        if (!s.inAir) {
+          for (const ramp of COURSE.ramps) {
+            if (s.consumedRamps.has(ramp.id)) continue;
+            if (Math.abs(s.z - ramp.z) < 1.7 && Math.abs(s.x - ramp.x) < 1.95 && s.jumpCooldown <= 0) {
+              s.inAir = true; s.vy = 11.7; s.air = .02;
+              s.peakAir = 0; s.flightTime = 0;
+              s.jumpCooldown = .4; s.trick = null;
+              s.consumedRamps.add(ramp.id);
+              s.lastText = "BIG AIR!"; s.textUntil = s.t + 1.5;
+              onSound("jump"); break;
             }
-            s.trick=null;
           }
         }
-      }
-      if(!s.inAir && s.crash<=0){
-        for(const rock of COURSE.rocks){
-          if(s.consumedRocks.has(rock.id))continue;
-          if(Math.abs(s.z-rock.z)<1.1 && Math.abs(s.x-rock.x)<rock.size+.5){
-            s.consumedRocks.add(rock.id);s.crash=.9;s.speed=Math.max(7,s.speed*.48);s.combo=0;s.hits++;
-            s.lastText="WIPEOUT!";s.textUntil=s.t+1.6;onSound("crash");break;
+        if (s.inAir) {
+          s.vy -= GRAVITY * dt;
+          s.air += s.vy * dt;
+          s.flightTime += dt;
+          s.peakAir = Math.max(s.peakAir, s.air);
+          if (s.trick) s.trick.t += dt;
+          if (s.air <= 0) {
+            s.air = 0; s.vy = 0; s.inAir = false;
+            if (s.trick) {
+              const result = judgeSnowLanding(s.trick, s.peakAir, s.steer);
+              if (result.grade === "clean") {
+                s.combo++;
+                const earned = s.trick.points * Math.min(5, s.combo);
+                if (Math.abs((s.trick.spins || 0) % 360) === 180) s.fakie = !s.fakie;
+                s.score += earned;
+                onSound("trick");
+                s.lastText = `CLEAN ${s.trick.name}!  +${earned.toLocaleString()}`;
+                s.textUntil = s.t + 1.8;
+                s.impact = .45;
+                s.trick = null;
+              } else {
+                const label = result.grade === "wipeout" ? "WIPEOUT!" : "SKETCHY LANDING!";
+                beginSnowRecovery(s, result.grade, label, onSound);
+              }
+            } else s.impact = .45;
           }
         }
-      }
-      for(const coin of COURSE.coins){
-        if(collectedRef.current.has(coin.id))continue;
-        if(Math.abs(s.z-coin.z)<1.55 && Math.abs(s.x-coin.x)<1.28){
-          collectedRef.current.add(coin.id);s.coins++;s.score+=250;onSound("pickup");
-          s.lastText="SHRED TOKEN +250";s.textUntil=s.t+1.25;
+        if (!s.inAir && !s.recovery) {
+          for (const rock of COURSE.rocks) {
+            if (s.consumedRocks.has(rock.id)) continue;
+            if (Math.abs(s.z - rock.z) < 1.1 && Math.abs(s.x - rock.x) < rock.size + .5) {
+              s.consumedRocks.add(rock.id);
+              beginSnowRecovery(s, "wipeout", "ROCK WIPEOUT!", onSound);
+              break;
+            }
+          }
+        }
+        if (!s.recovery) {
+          for (const coin of COURSE.coins) {
+            if (collectedRef.current.has(coin.id)) continue;
+            if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
+              collectedRef.current.add(coin.id); s.coins++; s.score += 250; onSound("pickup");
+              s.lastText = "SHRED TOKEN +250"; s.textUntil = s.t + 1.25;
+            }
+          }
+        }
+        if (s.z <= END_Z) {
+          phaseRef.current = "finished"; onSound("finish"); onFinish(safeHud(s));
         }
       }
-      if(s.z<=END_Z){phaseRef.current="finished";onSound("finish");onFinish(safeHud(s));}
     }
 
-    const desired=s.crash>0?"SnowboardWipeout":s.inAir?(s.trick?.pose||"SnowboardOllie"):
-      s.impact>0?"SnowboardLanding":tuck?"SnowboardTuck":
-      s.steer<-.16?"SnowboardCarveLeft":s.steer>.16?"SnowboardCarveRight":playing?"SnowboardCruise":"SnowboardIdle";
+    const recoveryMode = recoveryStage(s.recovery);
+    const desired = recoveryMode === "falling" ? "SnowboardWipeout" :
+      recoveryMode === "chasing" ? "Run" :
+      recoveryMode === "remounting" ? "SnowboardRemount" :
+      s.inAir ? (s.trick?.pose || "SnowboardOllie") :
+      s.impact > 0 ? "SnowboardLanding" : tuck ? "SnowboardTuck" :
+      s.steer < -.16 ? "SnowboardCarveLeft" : s.steer > .16 ? "SnowboardCarveRight" :
+      playing ? "SnowboardCruise" : "SnowboardIdle";
     s.currentPose=desired;
     if(active.current!==desired){
       const prev=actions[active.current],next=actions[desired]||actions.SnowboardIdle;
       if(next){
-        next.reset().setLoop(THREE.LoopRepeat,Infinity);next.enabled=true;
+        next.reset();
+        next.enabled = true;
+        const oneShot = !!s.trick && s.inAir || recoveryMode === "falling" || recoveryMode === "remounting";
+        next.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, oneShot ? 1 : Infinity);
+        next.clampWhenFinished = oneShot;
+        next.timeScale = s.trick ? next.getClip().duration / Math.max(.15, s.trick.duration) :
+          recoveryMode === "remounting" ? next.getClip().duration / .55 : 1;
         next.fadeIn(.17).play();if(prev)prev.fadeOut(.17);
       }
       active.current=desired;
     }
     if(phaseRef.current!=="paused")mixer.update(dt);
 
-    const cy=groundY(s.x,s.z);
-    if(root.current){
-      root.current.position.set(s.x,cy+Math.max(0,s.air)+.08,s.z);
-      // Lean while carving and dip on landing. This is the board/rider's physical pose,
-      // independent of skinned-bone keyframes. The full board rotates during tricks.
-      const trick=s.trick;
-      const progress=trick?smoothstep(trick.t/trick.duration):0;
-      const airborneAngle=(s.fakie?Math.PI:0)+(trick?(trick.spins||0)*DEG*progress:0);
-      const flip=trick?(trick.flip||0)*DEG*progress:0;
-      const roll=trick?(trick.roll||0)*Math.sin(progress*Math.PI):0;
-      stance.current.rotation.set(flip + (-s.velX*.013)*(s.inAir?0.3:1),airborneAngle,
-        s.steer*-.22+roll+(s.crash>0?Math.sin((.9-s.crash)*11)*s.crash*.48:0),"YXZ");
-      board.current.rotation.x=s.inAir ? Math.sin(s.air*.58)*.10 : -Math.min(.2,s.speed*.003);
-      board.current.position.y=s.impact>0?-.09*Math.sin((.45-s.impact)*Math.PI/.45):0;
-      riderModel.current.rotation.y=Math.PI/2; // Character faces sideways across the snowboard.
-      riderModel.current.position.y=.17;
+    const cy = groundY(s.x, s.z);
+    if (root.current && stance.current && board.current && riderCarrier.current && riderModel.current) {
+      root.current.position.set(s.x, cy + Math.max(0, s.air) + .08, s.z);
+      const trick = s.trick;
+      const progress = trick ? smoothstep(trick.t / trick.duration) : 0;
+      const grabEnvelope = trick ? Math.sin(Math.PI * progress) : 0;
+      const rec = s.recovery;
+      const airYaw = rec ? 0 : (s.fakie ? Math.PI : 0) + (trick ? (trick.spins || 0) * DEG * progress : 0);
+      const flip = trick ? (trick.flip || 0) * DEG * progress : 0;
+      const roll = trick ? (trick.roll || 0) * grabEnvelope : 0;
+      stance.current.rotation.set(flip - s.velX * .013 * (s.inAir ? .3 : 1), airYaw,
+        s.steer * -.22 + roll, "YXZ");
+      board.current.rotation.x = (trick?.pitch || 0) * grabEnvelope +
+        (s.inAir ? Math.sin(s.air * .58) * .1 : -Math.min(.2, s.speed * .003));
+      board.current.rotation.z = trick ? (trick.roll || 0) * grabEnvelope * .55 : 0;
+      board.current.position.y = s.impact > 0 ? -.09 * Math.sin((.45 - s.impact) * Math.PI / .45) : 0;
+      if (rec) {
+        const falling = recoveryMode === "falling";
+        const chasing = recoveryMode === "chasing";
+        const fallEnd = rec.kind === "wipeout" ? .95 : .72;
+        const chaseEnd = fallEnd + (rec.kind === "wipeout" ? 1.62 : 1.25);
+        const fallP = smoothstep(rec.t / fallEnd);
+        const chaseP = smoothstep((rec.t - fallEnd) / (chaseEnd - fallEnd));
+        const separation = falling ? fallP : chasing ? (1 - chaseP) : 0;
+        // The rider is genuinely detached from the board: falls into powder,
+        // stands, runs from behind and climbs back into the bindings.
+        riderCarrier.current.position.set(separation * (rec.kind === "wipeout" ? 1.25 : .8),
+          falling ? -.03 * fallP : chasing ? 0 : -.08 * Math.sin(Math.PI * smoothstep((rec.t - chaseEnd) / .5)),
+          separation * (rec.kind === "wipeout" ? 2.7 : 1.8));
+        const downAngle = rec.kind === "wipeout" ? -1.35 : -.98;
+        const getUp = smoothstep((rec.t - fallEnd) / .38);
+        riderCarrier.current.rotation.set(0, 0,
+          falling ? downAngle * Math.sin(Math.PI * fallP * .5) :
+          chasing ? downAngle * (1 - getUp) - .055 * Math.sin(chaseP * 17) : 0);
+        const turnToRun = smoothstep((rec.t - fallEnd) / .38);
+        const turnToBoard = smoothstep((rec.t - chaseEnd + .34) / .34);
+        riderModel.current.rotation.y = chasing ? (Math.PI / 2) * (1 - turnToRun + turnToRun * turnToBoard) : Math.PI / 2;
+        riderModel.current.position.y = .17;
+      } else {
+        riderCarrier.current.position.set(0, 0, 0);
+        riderCarrier.current.rotation.set(0, 0, 0);
+        riderModel.current.rotation.y = Math.PI / 2;
+        riderModel.current.position.y = .17;
+      }
     }
     // Close three-quarter camera, offset sideways to frame the rider's face and board.
     const offsets=[[-3.0,2.25,5.6],[-.7,3.15,10.5],[-6.1,4.2,12.5]];
@@ -483,8 +590,10 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   return <group ref={root}>
     <group ref={stance}>
       <group ref={board}><Snowboard /></group>
-      <group ref={riderModel}>
-        <primitive object={character} dispose={null} scale={.86} />
+      <group ref={riderCarrier}>
+        <group ref={riderModel}>
+          <primitive object={character} dispose={null} scale={.86} />
+        </group>
       </group>
     </group>
   </group>;
@@ -698,7 +807,7 @@ function MobileTouchControls({ inputRef, act, phase, runKey }) {
             <span style={{fontSize:11,fontWeight:900,color:"#f6fbff"}}>{name}</span>
           </div>)}
         </div>
-        <p style={{color:"#b5d9e6",fontSize:11,lineHeight:1.4,margin:"14px 0 0"}}>Tip: draw slowly and clearly. A hold-and-release without drawing charges a higher ollie. Big tricks need enough air to land cleanly.</p>
+        <p style={{color:"#b5d9e6",fontSize:11,lineHeight:1.4,margin:"14px 0 0"}}>Tip: draw slowly and clearly. A hold-and-release without drawing charges a higher ollie. Big tricks need a ramp or a charged jump. Incomplete tricks cause a sketchy landing or wipeout, and you run back to your board.</p>
         <button type="button" className="snow64-tool" onClick={()=>setHelp(false)} style={{...uiButton,marginTop:12,padding:"10px 18px",width:"100%",background:"#eea2b6",color:"#18374e"}}>BACK TO SLOPES</button>
       </div>
     </div>}
@@ -749,9 +858,9 @@ export default function SnowboardGame(){
       if(e.repeat)return;
       if(e.code==="Space"){
         if(lastPhase.current==="ready"||lastPhase.current==="finished")start();
-        else act({type:"jump"});
+        else act({type:"jump",boost:e.shiftKey?1:0});
       }
-      if(/^[0-9]$/.test(key))act({type:"trick",key});
+      if(/^[0-9]$/.test(key) || key === "f")act({type:"trick",key});
       if(key==="c")act({type:"camera"});
       if(key==="p"||key==="escape")pause();
       if(key==="enter" && (lastPhase.current==="ready"||lastPhase.current==="finished"))start();
@@ -797,6 +906,8 @@ export default function SnowboardGame(){
     </div>
     {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?92:116,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none"}}>
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
+      {hud.air && <div style={{fontWeight:900,color:"#d7f8ff",textShadow:"2px 2px #285467",fontSize:12}}>AIR {hud.airHeight.toFixed(1)}m · PEAK {hud.peakAir.toFixed(1)}m</div>}
+      {hud.recovery!=="riding" && <div style={{fontWeight:900,color:"#ffd89a",textShadow:"2px 2px #285467",fontSize:12}}> {hud.recovery==="chasing" ? "RUNNING BACK TO THE BOARD" : hud.recovery==="remounting" ? "REMOUNTING" : "RIDER DOWN"}</div>}
       {hud.combo>1&&<div style={{fontWeight:900,letterSpacing:".15em",color:"#f8ffff",textShadow:"2px 2px #285467"}}>COMBO ×{hud.combo}</div>}
     </div>}
     <div style={{position:"absolute",right:mobile?10:20,top:mobile?100:121,zIndex:3,pointerEvents:"none",textAlign:"right"}}>
@@ -811,7 +922,7 @@ export default function SnowboardGame(){
         <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 23px"}}>{phase==="ready"?"Carve through alpine powder. Launch from ramps. Pull 1080 spins and wild grabs. Stick the landing and build a monster combo!":phase==="paused"?"Ride paused. Your snow is going nowhere.":`RUN COMPLETE! ${hud.score.toLocaleString()} points · ${hud.coins} tokens · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST: {currentBest.toLocaleString()} PTS</div>}
         <button type="button" className="snow64-tool" onClick={phase==="paused"?()=>setPhase("playing"):start} style={{...uiButton,color:"#1f3852",background:"#ffe395",borderColor:"#ffffff",fontSize:22,fontStyle:"italic",fontWeight:1000,padding:"14px 36px",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{phase==="ready"?"START RIDING ▶":phase==="paused"?"RESUME ▶":"RIDE AGAIN ↻"}</button>
-        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT THUMB: STEER / UP: TUCK<br/>RIGHT HALF: TAP TO JUMP, DRAW PATTERNS TO TRICK</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE<br/>1–0 = TRICKS &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
+        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT THUMB: STEER / UP: TUCK<br/>RIGHT HALF: TAP TO JUMP, DRAW PATTERNS TO TRICK</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>1–0 / F = TRICKS (F = FRONTFLIP) &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
     {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} act={act} phase={phase} runKey={runKey} /> : !mobile ? <>
