@@ -55,3 +55,50 @@ export function sweptRampSideHit(from, to, ramp, terrainHeight) {
   const height = terrainHeight(ramp.x, ramp.z) + ramp.height * clamp((ramp.z + half - z) / (2 * half), 0, 1);
   return from.y + (to.y - from.y) * t < height - 0.08;
 }
+
+/**
+ * Collision against a ramp's *solid wedge* while airborne.
+ *
+ * Sweeps the board's actual ballistic path, rather than testing only its
+ * final point. This catches an Ollie launched just before a Super Air ramp
+ * even at high tuck speed. A descending board may land ON the deck; passing
+ * into its front/side/underside produces a wall impact instead.
+ *
+ * Coordinates and deck heights use the same rampTopAt() as grounded riding.
+ */
+export function sweptAirRampContact(from, to, ramp, terrainHeight) {
+  const dx = to.x - from.x, dz = to.z - from.z;
+  const travel = Math.hypot(dx, dz);
+  if (travel < 1e-7) return null;
+  const steps = Math.max(2, Math.min(64, Math.ceil(travel / .16)));
+  let lastDeck = rampTopAt(ramp, from.x, from.z, terrainHeight);
+  let lastY = from.y;
+  const descending = to.y < from.y;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const x = from.x + dx * t;
+    const z = from.z + dz * t;
+    const y = from.y + (to.y - from.y) * t;
+    const deck = rampTopAt(ramp, x, z, terrainHeight);
+    if (deck !== null) {
+      // The snowboard's contact edge is slightly wider/lower than its center.
+      const clearance = .11;
+      if (y < deck - clearance) {
+        // Genuine descent through the upper surface is a valid deck landing.
+        // Coming from outside or below the ramp is never converted to a landing.
+        if (descending && lastDeck !== null && lastY >= lastDeck - clearance) {
+          return {kind: 'deck', x, z, y: deck, t, rampId: ramp.id};
+        }
+        const terrain = terrainHeight(x, z);
+        // Ignore negative-space detections below the terrain; ordinary ground
+        // collision owns those. It remains a solid ramp if at snow level.
+        if (y >= terrain - .65) {
+          return {kind: 'wall', x, z, y: deck, t, rampId: ramp.id};
+        }
+      }
+    }
+    lastDeck = deck;
+    lastY = y;
+  }
+  return null;
+}

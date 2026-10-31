@@ -7,8 +7,8 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import * as THREE from "three";
 import { classifySnowGesture } from "./snow64Gestures";
 import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landing";
-import { startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip } from "./snow64Physics";
-import { snowSurfaceAt, sweptRockHit, sweptRampSideHit } from "./snow64Collision";
+import { SNOW_GRAVITY, startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip } from "./snow64Physics";
+import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnSnowMushroom, mushroomCollision, activateSnowMushroom } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
@@ -718,16 +718,40 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const previousZ=s.z;
         const previousY=s.worldY;
         s.z -= s.speed * dt;
-        // A ramp is a solid deck, not a visual-only height offset.
-        // Sample at the rider's actual world position so feet/board cannot sink through.
-        const surface=snowSurfaceAt(s.x,s.z,localChunks,groundY);
+        // Solid ramp collision, including while airborne. An Ollie started
+        // before a pink ramp must clear its deck or hit the wedge. Sampling the
+        // ballistic path stops the board tunnelling through at high speeds.
+        let surface=snowSurfaceAt(s.x,s.z,localChunks,groundY);
         const from={x:previousX,z:previousZ,y:previousY};
-        const to={x:s.x,z:s.z,y:s.inAir?s.worldY:surface.height};
-        for(const chunk of localChunks) for(const ramp of chunk.ramps){
-          if(!s.frostHover && sweptRampSideHit(from,to,ramp,groundY)){
-            s.x=previousX;s.z=previousZ;
-            beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound);
-            break;
+        const predictedAirY=s.worldY+s.vy*dt-.5*SNOW_GRAVITY*dt*dt;
+        const to={x:s.x,z:s.z,y:s.inAir?predictedAirY:surface.height};
+        if (!s.frostHover && !s.recovery) {
+          for (const chunk of localChunks) for (const ramp of chunk.ramps) {
+            if (s.recovery) break;
+            // The rider has already left the lip of this ramp.
+            if (s.inAir && !s.consumedRamps.has(ramp.id)) {
+              const hit=sweptAirRampContact(from,to,ramp,groundY);
+              if (hit) {
+                if (hit.kind === "deck") {
+                  // A descending jump catches the top of the ramp rather
+                  // than phasing through it. Finish the landing this frame.
+                  s.x=hit.x;
+                  s.z=hit.z;
+                  s.worldY=hit.y+.003;
+                  s.vy=Math.min(-1,s.vy);
+                  surface=snowSurfaceAt(s.x,s.z,localChunks,groundY);
+                  break;
+                }
+                s.x=previousX;s.z=previousZ;
+                beginSnowRecovery(s,"wipeout","RAMP COLLISION!",onSound);
+                break;
+              }
+            }
+            if (sweptRampSideHit(from,to,ramp,groundY)) {
+              s.x=previousX;s.z=previousZ;
+              beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound);
+              break;
+            }
           }
         }
         if(!s.recovery && !s.inAir) {
@@ -804,7 +828,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
                 const earned=outcome.basePoints*Math.min(5,Math.max(1,s.combo));
                 s.score+=earned;
                 recordSnowPoints(s,earned);
-                const spawnedMushroom=maybeSpawnSnowMushroom(s);
+                const spawnedMushroom=maybeSpawnSnowMushroom(s,localChunks);
                 const turns=((s.airYaw/Math.PI)%2+2)%2;
                 if(turns>.8&&turns<1.2)s.fakie=!s.fakie;
                 s.lastText=spawnedMushroom ? "✦ RARE FROST SHROOM AHEAD! ✦" : `CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
@@ -861,7 +885,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           for (const chunk of localChunks) for (const coin of chunk.coins) {
             if (collectedRef.current.has(coin.id)) continue;
             if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
-              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; recordSnowPoints(s,TOKEN_POINTS); const spawnedMushroom=maybeSpawnSnowMushroom(s); onSound("pickup");
+              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; recordSnowPoints(s,TOKEN_POINTS); const spawnedMushroom=maybeSpawnSnowMushroom(s,localChunks); onSound("pickup");
               s.lastText = spawnedMushroom ? "✦ RARE FROST SHROOM AHEAD! ✦" : `SHRED TOKEN +${TOKEN_POINTS}`; s.textUntil = s.t + (spawnedMushroom ? 2 : 1.25);
             }
           }
