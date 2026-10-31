@@ -16,7 +16,7 @@ function seededRandom(seed) {
 /** More distance = faster score loss, including while recovering from a wipeout. */
 export function snowDrainPerSecond(distanceMeters) {
   const d = Math.max(0, distanceMeters);
-  return 12 + d * 0.014 + d * d * 0.0000018;
+  return 68 + d * 0.055 + d * d * 0.000010;
 }
 
 export function snowChunkIndex(distanceMeters) {
@@ -40,7 +40,7 @@ export function generateSnowChunk(index) {
         trees.push({id:`tree-${row}-${sign}`, x:sign*(16.1 + random()*18), z:z + random()*3, size:1.8+random()*3.1});
       }
     }
-    if (row > 4 && row % 9 === 0) {
+    if (row > 4 && row % 6 === 0) {
       coins.push({id:`coin-${row}`, x:SNOW_LANES[Math.floor(random()*SNOW_LANES.length)], z:z-1.2});
     }
     if (row > 10 && row % 15 === 0) {

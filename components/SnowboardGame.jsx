@@ -8,6 +8,7 @@ import * as THREE from "three";
 import { classifySnowGesture } from "./snow64Gestures";
 import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landing";
 import { startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip } from "./snow64Physics";
+import { snowSurfaceAt, sweptRockHit, sweptRampSideHit } from "./snow64Collision";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 
@@ -18,6 +19,8 @@ const MOBILE_MODEL = "/models/pidgeonkitty-snowboard-v2-mobile.glb";
 const SLOPE = 0.077;
 const LANES = [-7.4, -3.8, 0, 3.8, 7.4];
 const DEG = Math.PI / 180;
+const TOKEN_POINTS = 360;
+const RIDER_BINDING_HEIGHT = 0.33; // Keep feet just above the raised board bindings.
 const clamp = THREE.MathUtils.clamp;
 const lerp = THREE.MathUtils.lerp;
 
@@ -430,7 +433,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       if (!playing || s.recovery) continue;
       if (command.type === "jump" && !s.inAir && s.jumpCooldown <= 0) {
         const boost=clamp(command.boost || 0,0,1);
-        startSnowJump(s,groundY(s.x,s.z),{velocity:7.9+(tuck?.8:0)+4.0*boost,source:"ollie"});
+        startSnowJump(s,snowSurfaceAt(s.x,s.z,localChunks,groundY).height,{velocity:7.9+(tuck?.8:0)+4.0*boost,source:"ollie"});
         resetAirTrickChain(s);
         activateArmedTrick(s);
         s.lastText = s.trick ? `${s.trick.name} TAKEOFF!` : boost>.6 ? "CHARGED OLLIE!" : "OLLIE!";
@@ -484,14 +487,38 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (tuck ? (mobile ? 2.1 : 1.35) : .5)));
         s.velX = lerp(s.velX, s.steer * (s.inAir ? 5.0 : 9.2), Math.min(1, dt * (s.inAir ? 2.8 : 5.5)));
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
-        const previousZ=s.z;
+        const previousZ=s.z, previousX=s.x;
+        const previousY=s.worldY;
         s.z -= s.speed * dt;
-        if (!s.inAir) {
+        // A ramp is a solid deck, not a visual-only height offset.
+        // Sample at the rider's actual world position so feet/board cannot sink through.
+        const surface=snowSurfaceAt(s.x,s.z,localChunks,groundY);
+        const from={x:previousX,z:previousZ,y:previousY};
+        const to={x:s.x,z:s.z,y:s.inAir?s.worldY:surface.height};
+        for(const chunk of localChunks) for(const ramp of chunk.ramps){
+          if(sweptRampSideHit(from,to,ramp,groundY)){
+            s.x=previousX;s.z=previousZ;
+            beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound);
+            break;
+          }
+        }
+        if(!s.recovery && !s.inAir) {
+          s.worldY=surface.height;
+        }
+        if (!s.inAir && !s.recovery) {
           for(const chunk of localChunks) for(const ramp of chunk.ramps){
+            if(s.recovery || s.inAir) break;
             if(s.consumedRamps.has(ramp.id)) continue;
-            if(crossedRampLip(ramp,previousZ,s.z,s.x) && s.jumpCooldown<=0){
+            if(crossedRampLip(ramp,previousZ,s.z,s.x)){
+              if(s.jumpCooldown>0){
+                beginSnowRecovery(s,"wipeout","RAMP LIP COLLISION!",onSound);
+                break;
+              }
               const verticalSpeed=rampTakeoffSpeed(s.speed,ramp);
-              startSnowJump(s,groundY(s.x,s.z),{velocity:verticalSpeed,source:"ramp",lift:ramp.height});
+              // Launch from the physical lip instead of adding a visual-only lift.
+              const lipY=groundY(ramp.x,ramp.z)+ramp.height;
+              startSnowJump(s,lipY,{velocity:verticalSpeed,source:"ramp",lift:0});
+              s.peakAir=Math.max(0,lipY-groundY(s.x,s.z));
               resetAirTrickChain(s);
               activateArmedTrick(s);
               s.launchSuper=ramp.superAir;
@@ -502,11 +529,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             }
           }
         }
-        if(s.inAir){
+        if(s.inAir && !s.recovery){
           // Animation time runs independently of physics. Every finished clip
           // commits to the airborne chain and instantly starts the next one.
           advanceAirTricks(s,dt);
-          const landed=stepSnowJump(s,dt,groundY(s.x,s.z));
+          // When descending onto a ramp, land on its surface rather than falling through.
+          const landingFloor=snowSurfaceAt(s.x,s.z,localChunks,groundY).height;
+          const landed=stepSnowJump(s,dt,landingFloor);
           if(landed){
             const outcome=judgeAirTrickChain(s,s.steer,judgeSnowLanding,Math.random());
             if(outcome.grade === "clean"){
@@ -532,12 +561,16 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             }
           }
         }
-        if (!s.inAir && !s.recovery) {
+        if (!s.recovery) {
+          // Swept path + vertical clearance: no tunnelling between frames at tuck speed,
+          // but safely jumping over a rock still works.
+          const end={x:s.x,z:s.z,y:s.worldY};
           for (const chunk of localChunks) for (const rock of chunk.rocks) {
             if (s.consumedRocks.has(rock.id)) continue;
-            if (Math.abs(s.z - rock.z) < 1.1 && Math.abs(s.x - rock.x) < rock.size + .5) {
+            if (sweptRockHit(from,end,rock,groundY)) {
               s.consumedRocks.add(rock.id);
-              beginSnowRecovery(s, "wipeout", "ROCK WIPEOUT!", onSound);
+              s.x=previousX;s.z=previousZ;
+              beginSnowRecovery(s, "wipeout", "ROCK COLLISION!", onSound);
               break;
             }
           }
@@ -546,8 +579,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           for (const chunk of localChunks) for (const coin of chunk.coins) {
             if (collectedRef.current.has(coin.id)) continue;
             if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
-              collectedRef.current.add(coin.id); s.coins++; s.score += 250; onSound("pickup");
-              s.lastText = "SHRED TOKEN +250"; s.textUntil = s.t + 1.25;
+              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; onSound("pickup");
+              s.lastText = `SHRED TOKEN +${TOKEN_POINTS}`; s.textUntil = s.t + 1.25;
             }
           }
         }
@@ -592,19 +625,14 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     if(phaseRef.current!=="paused")mixer.update(dt);
 
     const cy = groundY(s.x, s.z);
-    let rampRideLift = 0;
-    if(!s.inAir && !s.recovery){
-      for(const chunk of localChunks) for(const ramp of chunk.ramps){
-        const half=ramp.length*.5;
-        if(!s.consumedRamps.has(ramp.id) && Math.abs(s.x-ramp.x)<1.85
-          && s.z <= ramp.z + half && s.z > ramp.z - half){
-          rampRideLift=Math.max(rampRideLift,ramp.height*clamp((ramp.z+half-s.z)/ramp.length,0,1));
-        }
-      }
-    }
-    const visualAir = s.inAir ? Math.max(0,s.air) : rampRideLift;
+    const deck=snowSurfaceAt(s.x,s.z,localChunks,groundY);
+    // Support the board along its length, not just at its center.
+    const frontFloor=snowSurfaceAt(s.x,s.z-1.08,localChunks,groundY).height;
+    const backFloor=snowSurfaceAt(s.x,s.z+1.08,localChunks,groundY).height;
+    const boardFloor=Math.max(deck.height,frontFloor-.12,backFloor-.12);
+    const visualY=s.inAir ? s.worldY : s.recovery ? cy : Math.max(s.worldY,boardFloor);
     if (root.current && stance.current && board.current && riderCarrier.current && riderModel.current) {
-      root.current.position.set(s.x, cy + visualAir + .08, s.z);
+      root.current.position.set(s.x, visualY + .14, s.z);
       const trick = s.trick;
       const progress = trick ? smoothstep(trick.t / trick.duration) : 0;
       const grabEnvelope = trick ? Math.sin(Math.PI * progress) : 0;
@@ -616,8 +644,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       const roll = trick ? (trick.roll || 0) * grabEnvelope : 0;
       stance.current.rotation.set(flip - s.velX * .013 * (s.inAir ? .3 : 1), airYaw,
         s.steer * -.22 + roll, "YXZ");
+      const terrainPitch=clamp(Math.atan2(frontFloor-backFloor,2.16),-.16,.88);
       board.current.rotation.x = (trick?.pitch || 0) * grabEnvelope +
-        (s.inAir ? Math.sin(s.air * .58) * .1 : -Math.min(.2, s.speed * .003));
+        (s.inAir ? Math.sin(s.air * .58) * .1 : terrainPitch);
       board.current.rotation.z = trick ? (trick.roll || 0) * grabEnvelope * .55 : 0;
       board.current.position.y = s.impact > 0 ? -.09 * Math.sin((.45 - s.impact) * Math.PI / .45) : 0;
       if (rec) {
@@ -641,12 +670,15 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const turnToRun = smoothstep((rec.t - fallEnd) / .38);
         const turnToBoard = smoothstep((rec.t - chaseEnd + .34) / .34);
         riderModel.current.rotation.y = chasing ? (Math.PI / 2) * (1 - turnToRun + turnToRun * turnToBoard) : Math.PI / 2;
-        riderModel.current.position.y = .17;
+        // When chasing the board, feet stay close to snow; rise into the bindings during remount.
+        const remountBlend = recoveryMode === "remounting"
+          ? smoothstep((rec.t - chaseEnd) / .58) : 0;
+        riderModel.current.position.y = lerp(.06, RIDER_BINDING_HEIGHT, remountBlend);
       } else {
         riderCarrier.current.position.set(0, 0, 0);
         riderCarrier.current.rotation.set(0, 0, 0);
         riderModel.current.rotation.y = Math.PI / 2;
-        riderModel.current.position.y = .17;
+        riderModel.current.position.y = RIDER_BINDING_HEIGHT;
       }
     }
     // A draggable orbit stays anchored on the moving rider. Dragging never
@@ -1039,7 +1071,7 @@ export default function SnowboardGame(){
     <div style={{position:"absolute",right:mobile?10:20,top:mobile?100:121,zIndex:3,pointerEvents:"none",textAlign:"right"}}>
       <div className="snow64-label" style={{color:"#22546c",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
       <div style={{fontSize:mobile?15:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
-      <div style={{fontSize:mobile?10:12,color:hud.score<600?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
+      <div style={{fontSize:mobile?10:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
     </div>
     {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onPointerDown={()=>{phase==="paused"?setPhase("playing"):start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
       <div style={{maxWidth:560,width:"min(100%,560px)",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(20px,5vw,39px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
