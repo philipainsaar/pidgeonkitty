@@ -5,6 +5,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html, useGLTF } from "@react-three/drei";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import * as THREE from "three";
+import { classifySnowGesture, MOBILE_TRICK_GUIDE } from "./snow64Gestures";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
 // No Nintendo/N64 game assets are used. All mountain scenery, board and track are procedural.
@@ -355,19 +356,20 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const dt=Math.min(rawDt,0.043),s=stateRef.current;
     const playing=phaseRef.current==="playing";
     const left=keyRef.current.left?1:0,right=keyRef.current.right?1:0;
-    const tuck=keyRef.current.tuck && playing;
-    const steerWanted=playing?(right-left):0;
+    const tuck=(keyRef.current.tuck || keyRef.current.touchTuck) && playing;
+    const steerWanted=playing?clamp(right-left+(keyRef.current.steerAnalog||0),-1,1):0;
     s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*6));
     const queue=queueRef.current.splice(0);
     for(const command of queue){
       if(command.type==="camera")s.cameraMode=(s.cameraMode+1)%3;
       if(!playing)continue;
       if(command.type==="jump" && !s.inAir && s.jumpCooldown<=0 && s.crash<=0){
-        s.inAir=true;s.vy=8.5+(tuck?1.0:0);s.air=.03;s.jumpCooldown=.35;s.trick=null;
-        s.lastText="OLLIE!";s.textUntil=s.t+.9;onSound("jump");
+        s.inAir=true;s.vy=8.5+(tuck?1.0:0)+4.2*clamp(command.boost||0,0,1);s.air=.03;s.jumpCooldown=.35;s.trick=null;
+        s.lastText=(command.boost||0)>.5?"POWER OLLIE!":"OLLIE!";s.textUntil=s.t+.9;onSound("jump");
       }
       if(command.type==="trick"){
-        const kind=TRICKS.find(q=>q.key===command.key);
+        const found=TRICKS.find(q=>q.key===command.key);
+        const kind=found?{...found, spins:found.spins && command.direction===-1 ? -found.spins : found.spins}:null;
         if(kind && !s.inAir && s.jumpCooldown<=0 && s.crash<=0){
           // One-tap trick buttons work on phones: the first tap also launches an ollie.
           s.inAir=true;s.vy=kind.duration>1.0?12.3:kind.duration>.78?10.0:8.7;
@@ -405,7 +407,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           if(s.trick){
             if(s.trick.t>=s.trick.duration*.92){
               s.combo++;const earned=s.trick.points*Math.min(5,s.combo);
-              if((s.trick.spins||0)%360===180)s.fakie=!s.fakie;
+              if(Math.abs((s.trick.spins||0)%360)===180)s.fakie=!s.fakie;
               s.score+=earned;onSound("trick");s.lastText=`${s.trick.name} +${earned.toLocaleString()}`;
               s.textUntil=s.t+1.9;
             } else {
@@ -514,6 +516,195 @@ function HoldButton({label,onDown,onUp,style={}}){
   return <button type="button" style={{...uiButton,...style}} onPointerDown={e=>{e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);onDown();}} onPointerUp={e=>{e.preventDefault();onUp();}} onPointerCancel={onUp} onLostPointerCapture={onUp}>{label}</button>;
 }
 
+/** Two independent touch zones allow true two-thumb multi-touch: steering with the
+ * left finger while drawing tricks on the right. No WebGL raycasting required. */
+function MobileTouchControls({ inputRef, act, phase, runKey }) {
+  const steering = useRef(null);
+  const drawing = useRef(null);
+  const stickBase = useRef(null);
+  const stickKnob = useRef(null);
+  const strokePath = useRef(null);
+  const noticeTimeout = useRef(null);
+  const strokeTimeout = useRef(null);
+  const [notice, setNotice] = useState("");
+  const [help, setHelp] = useState(false);
+
+  useEffect(() => {
+    // Explicitly release held controls after pausing, restarting or unmounting.
+    inputRef.current.steerAnalog = 0;
+    inputRef.current.touchTuck = false;
+    steering.current = null;
+    drawing.current = null;
+    return () => {
+      inputRef.current.steerAnalog = 0;
+      inputRef.current.touchTuck = false;
+      clearTimeout(noticeTimeout.current);
+      clearTimeout(strokeTimeout.current);
+    };
+  }, [inputRef, phase, runKey]);
+
+  function flash(message) {
+    clearTimeout(noticeTimeout.current);
+    setNotice(message);
+    noticeTimeout.current = setTimeout(() => setNotice(""), 1450);
+  }
+  function startSteer(e) {
+    if (phase !== "playing" || steering.current) return;
+    e.preventDefault();
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    steering.current = {id:e.pointerId, x:e.clientX, y:e.clientY};
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (stickBase.current) {
+      const el = stickBase.current;
+      el.style.left = `${x}px`; el.style.top = `${y}px`;
+      el.style.bottom = "auto"; el.style.opacity = "1";
+    }
+    if (stickKnob.current) stickKnob.current.style.transform = "translate(-50%,-50%)";
+  }
+  function moveSteer(e) {
+    if (!steering.current || steering.current.id !== e.pointerId) return;
+    e.preventDefault();
+    const dx = e.clientX - steering.current.x;
+    const dy = e.clientY - steering.current.y;
+    inputRef.current.steerAnalog = clamp(dx / 68, -1, 1);
+    inputRef.current.touchTuck = dy < -43;
+    if (stickKnob.current) {
+      const mag = Math.max(1, Math.hypot(dx, dy));
+      const ratio = Math.min(1, 43 / mag);
+      stickKnob.current.style.transform = `translate(-50%,-50%) translate(${dx * ratio}px,${dy * ratio}px)`;
+      stickKnob.current.style.background = dy < -43 ? "#f9dc78" : "#f49db9";
+    }
+  }
+  function endSteer(e) {
+    if (!steering.current || steering.current.id !== e.pointerId) return;
+    steering.current = null;
+    inputRef.current.steerAnalog = 0;
+    inputRef.current.touchTuck = false;
+    if (stickBase.current) {
+      const el = stickBase.current;
+      el.style.left = "27%"; el.style.top = "auto";
+      el.style.bottom = "calc(28px + env(safe-area-inset-bottom, 0px))";
+      el.style.opacity = ".72";
+    }
+    if (stickKnob.current) stickKnob.current.style.transform = "translate(-50%,-50%)";
+  }
+  function drawLine() {
+    if (!strokePath.current || !drawing.current) return;
+    const {points} = drawing.current;
+    const data = points.map((p,i) => `${i===0?"M":"L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+    strokePath.current.setAttribute("d", data);
+  }
+  function startDrawing(e) {
+    if (phase !== "playing" || drawing.current) return;
+    e.preventDefault();
+    clearTimeout(strokeTimeout.current);
+    const rect = e.currentTarget.getBoundingClientRect();
+    drawing.current = {id:e.pointerId, time:performance.now(), rect,
+      points:[{x:e.clientX - rect.left, y:e.clientY - rect.top}]};
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (strokePath.current) strokePath.current.setAttribute("d", "");
+  }
+  function moveDrawing(e) {
+    const d = drawing.current;
+    if (!d || d.id !== e.pointerId) return;
+    e.preventDefault();
+    const pt = {x:e.clientX - d.rect.left, y:e.clientY - d.rect.top};
+    const prev = d.points[d.points.length - 1];
+    if (Math.hypot(pt.x - prev.x, pt.y - prev.y) < 2.5) return;
+    if (d.points.length < 320) d.points.push(pt);
+    drawLine();
+  }
+  function endDrawing(e, cancelled = false) {
+    const d = drawing.current;
+    if (!d || d.id !== e.pointerId) return;
+    e.preventDefault();
+    drawing.current = null;
+    if (!cancelled) {
+      const gesture = classifySnowGesture(d.points);
+      if (gesture) {
+        // A drawn trick also launches a jump when the rider is on the snow.
+        act({type:"trick",key:gesture.key,direction:gesture.direction});
+        flash(`${gesture.shape}  →  ${gesture.label}`);
+      } else {
+        const elapsed = performance.now() - d.time;
+        act({type:"jump",boost:clamp((elapsed-120)/750,0,1)});
+        flash(elapsed > 460 ? "POWER OLLIE!" : "OLLIE!");
+      }
+    }
+    clearTimeout(strokeTimeout.current);
+    strokeTimeout.current = setTimeout(() => strokePath.current?.setAttribute("d", ""), 350);
+  }
+
+  const zone = {position:"absolute",top:138,bottom:0,zIndex:4,touchAction:"none",
+    userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",overflow:"hidden"};
+  const labelStyle={position:"absolute",bottom:"calc(22px + env(safe-area-inset-bottom, 0px))",
+    font:"900 10px system-ui, sans-serif",letterSpacing:1.2,color:"#faffff",
+    textShadow:"1px 2px 3px #102f47, 0 0 5px #102f47",pointerEvents:"none"};
+
+  return <>
+    <div aria-label="Steering touchpad: drag left or right to carve and upward to tuck"
+      style={{...zone,left:0,width:"47%"}} onPointerDown={startSteer}
+      onPointerMove={moveSteer} onPointerUp={endSteer}
+      onPointerCancel={endSteer} onLostPointerCapture={endSteer}>
+      <div ref={stickBase} aria-hidden="true" style={{position:"absolute",left:"27%",bottom:"calc(28px + env(safe-area-inset-bottom, 0px))",
+        width:116,height:116,borderRadius:"50%",border:"2px solid #e6f9ff9c",
+        background:"#0e3c5a30",boxShadow:"inset 0 0 22px #ffffff24,0 0 12px #163e5666",
+        transform:"translate(-50%,-50%)",opacity:.72,pointerEvents:"none"}}>
+        <div ref={stickKnob} style={{position:"absolute",left:"50%",top:"50%",transform:"translate(-50%,-50%)",
+          width:56,height:56,borderRadius:"50%",border:"3px solid #fff4d8",background:"#f49db9",
+          boxShadow:"0 3px 0 #203e59,0 0 14px #213c5c99",display:"grid",placeItems:"center",
+          fontSize:18,color:"#17334c",fontWeight:900}}>✛</div>
+      </div>
+      <div style={{...labelStyle,left:13}}>DRAG ↔ STEER · ↑ TUCK</div>
+    </div>
+    <div aria-label="Jump and trick touchpad: tap to jump or draw a trick pattern"
+      style={{...zone,right:0,width:"53%"}} onPointerDown={startDrawing}
+      onPointerMove={moveDrawing} onPointerUp={endDrawing}
+      onPointerCancel={e=>endDrawing(e,true)}
+      onLostPointerCapture={e=>endDrawing(e,true)}>
+      <div aria-hidden="true" style={{position:"absolute",right:"12%",bottom:"calc(112px + env(safe-area-inset-bottom, 0px))",
+        border:"2px dashed #fff7dd9a",background:"#153c5773",borderRadius:"50%",width:134,height:134,
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5,
+        pointerEvents:"none",boxShadow:"inset 0 0 22px #fff5e819"}}>
+        <span style={{fontSize:31,lineHeight:1,color:"#ffdf8b"}}>↻ Z V</span>
+        <span style={{font:"900 11px system-ui",color:"#ffffff"}}>DRAW A TRICK</span>
+        <span style={{font:"700 10px system-ui",color:"#d7f6ff"}}>TAP = JUMP</span>
+      </div>
+      <svg aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",overflow:"visible"}}>
+        <path ref={strokePath} fill="none" stroke="#ffe284" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"
+          style={{filter:"drop-shadow(0 0 5px #ff9ca8)"}}/>
+      </svg>
+      <div style={{...labelStyle,right:16}}>TAP JUMP · DRAW TRICKS</div>
+    </div>
+    {notice && <div aria-live="polite" style={{position:"absolute",zIndex:5,top:"31%",left:"50%",transform:"translateX(-50%)",
+      padding:"9px 14px",borderRadius:8,background:"#183e5bdd",color:"#ffe89b",font:"900 15px system-ui",
+      textShadow:"1px 1px #22405b",whiteSpace:"nowrap",pointerEvents:"none"}}>{notice}</div>}
+    <button type="button" className="snow64-tool" aria-label="Show touch trick gestures"
+      onPointerDown={e=>e.stopPropagation()} onClick={()=>setHelp(v=>!v)}
+      style={{...uiButton,position:"absolute",zIndex:6,right:10,top:149,padding:"8px 10px",background:"#173e5add"}}>
+      {help?"✕ CLOSE":"? TRICKS"}
+    </button>
+    {help && <div style={{position:"absolute",inset:0,zIndex:5,background:"#112e48d9",display:"grid",placeItems:"center",
+      padding:"50px 16px 20px",touchAction:"none"}}>
+      <div style={{width:"min(100%,410px)",maxHeight:"72dvh",overflowY:"auto",borderRadius:14,
+        border:"2px solid #cdeefd",background:"#173f5de8",padding:18,boxShadow:"0 8px 23px #0c2139aa"}}>
+        <h2 style={{margin:"0 0 12px",fontSize:21,color:"#ffebaa"}}>DRAW YOUR TRICKS</h2>
+        <p style={{fontSize:12,color:"#ddf5ff",lineHeight:1.5,margin:"0 0 14px"}}>Left thumb steers the board (swipe upward to tuck). On the right half, tap to ollie or draw one continuous gesture to jump and do a trick. Both fingers work together!</p>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:7}}>
+          {MOBILE_TRICK_GUIDE.map(([shape,name])=><div key={shape} style={{display:"flex",alignItems:"center",gap:11,
+            padding:"7px 9px",background:"#0f304e9c",borderRadius:8}}>
+            <span style={{color:"#ffdf92",fontSize:24,fontWeight:900,width:54,textAlign:"center"}}>{shape}</span>
+            <span style={{fontSize:11,fontWeight:900,color:"#f6fbff"}}>{name}</span>
+          </div>)}
+        </div>
+        <p style={{color:"#b5d9e6",fontSize:11,lineHeight:1.4,margin:"14px 0 0"}}>Tip: draw slowly and clearly. A hold-and-release without drawing charges a higher ollie. Big tricks need enough air to land cleanly.</p>
+        <button type="button" className="snow64-tool" onClick={()=>setHelp(false)} style={{...uiButton,marginTop:12,padding:"10px 18px",width:"100%",background:"#eea2b6",color:"#18374e"}}>BACK TO SLOPES</button>
+      </div>
+    </div>}
+  </>;
+}
+
 export default function SnowboardGame(){
   const [phase,setPhase]=useState("ready");
   const [runKey,setRunKey]=useState(0);
@@ -524,7 +715,7 @@ export default function SnowboardGame(){
   const [best,setBest]=useState(0);
   const [hud,setHud]=useState({speed:57,score:0,distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
   const sound=useCallback(kind=>{if(soundRef.current)synthSfx(kind);},[]);
-  const input=useRef({left:false,right:false,tuck:false});
+  const input=useRef({left:false,right:false,tuck:false,steerAnalog:0,touchTuck:false});
   const queue=useRef([]);
   const state=useRef(initialState());
   const collected=useRef(new Set());
@@ -537,7 +728,7 @@ export default function SnowboardGame(){
     return()=>m.removeEventListener?.("change",update);
   },[]);
   const start=useCallback(()=>{
-    input.current.left=false;input.current.right=false;input.current.tuck=false;
+    input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;
     queue.current.length=0;collected.current.clear();state.current=initialState();
     setHud(safeHud(state.current));setRunKey(k=>k+1);setPhase("playing");sound("start");
   },[sound]);
@@ -571,12 +762,12 @@ export default function SnowboardGame(){
       if(key==="d"||key==="arrowright")input.current.right=false;
       if(key==="w"||key==="arrowup")input.current.tuck=false;
     };
-    const blur=()=>{input.current.left=false;input.current.right=false;input.current.tuck=false;};
+    const blur=()=>{input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;};
     window.addEventListener("keydown",down);window.addEventListener("keyup",up);window.addEventListener("blur",blur);
     return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",blur);};
   },[act,start,pause]);
   const currentBest=Math.max(best,hud.score);
-  return <main style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif"}}>
+  return <main onContextMenu={e=>{if(mobile)e.preventDefault();}} style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif",touchAction:mobile?"none":"auto",overscrollBehavior:"none",userSelect:mobile?"none":"auto",WebkitUserSelect:mobile?"none":"auto"}}>
     <style>{`
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
       @keyframes snowboardFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
@@ -620,9 +811,10 @@ export default function SnowboardGame(){
         <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 23px"}}>{phase==="ready"?"Carve through alpine powder. Launch from ramps. Pull 1080 spins and wild grabs. Stick the landing and build a monster combo!":phase==="paused"?"Ride paused. Your snow is going nowhere.":`RUN COMPLETE! ${hud.score.toLocaleString()} points · ${hud.coins} tokens · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST: {currentBest.toLocaleString()} PTS</div>}
         <button type="button" className="snow64-tool" onClick={phase==="paused"?()=>setPhase("playing"):start} style={{...uiButton,color:"#1f3852",background:"#ffe395",borderColor:"#ffffff",fontSize:22,fontStyle:"italic",fontWeight:1000,padding:"14px 36px",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{phase==="ready"?"START RIDING ▶":phase==="paused"?"RESUME ▶":"RIDE AGAIN ↻"}</button>
-        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE<br/>1–0 = TRICKS &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</p>
+        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT THUMB: STEER / UP: TUCK<br/>RIGHT HALF: TAP TO JUMP, DRAW PATTERNS TO TRICK</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE<br/>1–0 = TRICKS &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
+    {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} act={act} phase={phase} runKey={runKey} /> : !mobile ? <>
     <div style={{position:"absolute",left:mobile?9:18,bottom:mobile?12:18,zIndex:4,display:"flex",gap:7,alignItems:"flex-end"}}>
       <HoldButton label="◀ CARVE" style={{padding:mobile?"13px 12px":"14px 20px"}} onDown={()=>input.current.left=true} onUp={()=>input.current.left=false}/>
       <HoldButton label="CARVE ▶" style={{padding:mobile?"13px 12px":"14px 20px"}} onDown={()=>input.current.right=true} onUp={()=>input.current.right=false}/>
@@ -634,6 +826,7 @@ export default function SnowboardGame(){
     <div className="snow64-tricks" style={{position:"absolute",right:mobile?8:18,bottom:mobile?82:98,zIndex:4,width:mobile?"min(270px,55vw)":440,display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))",gap:5}}>
       {TRICKS.map(t=><button key={t.key} type="button" className="snow64-tool" onClick={()=>act({type:"trick",key:t.key})} style={{...uiButton,padding:mobile?"7px 3px":"9px 3px",fontSize:mobile?9:10,background:"#254961cf",borderColor:"#84cbe3"}}>{t.name}</button>)}
     </div>
+    </> : null}
     <div style={{position:"absolute",bottom:mobile?"auto":18,top:mobile?113:"auto",left:mobile?10:"50%",transform:mobile?"none":"translateX(-50%)",display:"flex",gap:5,zIndex:4}}>
       <button type="button" className="snow64-tool" onClick={pause} style={{...uiButton,padding:"8px 11px"}}>{phase==="paused"?"▶ RESUME":mobile?"Ⅱ":"Ⅱ PAUSE"}</button>
       <button type="button" className="snow64-tool" onClick={()=>act({type:"camera"})} style={{...uiButton,padding:"8px 11px"}}>{mobile?"◉ CAM":"◉ CAMERA"}</button>
