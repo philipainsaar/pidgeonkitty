@@ -56,6 +56,7 @@ function synthSfx(kind) {
       crash: [[140,.00,.14],[90,.12,.26]],
       finish: [[392,.00,.14],[494,.17,.15],[587,.35,.16],[784,.56,.32]],
       power: [[590,.00,.10],[790,.12,.14],[1050,.27,.19]],
+      shatter: [[330,.00,.065],[510,.055,.07],[860,.14,.15]],
     }[kind] || [];
     const now=snowAudioContext.currentTime;
     notes.forEach(([freq,delay,duration])=>{
@@ -70,6 +71,61 @@ function synthSfx(kind) {
       osc.start(now+delay);osc.stop(now+delay+duration+.02);
     });
   }catch{ /* Optional audio should never interrupt gameplay. */ }
+}
+
+/** Original enchanted-snow arpeggio, synthesized with Web Audio (no music assets).
+ * Only one interval runs while Frost Shroom is active; clean shutdown on pause/end.
+ */
+function playFrostShroomMusic() {
+  if (typeof window === "undefined") return () => {};
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return () => {};
+  try {
+    if (!snowAudioContext) snowAudioContext = new AC();
+    const ctx = snowAudioContext;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    const bus = ctx.createGain();
+    bus.gain.setValueAtTime(0.0001, ctx.currentTime);
+    bus.gain.exponentialRampToValueAtTime(0.62, ctx.currentTime + .20);
+    bus.connect(ctx.destination);
+    const semitones = [0,7,12,16, 14,9,7,12, 5,9,12,17, 16,12,9,7,
+      0,5,9,12, 19,17,14,9, 7,12,16,19, 17,12,7,4];
+    let step = 0, next = ctx.currentTime + .06;
+    let stopped = false;
+    const playBell = (time, freq, duration, volume, type = "sine") => {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(freq, time);
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(Math.max(.0002, volume), time + .018);
+      gain.gain.exponentialRampToValueAtTime(.0001, time + duration);
+      oscillator.connect(gain); gain.connect(bus);
+      oscillator.start(time);
+      oscillator.stop(time + duration + .025);
+      oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+    };
+    const schedule = () => {
+      if (stopped) return;
+      while(next < ctx.currentTime + .26) {
+        const note = semitones[step % semitones.length];
+        const frequency = 392 * Math.pow(2, note / 12);
+        playBell(next, frequency, .29, .032);
+        if (step % 4 === 0) playBell(next, 196 * Math.pow(2, semitones[(step + 2) % semitones.length] / 24), .68, .016, "triangle");
+        step++; next += .19;
+      }
+    };
+    schedule();
+    const interval = window.setInterval(schedule, 90);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+      const t=ctx.currentTime;
+      bus.gain.cancelScheduledValues(t);
+      bus.gain.setTargetAtTime(.0001, t, .045);
+      window.setTimeout(() => bus.disconnect(), 400);
+    };
+  } catch { return () => {}; }
 }
 
 function rand(seed) {
@@ -147,9 +203,72 @@ function Forest({trees}) {
     <instancedMesh ref={caps} args={[null,null,n]}><coneGeometry args={[.17,.35,6]}/><meshLambertMaterial color="#e7fbfc" flatShading/></instancedMesh>
   </>;
 }
-function Rock({ x, z, size }) {
-  return <mesh position={[x, groundY(x, z) + size * 0.52, z]} rotation={[0.2, 0.8, 0.1]} scale={[size, size * 0.8, size * 1.1]}><dodecahedronGeometry args={[1, 0]} /><meshLambertMaterial color="#72879e" flatShading /></mesh>;
+/** Hide destroyed rocks immediately without React updates for each rock. */
+function Rock({ id, x, z, size, stateRef }) {
+  const mesh = useRef();
+  useFrame(() => {
+    if (mesh.current) mesh.current.visible = !stateRef.current.consumedRocks.has(id);
+  });
+  return <mesh ref={mesh} position={[x, groundY(x, z) + size * 0.52, z]} rotation={[0.2, 0.8, 0.1]} scale={[size, size * 0.8, size * 1.1]}><dodecahedronGeometry args={[1, 0]} /><meshLambertMaterial color="#72879e" flatShading /></mesh>;
 }
+
+/** Instance-pooled icy rock fragments: one draw call, capped bursts, no geometry churn. */
+function FrostRockShatter({ stateRef, mobile }) {
+  const instance = useRef();
+  const hadBurst = useRef(false);
+  const maxBursts = mobile ? 5 : 9;
+  const shardsPerBurst = mobile ? 7 : 10;
+  const total = maxBursts * shardsPerBurst;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const palette = useMemo(() => ["#91adbe", "#c2dbed", "#95ffef", "#b776eb", "#e5faff"].map(c=>new THREE.Color(c)), []);
+  useEffect(() => {
+    const mesh=instance.current;
+    if(!mesh)return;
+    dummy.scale.setScalar(.00001);dummy.updateMatrix();
+    for(let i=0;i<total;i++) {
+      mesh.setMatrixAt(i,dummy.matrix);
+      mesh.setColorAt(i,palette[i%palette.length]);
+    }
+    mesh.instanceMatrix.needsUpdate=true;
+    if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+  },[dummy,palette,total]);
+  useFrame(() => {
+    const mesh=instance.current;
+    if(!mesh)return;
+    const state=stateRef.current;
+    const live=(state.rockExplosions||[]).filter(b=>state.t-b.at<1.12).slice(-maxBursts);
+    if(state.rockExplosions?.length!==live.length)state.rockExplosions=live;
+    if(!live.length && !hadBurst.current)return;
+    hadBurst.current=live.length>0;
+    for(let b=0;b<maxBursts;b++) {
+      const blast=live[b];
+      for(let k=0;k<shardsPerBurst;k++) {
+        const i=b*shardsPerBurst+k;
+        if(!blast) {
+          dummy.scale.setScalar(.00001);
+          dummy.position.set(0,-5000,0);
+        } else {
+          const elapsed=Math.max(0,state.t-blast.at);
+          const theta=(k*2.39996+blast.seed*.37);
+          const speed=2.2+(k%4)*.46;
+          const spread=elapsed*speed*(1+blast.size*.12);
+          dummy.position.set(blast.x+Math.cos(theta)*spread,
+            blast.y+Math.max(0,elapsed*(4.9+(k%3)*.5)-9.8*elapsed*elapsed),
+            blast.z+Math.sin(theta)*spread);
+          dummy.scale.setScalar(Math.max(.001,(.13+blast.size*.11)*(1-elapsed/1.12)));
+          dummy.rotation.set(theta+elapsed*6,elapsed*8+k,theta*.5+elapsed*4);
+        }
+        dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
+      }
+    }
+    mesh.instanceMatrix.needsUpdate=true;
+  });
+  return <instancedMesh ref={instance} args={[null,null,total]} frustumCulled={false}>
+    <dodecahedronGeometry args={[.9,0]}/>
+    <meshLambertMaterial color="#ffffff" flatShading/>
+  </instancedMesh>;
+}
+
 function Ramp({ x, z, index, height = 1.12, length = 3, superAir = false }) {
   const geom = useMemo(() => {
     const a = length / 2;
@@ -229,21 +348,21 @@ function CourseMarker({ z, side }) {
     </group>
   );
 }
-const CourseChunk = memo(function CourseChunk({index, collectedRef}) {
+const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef}) {
   const data = useMemo(() => getSnowChunk(index), [index]);
   return <>
     <Terrain index={index} />
     <Forest trees={data.trees} />
-    {data.rocks.map(r=><Rock key={r.id} {...r} />)}
+    {data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
     {data.ramps.map(r=><Ramp key={r.id} {...r} />)}
     {data.coins.map(c=><Coin key={c.id} {...c} collectedRef={collectedRef} />)}
     {data.banners.map(c=><CourseMarker key={c.id} {...c} />)}
   </>;
 });
-function Course({ collectedRef, distance }) {
+function Course({ collectedRef, distance, stateRef }) {
   const center = snowChunkIndex(distance);
   const indexes = useMemo(() => Array.from({length:5},(_,i)=>center+i-1).filter(i=>i>=0),[center]);
-  return <>{indexes.map(index=><CourseChunk key={index} index={index} collectedRef={collectedRef} />)}</>;
+  return <>{indexes.map(index=><CourseChunk key={index} index={index} collectedRef={collectedRef} stateRef={stateRef} />)}</>;
 }
 
 function Mountains({stateRef}) {
@@ -366,6 +485,7 @@ function initialState(cameraMode = 0) {
     mushroom:null, mushroomTime:0, mushroomCooldownTime:-200, mushroomCooldownDistance:-1000,
     mushroomCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
     scoreGainEvents:[],
+    rockExplosions:[], rockShattered:0,
     consumedRamps:new Set(),consumedRocks:new Set(),
   };
 }
@@ -374,7 +494,7 @@ function safeHud(s) {
     speed:Math.round(s.speed*3.6),
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.floor(-s.z), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
-    powerRemaining:s.powerTime, mushroomReady:!!s.mushroom,
+    powerRemaining:s.powerTime, mushroomReady:!!s.mushroom, rockShattered:s.rockShattered,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
     recovery:recoveryStage(s.recovery),
     trick:s.recovery ? (s.textUntil>s.t ? s.lastText : (recoveryStage(s.recovery)==="chasing" ? "RUN FOR YOUR BOARD!" : "GETTING UP..."))
@@ -454,9 +574,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const tuck=(keyRef.current.tuck || keyRef.current.touchTuck) && playing;
     let steerWanted=playing?clamp(right-left+(keyRef.current.steerAnalog||0),-1,1):0;
     if(playing && s.powerTime>0 && !s.recovery){
-      // Automatic slalom but still respect a player's strong steering input.
+      // Frost Shroom auto-rides toward nearby rocks to shatter them; manual steering still overrides.
       const ahead=localChunks.flatMap(c=>c.rocks).find(r=>r.z<s.z && r.z>s.z-24 && Math.abs(r.x-s.x)<2.9);
-      const autoX=ahead ? clamp(ahead.x+(s.x>ahead.x?3.4:-3.4),-8.8,8.8) : Math.sin(s.t*1.18)*2.9;
+      const autoX=ahead ? clamp(ahead.x,-8.8,8.8) : Math.sin(s.t*1.18)*2.9;
       const autoSteer=clamp((autoX-s.x)*.38,-1,1);
       steerWanted=clamp(steerWanted*.85+autoSteer*(Math.abs(steerWanted)>.30?.20:.9),-1,1);
     }
@@ -625,8 +745,21 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           const end={x:s.x,z:s.z,y:s.worldY};
           for (const chunk of localChunks) for (const rock of chunk.rocks) {
             if (s.consumedRocks.has(rock.id)) continue;
-            if (s.powerTime<=0 && sweptRockHit(from,end,rock,groundY)) {
+            if (sweptRockHit(from,end,rock,groundY,s.powerTime>0?.72:.37)) {
               s.consumedRocks.add(rock.id);
+              if(s.powerTime>0) {
+                // The boost turns real collisions into shattering rock geometry.
+                // Don't award shatter points for distant rocks or rocks jumped over.
+                s.rockExplosions.push({x:rock.x,y:groundY(rock.x,rock.z)+rock.size*.65,
+                  z:rock.z,size:rock.size,seed:s.rockShattered,at:s.t});
+                if(s.rockExplosions.length>9)s.rockExplosions.shift();
+                s.rockShattered++;
+                s.score+=110;
+                s.lastText=`✦ SHATTER! ROCK ${s.rockShattered} • +110 ✦`;
+                s.textUntil=s.t+.9;
+                onSound("shatter");
+                continue;
+              }
               s.x=previousX;s.z=previousZ;
               beginSnowRecovery(s, "wipeout", "ROCK COLLISION!", onSound);
               break;
@@ -804,7 +937,8 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     <ambientLight intensity={1.7}/>
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
-    <Course collectedRef={collectedRef} distance={distance}/>
+    <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef}/>
+    <FrostRockShatter stateRef={stateRef} mobile={mobile}/>
     <FrostMushroom stateRef={stateRef}/>
     <Mountains stateRef={stateRef}/>
     <Suspense fallback={<Loading/>}>
@@ -813,6 +947,24 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     <Snowfall mobile={mobile} stateRef={stateRef}/>
     <BoardTrail mobile={mobile} stateRef={stateRef}/>
   </>;
+}
+
+function FrostMagicOverlay({ remaining, mobile }) {
+  if (remaining <= 0) return null;
+  const alpha=Math.min(1,remaining/.85);
+  return <div aria-hidden="true" className="snow64-magic" style={{position:"absolute",inset:0,
+    zIndex:2,overflow:"hidden",pointerEvents:"none",opacity:alpha,
+    background:"radial-gradient(ellipse at 50% 45%, transparent 34%, #91ffe52b 75%, #ae73ff4d 100%)"}}>
+    <div className="snow64-magic-halo" style={{position:"absolute",inset:"-24%",opacity:.58,animation:mobile?"none":undefined,
+      background:"conic-gradient(from 30deg at 50% 50%,transparent 0deg,#97fff933 36deg,transparent 70deg,#bb8eff30 145deg,transparent 210deg,#8ffff13b 270deg,transparent 310deg)",
+      borderRadius:"50%"}}/>
+    {[[16,24,0],[81,20,.35],[26,79,.8],[73,72,1.15],[50,34,.55],[91,49,1.6]].slice(0,mobile?4:6).map(([x,y,d],i)=><div key={i} className="snow64-magic-star"
+      style={{position:"absolute",left:`${x}%`,top:`${y}%`,animationDelay:`-${d}s`,
+        color:i%2?"#f3cdff":"#b5fff0",fontSize:i%3===0?26:16,textShadow:"0 0 12px currentColor"}}>✦</div>)}
+    {remaining>7.3 && <div className="snow64-magic-title" style={{position:"absolute",top:"34%",left:"50%",transform:"translateX(-50%)",
+      whiteSpace:"nowrap",font:"900 clamp(17px,4vw,32px) system-ui",letterSpacing:".14em",color:"#ddfffa",
+      textShadow:"0 0 14px #80f5ff,2px 3px #3e347b"}}>✦ FROST MAGIC ✦</div>}
+  </div>;
 }
 
 function formatTime(s){const m=Math.floor(s/60);const sec=(s%60).toFixed(2).padStart(5,"0");return `${String(m).padStart(2,"0")}:${sec}`;}
@@ -1039,6 +1191,11 @@ export default function SnowboardGame(){
   const [hud,setHud]=useState({speed:57,score:SNOW_INITIAL_SCORE,peakScore:SNOW_INITIAL_SCORE,drainRate:snowDrainPerSecond(0),distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
   const [touchTuckFx,setTouchTuckFx]=useState(false);
   const sound=useCallback(kind=>{if(soundRef.current)synthSfx(kind);},[]);
+  const frostMusicActive=phase==="playing" && hud.powerRemaining>0;
+  useEffect(()=>{
+    if(!frostMusicActive || !soundRef.current)return;
+    return playFrostShroomMusic();
+  },[frostMusicActive]);
   const input=useRef({left:false,right:false,tuck:false,steerAnalog:0,touchTuck:false});
   const queue=useRef([]);
   const cameraOrbit=useRef({yaw:0,pitch:0,dragging:false});
@@ -1106,6 +1263,13 @@ export default function SnowboardGame(){
     <style>{`
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
       @keyframes snowboardFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+      @keyframes snow64MagicSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+      @keyframes snow64MagicTwinkle{0%,100%{opacity:.35;transform:scale(.72) rotate(-16deg)}50%{opacity:1;transform:scale(1.4) rotate(16deg)}}
+      @keyframes snow64MagicReveal{0%{opacity:0}30%{opacity:1}100%{opacity:0}}
+      .snow64-magic-halo{animation:snow64MagicSpin 9s linear infinite;will-change:transform}
+      .snow64-magic-star{animation:snow64MagicTwinkle 1.65s ease-in-out infinite}
+      .snow64-magic-title{animation:snow64MagicReveal 1.65s ease-out both}
+      @media (prefers-reduced-motion:reduce){.snow64-magic-halo,.snow64-magic-star,.snow64-magic-title{animation:none!important}}
       @keyframes snow64RushLayer{from{transform:scale(.94);opacity:.4}to{transform:scale(1.13);opacity:1}}
       .snow64-rush-layer{animation:snow64RushLayer .35s linear infinite;transform-origin:50% 50%;}
       @media (prefers-reduced-motion: reduce){.snow64-speedfx{display:none!important}}
@@ -1121,6 +1285,7 @@ export default function SnowboardGame(){
       </Canvas>}
     </div>
     <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
+    {phase==="playing" && <FrostMagicOverlay remaining={hud.powerRemaining||0} mobile={mobile===true}/>}
     {/* Original retro filter, enabled only by the optional title-screen setting. */}
     {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
     <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,pointerEvents:"none"}}>
@@ -1134,7 +1299,7 @@ export default function SnowboardGame(){
       </div>
     </div>
     {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?192:145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none"}}>
-      {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".07em"}}>✦ FROST SHROOM {hud.powerRemaining.toFixed(1)}s ✦</div>}
+      {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".07em"}}>✦ FROST SHROOM {hud.powerRemaining.toFixed(1)}s • {hud.rockShattered||0} ROCKS ✦</div>}
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
       {hud.air && <div style={{fontWeight:900,color:"#d7f8ff",textShadow:"2px 2px #285467",fontSize:12}}>AIR {hud.airHeight.toFixed(1)}m · PEAK {hud.peakAir.toFixed(1)}m</div>}
       {hud.recovery!=="riding" && <div style={{fontWeight:900,color:"#ffd89a",textShadow:"2px 2px #285467",fontSize:12}}> {hud.recovery==="chasing" ? "RUNNING BACK TO THE BOARD" : hud.recovery==="remounting" ? "REMOUNTING" : "RIDER DOWN"}</div>}
