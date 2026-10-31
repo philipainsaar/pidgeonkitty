@@ -486,8 +486,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         // Higher acceleration, same controllable carving range.
         s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (tuck ? (mobile ? 2.1 : 1.35) : .5)));
         s.velX = lerp(s.velX, s.steer * (s.inAir ? 5.0 : 9.2), Math.min(1, dt * (s.inAir ? 2.8 : 5.5)));
+        const previousX=s.x;
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
-        const previousZ=s.z, previousX=s.x;
+        const previousZ=s.z;
         const previousY=s.worldY;
         s.z -= s.speed * dt;
         // A ramp is a solid deck, not a visual-only height offset.
@@ -688,7 +689,11 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const off=offsets[s.cameraMode];
     // Follow the *rider*, not just the slope. On SUPER AIR flights the body can
     // soar 20m+ above the snow, so the look target must rise with it.
-    const look=new THREE.Vector3(s.x,cy+1.14+(s.inAir?s.air*.92:rampRideLift),s.z-1.3);
+    // V10 camera regression fix: rampRideLift belonged to the old visual-only ramp code.
+    // The new collision system already computes the actual support/air height as visualY.
+    // Follow that height instead, keeping the rider framed on ramps and in big air.
+    const followLift = Math.max(0, visualY - cy);
+    const look=new THREE.Vector3(s.x,cy+1.14+followLift*.92,s.z-1.3);
     const relX=off[0]+s.steer*.4;
     const relY=off[1]-1.14;
     const relZ=off[2]+1.3;
