@@ -13,11 +13,13 @@ import { recordSnowPoints, maybeSpawnSnowMushroom, mushroomCollision, activateSn
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, stepCrashBoard, riderRecoveryGroundLift } from "./snow64CrashPhysics";
+import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
+import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
-// No Nintendo/N64 game assets are used. All mountain scenery, board and track are procedural.
-const WEB_MODEL = "/models/pidgeonkitty-snowboard-v2.glb";
-const MOBILE_MODEL = "/models/pidgeonkitty-snowboard-v2-mobile.glb";
+// No Nintendo/N64 game assets are used. Scenery can optionally use custom GLBs from public/models/.
+const WEB_MODEL = SNOW64_MODEL_PATHS.riderDesktop;
+const MOBILE_MODEL = SNOW64_MODEL_PATHS.riderMobile;
 const SLOPE = 0.077;
 const LANES = [-7.4, -3.8, 0, 3.8, 7.4];
 const DEG = Math.PI / 180;
@@ -183,9 +185,11 @@ function Terrain({index}) {
 }
 
 function Forest({trees}) {
-  // Instancing keeps the forest to four draw calls, even on mobile.
+  const custom = useSnowModel("tree");
+  // Instancing keeps the forest cheap on mobile for both built-in and GLB trees.
   const trunks=useRef(),bottoms=useRef(),tops=useRef(),caps=useRef();
   useEffect(()=>{
+    if (custom) return;
     const matrices=[trunks.current,bottoms.current,tops.current,caps.current];
     const dims=[
       [0,.55,0], [0,1.08,0], [0,1.70,0], [0,2.13,0],
@@ -199,8 +203,14 @@ function Forest({trees}) {
       });
     });
     matrices.forEach(inst=>{inst.instanceMatrix.needsUpdate=true;inst.computeBoundingSphere();});
-  },[trees]);
+  },[trees,custom]);
   const n=trees.length;
+  if (custom) return <SnowGLBInstances asset={custom} type="tree" items={trees}
+    pose={(tree,i) => ({
+      position:[tree.x,groundY(tree.x,tree.z),tree.z],
+      rotation:[0,(i*1.37)%6.28,0],
+      dimensions:[1.38*tree.size,2.42*tree.size,1.38*tree.size],
+    })}/>;
   return <>
     <instancedMesh ref={trunks} args={[null,null,n]}><cylinderGeometry args={[.09,.15,1.1,5]}/><meshLambertMaterial color="#64506f"/></instancedMesh>
     <instancedMesh ref={bottoms} args={[null,null,n]}><coneGeometry args={[.69,1.85,6]}/><meshLambertMaterial color="#17646e" flatShading/></instancedMesh>
@@ -210,10 +220,14 @@ function Forest({trees}) {
 }
 /** Hide destroyed rocks immediately without React updates for each rock. */
 function Rock({ id, x, z, size, stateRef }) {
+  const custom=useSnowModel("rock");
   const mesh = useRef();
   useFrame(() => {
     if (mesh.current) mesh.current.visible = !stateRef.current.consumedRocks.has(id);
   });
+  if (custom) return <group ref={mesh} position={[x,groundY(x,z),z]} rotation={[0,.8,0]}>
+    <SnowGLBVisual asset={custom} type="rock" dimensions={[size*2,size*1.6,size*2.2]}/>
+  </group>;
   return <mesh ref={mesh} position={[x, groundY(x, z) + size * 0.52, z]} rotation={[0.2, 0.8, 0.1]} scale={[size, size * 0.8, size * 1.1]}><dodecahedronGeometry args={[1, 0]} /><meshLambertMaterial color="#72879e" flatShading /></mesh>;
 }
 
@@ -275,6 +289,10 @@ function FrostRockShatter({ stateRef, mobile }) {
 }
 
 function Ramp({ x, z, index, height = 1.12, length = 3, superAir = false }) {
+  const regularModel=useSnowModel("ramp");
+  const superModel=useSnowModel("superRamp");
+  const custom=(superAir && superModel) || regularModel;
+  const type=superAir&&superModel ? "superRamp" : "ramp";
   const geom = useMemo(() => {
     const a = length / 2;
     // Full ramp profile follows the per-ramp physics, with the elevated lip
@@ -286,6 +304,9 @@ function Ramp({ x, z, index, height = 1.12, length = 3, superAir = false }) {
     g.setIndex(id);g.computeVertexNormals();return g;
   }, [height,length]);
   useEffect(() => () => geom.dispose(), [geom]);
+  if (custom) return <group position={[x,groundY(x,z),z]}>
+    <SnowGLBVisual asset={custom} type={type} dimensions={[4,height,length]}/>
+  </group>;
   return (
     <group position={[x, groundY(x, z), z]}>
       <mesh geometry={geom}>
@@ -316,6 +337,7 @@ function Ramp({ x, z, index, height = 1.12, length = 3, superAir = false }) {
 
 /** Original frost-spark mushroom collectible: violet cap, icy dots and teal aura. */
 function FrostMushroom({stateRef}) {
+  const custom=useSnowModel("frostShroom");
   const group=useRef();
   useFrame(({clock})=>{
     const g=group.current; if(!g)return;
@@ -325,6 +347,9 @@ function FrostMushroom({stateRef}) {
     g.position.set(item.x,groundY(item.x,item.z)+.92+Math.sin(clock.elapsedTime*3.5)*.20,item.z);
     g.rotation.y=clock.elapsedTime*1.4;
   });
+  if (custom) return <group ref={group} visible={false} position={[0,-.30,0]}>
+    <group position={[0,-.30,0]}><SnowGLBVisual asset={custom} type="frostShroom" dimensions={[1.8,1.65,1.8]}/></group>
+  </group>;
   return <group ref={group} visible={false}>
     <mesh position={[0,.10,0]}><cylinderGeometry args={[.20,.28,.73,8]} /><meshLambertMaterial color="#fff9e5" /></mesh>
     <mesh position={[0,.50,0]} scale={[.68,.34,.63]}><sphereGeometry args={[1,12,8]} /><meshStandardMaterial color="#b955e5" emissive="#4e166b" emissiveIntensity={.6} roughness={.35} /></mesh>
@@ -335,6 +360,7 @@ function FrostMushroom({stateRef}) {
 }
 
 function Coin({ x, z, id, collectedRef }) {
+  const custom=useSnowModel("token");
   const ref = useRef();
   useFrame(({ clock }) => {
     if (!ref.current) return;
@@ -342,10 +368,17 @@ function Coin({ x, z, id, collectedRef }) {
     ref.current.rotation.y = clock.elapsedTime * 2.3;
     ref.current.position.y = groundY(x, z) + 1.3 + Math.sin(clock.elapsedTime * 4 + z) * .14;
   });
+  if (custom) return <group ref={ref} position={[x,groundY(x,z)+1.3,z]}>
+    <group position={[0,-.47,0]}><SnowGLBVisual asset={custom} type="token" dimensions={[.95,.94,.22]}/></group>
+  </group>;
   return <group ref={ref} position={[x, groundY(x, z) + 1.3, z]}><mesh><torusGeometry args={[.38,.095,5,9]} /><meshBasicMaterial color="#ffdd67" /></mesh><mesh><octahedronGeometry args={[.13,0]} /><meshBasicMaterial color="#fff5bd" /></mesh></group>;
 }
 function CourseMarker({ z, side }) {
+  const custom=useSnowModel("courseMarker");
   const x = side * 12.25;
+  if (custom) return <group position={[x,groundY(x,z),z]}>
+    <SnowGLBVisual asset={custom} type="courseMarker" dimensions={[2.0,4.6,.45]}/>
+  </group>;
   return (
     <group position={[x, groundY(x,z), z]}>
       <mesh position={[0,2.3,0]}><cylinderGeometry args={[.06,.09,4.6,5]} /><meshLambertMaterial color="#d4f9ff" /></mesh>
@@ -355,12 +388,22 @@ function CourseMarker({ z, side }) {
 }
 const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef}) {
   const data = useMemo(() => getSnowChunk(index), [index]);
+  const rockModel=useSnowModel("rock");
+  const tokenModel=useSnowModel("token");
   return <>
     <Terrain index={index} />
     <Forest trees={data.trees} />
-    {data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
+    {rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
+      hidden={r=>stateRef.current.consumedRocks.has(r.id)}
+      pose={r=>({position:[r.x,groundY(r.x,r.z),r.z],rotation:[0,.8,0],
+        dimensions:[r.size*2,r.size*1.6,r.size*2.2]})}/>
+      : data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
     {data.ramps.map(r=><Ramp key={r.id} {...r} />)}
-    {data.coins.map(c=><Coin key={c.id} {...c} collectedRef={collectedRef} />)}
+    {tokenModel ? <SnowGLBInstances asset={tokenModel} type="token" items={data.coins}
+      hidden={c=>collectedRef.current.has(c.id)} animated
+      pose={(c,i,t)=>({position:[c.x,groundY(c.x,c.z)+.83+Math.sin(t*4+c.z)*.14,c.z],
+        rotation:[0,t*2.3,0], dimensions:[.95,.94,.22]})}/>
+      : data.coins.map(c=><Coin key={c.id} {...c} collectedRef={collectedRef} />)}
     {data.banners.map(c=><CourseMarker key={c.id} {...c} />)}
   </>;
 });
@@ -371,12 +414,20 @@ function Course({ collectedRef, distance, stateRef }) {
 }
 
 function Mountains({stateRef}) {
+  const custom=useSnowModel("mountain");
   const group=useRef();
   useFrame(()=>{if(group.current){const z=stateRef.current.z;group.current.position.set(0,SLOPE*z,z);}});
   const positions = useMemo(() => {
     const random = rand(1998);
     return Array.from({length:25},(_,i)=>({x:(i-12)*17, z:-210-random()*130, height:28+random()*60, width:16+random()*20}));
   },[]);
+  if (custom) return <group ref={group}>
+    <SnowGLBInstances asset={custom} type="mountain" items={positions}
+      pose={(p,i) => ({
+        position:[p.x,groundY(p.x,p.z),p.z],rotation:[0,Math.PI/4,0],
+        dimensions:[p.width,p.height,p.width],
+      })}/>
+  </group>;
   return <group ref={group}>
     {positions.map((p,i)=><mesh key={i} position={[p.x,groundY(p.x,p.z)+p.height*.46,p.z]} rotation={[0,Math.PI/4,0]}><coneGeometry args={[p.width,p.height,4]} /><meshLambertMaterial color={i%3===0?"#8ba7bd":"#b1c5d7"} flatShading /></mesh>)}
   </group>;
@@ -462,8 +513,12 @@ function buildBoardGeometry() {
 }
 
 function Snowboard() {
+  const custom=useSnowModel("snowboard");
   const geom=useMemo(buildBoardGeometry,[]);
   useEffect(()=>()=>geom.dispose(),[geom]);
+  if (custom) return <group position={[0,.045,0]}>
+    <SnowGLBVisual asset={custom} type="snowboard" dimensions={[.74,.25,2.43]}/>
+  </group>;
   return <group position={[0,.045,0]}>
     <mesh geometry={geom} position={[0,.065,0]}><meshStandardMaterial color="#252849" metalness={.18} roughness={.5} flatShading /></mesh>
     <mesh position={[0,.147,0]}><boxGeometry args={[.38,.018,1.45]} /><meshBasicMaterial color="#f6b5cc" /></mesh>
@@ -1138,7 +1193,7 @@ function Loading() {
   return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
 }
 function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
-  return <>
+  return <Snow64ModelProvider>
     <color attach="background" args={["#bfd9e6"]}/>
     <fog attach="fog" args={["#c1dce9",30,138]}/>
     <ambientLight intensity={1.7}/>
@@ -1153,7 +1208,7 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     </Suspense>
     <Snowfall mobile={mobile} stateRef={stateRef}/>
     <BoardTrail mobile={mobile} stateRef={stateRef}/>
-  </>;
+  </Snow64ModelProvider>;
 }
 
 function FrostMagicOverlay({ remaining, mobile }) {
