@@ -1,5 +1,5 @@
 /**
- * SNOW 64 V19: original procedural soundscape, using the browser's Web Audio API.
+ * SNOW 64 V20: softer airborne wind / original procedural soundscape, using the browser's Web Audio API.
  * No downloaded audio, copyrighted music, libraries, or per-frame node creation.
  * A single AudioContext plays continuous snow/speed/carve/wind noise, event cues,
  * and the original Frost Shroom arpeggio. Sound starts on a user gesture.
@@ -46,7 +46,37 @@ function audioEngine() {
       chains[name]={filter,gain};
     }
     source.start();
-    engine={ctx,master,buffer,source,chains,lastBedAt:-1,cueAt:{},musicStop:null};
+
+    // Separate, low-frequency *colored* airflow. White/high-passed noise sounds
+    // like a shower on phone speakers, especially during long Super Air jumps.
+    // Filtering the signal BEFORE playback removes the brittle water-like hiss.
+    // This source is created once, not per animation frame.
+    const airBuffer = ctx.createBuffer(1,frames,ctx.sampleRate);
+    const airData = airBuffer.getChannelData(0);
+    let low=0,mid=0,body=0,airSeed=863971;
+    for(let i=0;i<frames;i++) {
+      airSeed=(Math.imul(airSeed,1664525)+1013904223)>>>0;
+      const white=(airSeed/2147483648)-1;
+      body=body*.62+white*.38;
+      mid=mid*.92+white*.08;
+      low=low*.987+white*.013;
+      airData[i]=clamp((body*.13+mid*.62+low*.25)*1.5,-1,1);
+    }
+    const airSource=ctx.createBufferSource();
+    airSource.buffer=airBuffer;
+    airSource.loop=true;
+    const airFilter=ctx.createBiquadFilter();
+    airFilter.type='lowpass';
+    airFilter.frequency.value=470;
+    airFilter.Q.value=.5;
+    const airGain=ctx.createGain();
+    airGain.gain.value=FLOAT_ZERO;
+    airSource.connect(airFilter);
+    airFilter.connect(airGain);
+    airGain.connect(master);
+    airSource.start();
+    chains.air={filter:airFilter,gain:airGain};
+    engine={ctx,master,buffer,source,airSource,chains,lastBedAt:-1,cueAt:{},musicStop:null};
     return engine;
   } catch { return null; }
 }
@@ -74,6 +104,7 @@ export function shutdownSnow64Audio() {
   engine=null;
   if(e.musicStop)e.musicStop();
   try{e.source.stop();e.source.disconnect();}catch{}
+  try{e.airSource.stop();e.airSource.disconnect();}catch{}
   try{e.ctx.close();}catch{}
 }
 
@@ -86,20 +117,28 @@ export function updateSnow64AudioFrame({playing=false,speed=0,steer=0,tuck=false
   if(t-e.lastBedAt<.045)return;
   e.lastBedAt=t;
   const moving=playing&&!recovery;
+  const airborne=moving&&(inAir||powered);
   const grounded=moving&&!inAir&&!powered;
   const v=clamp(speed/58);
   const carving=clamp(Math.abs(steer));
   const snow=grounded ? (.012+.22*Math.pow(v,.9))*(.88+carving*.12) : FLOAT_ZERO;
   const edge=grounded ? (.012+.17*v)*Math.pow(carving,1.45) : FLOAT_ZERO;
-  const wind=moving ? (.012+.135*v*v+(inAir? .035+clamp(airHeight/12)*.045:0)
-    +(tuck?.045*v:0)+(powered?.055:0)) : FLOAT_ZERO;
+  // Brighter speed hiss belongs ON THE SNOW, not in the air. On airborne
+  // frames it fades completely, rather than adding a permanent spray layer.
+  const wind=grounded ? (.008+.085*v*v+(tuck?.036*v:0)) : FLOAT_ZERO;
+  // Soft, dark airflow responds to speed and altitude but never produces a
+  // shower-like high-frequency band. Frost Hover uses this same smooth layer.
+  const air=airborne ? (.055+.092*v+clamp(airHeight/15)*.018+(powered?.018:0)) : FLOAT_ZERO;
   const smooth=(chain,target,rate=.075)=>chain.gain.gain.setTargetAtTime(Math.max(FLOAT_ZERO,target),t,rate);
-  smooth(e.chains.snow,snow);
-  smooth(e.chains.edge,edge);
-  smooth(e.chains.wind,wind,.10);
+  // Rapidly silence contact noise at takeoff; gently swell the air current.
+  smooth(e.chains.snow,snow,grounded?.065:.018);
+  smooth(e.chains.edge,edge,grounded?.055:.018);
+  smooth(e.chains.wind,wind,grounded?.09:.028);
+  smooth(e.chains.air,air,airborne?.15:.055);
   e.chains.snow.filter.frequency.setTargetAtTime(390+v*2100+(tuck?200:0),t,.09);
   e.chains.edge.filter.frequency.setTargetAtTime(680+v*2100+carving*880,t,.09);
-  e.chains.wind.filter.frequency.setTargetAtTime(650+v*1350+(powered?700:0),t,.13);
+  e.chains.wind.filter.frequency.setTargetAtTime(650+v*1050,t,.13);
+  e.chains.air.filter.frequency.setTargetAtTime(230+v*440+clamp(airHeight/20)*90,t,.16);
 }
 
 function tone(e,when,hz,length,level=.065,wave='triangle',endHz=hz,attack=.008) {
@@ -143,14 +182,14 @@ export function playSnow64Sound(kind) {
       [330,440,660].forEach((hz,i)=>tone(e,n+i*.11,hz,.19,.065,'triangle',hz*1.06));break;
     case 'ollie':
     case 'jump':
-      burst(e,n,.20,.075,1100,'bandpass');
+      burst(e,n,.095,.038,480,'lowpass');
       tone(e,n,175,.23,.075,'sine',430);break;
     case 'ramp':
-      burst(e,n,.34,.145,1150,'bandpass');
-      tone(e,n,160,.31,.095,'sawtooth',525);break;
+      burst(e,n,.14,.053,560,'lowpass');
+      tone(e,n,160,.31,.086,'triangle',525);break;
     case 'superRamp':
-      burst(e,n,.52,.18,1600,'bandpass');
-      tone(e,n,150,.38,.092,'sawtooth',790);
+      burst(e,n,.19,.075,680,'lowpass');
+      tone(e,n,150,.38,.087,'triangle',790);
       tone(e,n+.12,360,.32,.042,'sine',1050);break;
     case 'trickStart':
       tone(e,n,450,.13,.038,'sine',720);break;
