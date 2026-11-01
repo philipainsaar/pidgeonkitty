@@ -523,7 +523,7 @@ function snowRemountMotion(rec, rider, board, returnTo) {
 }
 
 /**
- * V27 Frost Trick Cam: angles are ABSOLUTE world-space azimuths, not offsets
+ * V28 Frost Trick Cam: angles are ABSOLUTE world-space azimuths, not offsets
  * from the rear-facing chase camera. +Z is uphill/behind the rider, so every
  * shot is in the front or side hemisphere (cos(yaw) < 0). This keeps the
  * snowboard and automatic tricks visible instead of filming the rider's back.
@@ -665,7 +665,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
   const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), kickSnow=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
-  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null});
+  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null});
   const frostBoardAnchor=useMemo(()=>new THREE.Vector3(),[]);
   const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
@@ -673,7 +673,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   useEffect(()=>{
     stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;crashCameraBlend.current=0;
-    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null};
+    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null};
     nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
@@ -1255,13 +1255,14 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       look.lerp(aim,crashBlend);
     }
 
-    // V27: FROST BOARD CAM. Follow the snowboard's actual transformed world
+    // V28: FROST BOARD CAM. Follow the snowboard's actual transformed world
     // position during aerial spins/flips, and orbit only in front/side angles.
     // The camera does NOT inherit the board's spinning yaw: the BOARD spins
     // on-screen, not the viewer. Start returning one second before boost ends.
     const director=frostCamera.current;
     const frostActive=playing && s.frostHover && s.powerTime>0 && !s.recovery;
     let frostMix=0;
+    let frostAnchorValid=false;
     let azimuth=baseAzimuth;
     let elevation=baseElevation;
     let radius=baseRadius; // Also fixed during recovery: no crash zoom-out.
@@ -1278,6 +1279,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         director.lookHeight=.55;
         director.exitYaw=null;
         director.exitTarget=null;
+        director.lastBoard=null;
       }
       if(s.powerTime>1 && s.t>=director.nextAt){
         const next=nextFrostCameraShot(director.index);
@@ -1321,6 +1323,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       if(root.current && board.current){
         root.current.updateMatrixWorld(true);
         board.current.getWorldPosition(frostBoardAnchor);
+        frostAnchorValid=true;
         const frostLook=new THREE.Vector3(
           frostBoardAnchor.x,
           frostBoardAnchor.y+director.lookHeight,
@@ -1331,6 +1334,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     }else if(director.active){
       director.active=false;
       director.shot=null;
+      director.lastBoard=null;
     }
 
     const projected=radius*Math.cos(elevation);
@@ -1341,10 +1345,44 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     );
     // Cinematic orbit must not put the lens beneath a raised snowbank.
     if(frostMix>0)dest.y=Math.max(dest.y,groundY(dest.x,dest.z)+.75);
+    const targetLook=camera.userData._look || (camera.userData._look=look.clone());
+    // V28: eliminate the fast-movement camera lag. At Frost Shroom speed
+    // (~60 world units/sec), smoothing the camera's WORLD position by 9/sec
+    // leaves it about 6 metres behind the snowboard. Independently smoothing
+    // the look target puts the rider off screen, even with correct orbit angles.
+    // Translate BOTH the camera and its look target by the real snowboard's
+    // displacement first, then smooth only the relative cinematic orbit.
+    // This tracks the board correctly during carving, ramp hover and flips.
+    if(frostActive && frostAnchorValid){
+      if(director.lastBoard && cameraReady.current){
+        const delta=frostBoardAnchor.clone().sub(director.lastBoard);
+        // Ignore discontinuities (restart/teleport); normal follow will recover.
+        if(delta.lengthSq()<100){
+          camera.position.add(delta);
+          targetLook.add(delta);
+        }
+      }
+      if(!director.lastBoard) director.lastBoard=frostBoardAnchor.clone();
+      else director.lastBoard.copy(frostBoardAnchor);
+    } else {
+      director.lastBoard=null;
+    }
     if(!cameraReady.current){camera.position.copy(dest);cameraReady.current=true;}
     else camera.position.lerp(dest,Math.min(1,dt*(frostMix>.01?9:s.recovery?10:orbit.dragging?11:4.8)));
-    const targetLook=camera.userData._look || (camera.userData._look=look.clone());
-    targetLook.lerp(look,Math.min(1,dt*(frostMix>.01?12:s.recovery?12:7)));camera.lookAt(targetLook);
+    targetLook.lerp(look,Math.min(1,dt*(frostMix>.01?12:s.recovery?12:7)));
+    camera.lookAt(targetLook);
+    // Fallback for mobile frame drops or sudden camera state changes: never
+    // allow the lens to stay several metres away from the current board.
+    // The camera still eases between angle presets in local board space.
+    if(frostActive && frostAnchorValid && frostMix>.65){
+      const aimLag=targetLook.distanceTo(look);
+      const positionLag=camera.position.distanceTo(dest);
+      if(aimLag>2.25 || positionLag>4.5){
+        targetLook.copy(look);
+        camera.position.copy(dest);
+        camera.lookAt(targetLook);
+      }
+    }
     camera.fov=lerp(camera.fov,desiredFov,Math.min(1,dt*(frostMix>.01?8:2)));
     camera.updateProjectionMatrix();
     updateSnow64AudioFrame({playing, speed:s.speed,steer:s.steer,tuck,
