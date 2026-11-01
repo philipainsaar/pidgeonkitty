@@ -479,6 +479,38 @@ function safeHud(s) {
 }
 function smoothstep(t) { const v=clamp(t,0,1);return v*v*(3-2*v); }
 
+/**
+ * V22 crash-camera layout. Follow the *rendered* crash bodies, not the original
+ * run position. Fit their projected separation inside the true mobile frustum
+ * (portrait horizontal FOV is much smaller than the camera's vertical FOV).
+ * Pure arithmetic and no allocations inside the helper; collision physics and
+ * the player's chosen orbit angle are left untouched.
+ */
+function crashCameraFrame(rider, looseBoard, azimuth, elevation, aspect, fovDegrees, normalRadius, mobile) {
+  const dx=looseBoard.x-rider.x, dy=looseBoard.y-rider.y, dz=looseBoard.z-rider.z;
+  const sinA=Math.sin(azimuth), cosA=Math.cos(azimuth);
+  const sinE=Math.sin(elevation), cosE=Math.cos(elevation);
+  const screenX=Math.abs(dx*cosA-dz*sinA);
+  const screenY=Math.abs(dy*cosE-(dx*sinA+dz*cosA)*sinE);
+  const depthSpan=Math.abs((dx*sinA+dz*cosA)*cosE+dy*sinE);
+  const tanHalfVertical=Math.tan(fovDegrees*Math.PI/360);
+  const tanHalfHorizontal=tanHalfVertical*Math.max(.35,aspect);
+  // Larger breathing room on phones for the rider's animated limbs and board.
+  const horizontalMargin=mobile?1.65:1.50;
+  const verticalMargin=mobile?1.65:1.40;
+  const radius=Math.min(mobile?78:65,Math.max(
+    normalRadius*(mobile?1.85:1.63),
+    (screenX*.5+horizontalMargin)/Math.max(.12,tanHalfHorizontal),
+    (screenY*.5+verticalMargin)/Math.max(.20,tanHalfVertical),
+  )+depthSpan*.5);
+  return {
+    x:(rider.x+looseBoard.x)*.5,
+    y:(rider.y+looseBoard.y)*.5,
+    z:(rider.z+looseBoard.z)*.5,
+    radius,
+  };
+}
+
 function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
   // Total invulnerability lasts only for the actual Frost Shroom boost.
   if (s.recovery || s.powerTime > 0 || s.frostHover) return;
@@ -589,13 +621,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   },[character]);
   const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
   const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
-  const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),phaseRef=useRef(phase);
+  const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
   const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
   useEffect(()=>{phaseRef.current=phase;},[phase]);
   useEffect(()=>{
     stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
-    frame.current=0;cameraReady.current=false;
+    frame.current=0;cameraReady.current=false;crashCameraBlend.current=0;
     nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
@@ -1088,26 +1120,49 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         );
       }
     }
-    // A draggable orbit stays anchored on the moving rider. Dragging never
-    // rotates the rider, changes the race line, or disables follow tracking.
-    // Camera 2 is closer and centered on portrait devices.
+    // V22 cinematic crash follow: V21 randomizes the detached board and fallen
+    // rider, but the old camera tracked s.x/s.z, the original piste position.
+    // At portrait aspect ratios this could put the rider BEHIND the camera or
+    // zoom right into the model. Frame both real recovery objects instead.
     const offsets=[[-3.0,2.25,5.6],mobile?[-.25,2.65,7.6]:[-.7,3.15,10.5],[-6.1,4.2,12.5]];
     const off=offsets[s.cameraMode];
-    // Follow the *rider*, not just the slope. On SUPER AIR flights the body can
-    // soar 20m+ above the snow, so the look target must rise with it.
-    // V10 camera regression fix: rampRideLift belonged to the old visual-only ramp code.
-    // The new collision system already computes the actual support/air height as visualY.
-    // Follow that height instead, keeping the rider framed on ramps and in big air.
-    const followLift = Math.max(0, visualY - cy);
+    const followLift=Math.max(0,visualY-cy);
     const look=new THREE.Vector3(s.x,cy+1.14+followLift*.92,s.z-1.3);
     const relX=off[0]+s.steer*.4;
     const relY=off[1]-1.14;
     const relZ=off[2]+1.3;
-    const radius=Math.hypot(relX,relY,relZ);
+    const baseRadius=Math.hypot(relX,relY,relZ);
     const horizontal=Math.hypot(relX,relZ);
     const orbit=cameraOrbitRef.current;
     const azimuth=Math.atan2(relX,relZ)+orbit.yaw;
-    const elevation=clamp(Math.atan2(relY,horizontal)+orbit.pitch,.12,1.18);
+    const baseElevation=clamp(Math.atan2(relY,horizontal)+orbit.pitch,.12,1.18);
+    // Blend in quickly at impact, then ease back to normal after remounting.
+    crashCameraBlend.current=lerp(crashCameraBlend.current,s.recovery?1:0,
+      Math.min(1,dt*(s.recovery?9:2.8)));
+    const crashBlend=crashCameraBlend.current;
+    const elevation=clamp(baseElevation+.12*crashBlend,.12,1.18);
+    const baseFov=mobile?43:42;
+    const desiredFov=baseFov+Math.max(0,s.speed-20)*.16+crashBlend*(mobile?7:5);
+    let radius=baseRadius;
+    if(s.recovery && riderCarrier.current && crashBoard.current){
+      // Ground-checked actual positions *after* fall, chase and remount edits.
+      const rider={
+        x:s.x+riderCarrier.current.position.x,
+        y:root.current.position.y+riderCarrier.current.position.y+riderModel.current.position.y+.94,
+        z:s.z+riderCarrier.current.position.z,
+      };
+      const board={
+        x:crashBoard.current.position.x,
+        y:crashBoard.current.position.y+.16,
+        z:crashBoard.current.position.z,
+      };
+      const framed=crashCameraFrame(rider,board,azimuth,elevation,camera.aspect,desiredFov,baseRadius,mobile);
+      look.lerp(new THREE.Vector3(framed.x,framed.y,framed.z),crashBlend);
+      radius=lerp(baseRadius,framed.radius,crashBlend);
+    } else if (crashBlend>.005) {
+      // Hold some extra space as the model remounts; don't snap to a close-up.
+      radius=baseRadius*(1+crashBlend*(mobile?.85:.63));
+    }
     const projected=radius*Math.cos(elevation);
     const dest=new THREE.Vector3(
       look.x+Math.sin(azimuth)*projected,
@@ -1115,11 +1170,11 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       look.z+Math.cos(azimuth)*projected,
     );
     if(!cameraReady.current){camera.position.copy(dest);cameraReady.current=true;}
-    else camera.position.lerp(dest,Math.min(1,dt*(orbit.dragging?11:4.8)));
+    else camera.position.lerp(dest,Math.min(1,dt*(s.recovery?10:orbit.dragging?11:4.8)));
     const targetLook=camera.userData._look || (camera.userData._look=look.clone());
-    targetLook.lerp(look,Math.min(1,dt*7));camera.lookAt(targetLook);
-    const baseFov=mobile?43:42;
-    camera.fov=lerp(camera.fov,baseFov+Math.max(0,s.speed-20)*.16,Math.min(1,dt*2));camera.updateProjectionMatrix();
+    targetLook.lerp(look,Math.min(1,dt*(s.recovery?12:7)));camera.lookAt(targetLook);
+    camera.fov=lerp(camera.fov,desiredFov,Math.min(1,dt*(s.recovery?5:2)));
+    camera.updateProjectionMatrix();
     updateSnow64AudioFrame({playing, speed:s.speed,steer:s.steer,tuck,
       inAir:s.inAir,recovery:!!s.recovery,powered:s.frostHover&&s.powerTime>0,airHeight:s.air});
     frame.current+=dt;
