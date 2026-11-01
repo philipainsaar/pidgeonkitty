@@ -5,9 +5,11 @@
  * stem transcription). Measured reference duration: 244.824 seconds.
  * Estimated pulse: 136 BPM; tonal center: Eb major.
  *
- * V2 N64 Snow Mix: warm, console-era style procedural composition.
- * Rounded pseudo-sampled mallets, EP chord stabs, low-mid synth brass,
- * mono bass, shuffle drums and low-pass / soft-saturation mix bus.
+ * V2 N64 BASS & BREAKS MIX: percussion-first arcade snowboarding music.
+ * Deep rolling synth bass, solid 90s-console kicks, crisp warm hats,
+ * shuffled ghost snares and occasional low-key atmospheric accents.
+ * NO piano or marimba notes in the default arrangement.
+ * Dark, compact output and low-pass / soft-saturation mix bus.
  * Live tempo, arrangement, game events and beat sync remain available.
  * Not an extraction of any commercial game or any prerecorded samples.
  * Browser:
@@ -51,145 +53,119 @@ const MELODIES = [
   [[0,1,2],[2,3,2],[4,5,2],[7,7,2],[10,8,2],[13,7,2],[16,5,2],[19,4,2],[22,3,2],[25,5,2],[28,7,4]],
 ];
 function section(bar) {
-  // Game-first design: a short pickup, then a real groove within four seconds.
-  if (bar < 2) return {name:'snowy opening',energy:.33, lead:false, drums:.28, pad:1};
-  if (bar < 8) return {name:'mountain warmup',energy:.50, lead:true, drums:.60, pad:1};
-  if (bar < 16) return {name:'first descent',energy:.62, lead:true, drums:.70, pad:.85};
-  if (bar < 32) return {name:'powder trail',energy:.77, lead:true, drums:.82, pad:.92};
-  if (bar < 48) return {name:'slalom rush',energy:1.00, lead:true, drums:1.00, pad:.88};
-  if (bar < 64) return {name:'sunlit ridge',energy:.69, lead:true, drums:.74, pad:1};
-  if (bar < 80) return {name:'mountain arcade',energy:1.06, lead:true, drums:1.05, pad:.88};
-  if (bar < 96) return {name:'cloudline cruise',energy:.81, lead:true, drums:.88, pad:1};
-  if (bar < 112) return {name:'snowfall sprint',energy:1.12, lead:true, drums:1.06, pad:.92};
-  if (bar < 124) return {name:'final run',energy:.91, lead:true, drums:.98, pad:1};
-  if (bar < 132) return {name:'summit sunset',energy:.65, lead:true, drums:.65, pad:1};
-  return {name:'gentle loopdown',energy:.47, lead:true, drums:.52, pad:.88};
+  // Dynamic drum/bass score: variations are rhythmic, not lead-instrument driven.
+  if (bar < 2) return {name:'snow rumble',energy:.53, lead:false, drums:.76, pad:.08};
+  if (bar < 8) return {name:'opening grooves',energy:.68, lead:false, drums:.92, pad:.09};
+  if (bar < 16) return {name:'first downhill',energy:.84, lead:false, drums:1, pad:.08};
+  if (bar < 32) return {name:'powder breaks',energy:.97, lead:false, drums:1.07, pad:.1};
+  if (bar < 48) return {name:'slalom drive',energy:1.12, lead:false, drums:1.12, pad:.08};
+  if (bar < 64) return {name:'ridge rollers',energy:.87, lead:false, drums:.98, pad:.1};
+  if (bar < 80) return {name:'arcade downhill',energy:1.13, lead:false, drums:1.13, pad:.07};
+  if (bar < 96) return {name:'cloudline bounce',energy:.92, lead:false, drums:1.04, pad:.1};
+  if (bar < 112) return {name:'frost sprint',energy:1.19, lead:false, drums:1.15, pad:.08};
+  if (bar < 124) return {name:'final snow rush',energy:1.08, lead:false, drums:1.1, pad:.1};
+  if (bar < 132) return {name:'mountain rolloff',energy:.83, lead:false, drums:.95, pad:.1};
+  return {name:'loop landing',energy:.64, lead:false, drums:.8, pad:.07};
 }
-/** Pure deterministic score generation: can be inspected, remixed and exported. */
+
+/** A compact retro breakbeat score. ALL notes are oscillators/noise, never audio files.
+ * The dominant instruments are kick, hat, bass and a little dusty snare.
+ * No EP, wooden marimba, pluck or bell events are emitted in the song score.
+ */
 export function buildRapidRainScore() {
   const e = [];
-  const add = (bar,step,type,note=0,duration=STEP,velocity=1,pan=0,extras={}) => {
-    const t = bar*BAR + step*STEP;
-    if (t >= DURATION - .06) return;
-    e.push({t, type, note, duration, velocity, pan, ...extras});
+  const add=(bar,step,type,note=0,duration=STEP,velocity=1,pan=0,extras={})=>{
+    const t=bar*BAR + step*STEP;
+    if(t<0 || t>=DURATION-.04)return;
+    e.push({t,type,note,duration,velocity,pan,...extras});
   };
+  const KICK_GROOVES=[
+    [0,6,10,14], [0,5,8,11,14.5], [0,7,10,14], [0,3.5,8,11,14],
+    [0,6,8.5,13], [0,5,10,13.5], [0,7,10,12.5,15], [0,4,8,11,14],
+  ];
+  const BASS_GROOVES=[
+    [[0,0,3.1],[3,0,1.2],[6,7,1.7],[9.5,0,2.0],[13,12,2.2]],
+    [[0,0,2.7],[4,12,1.3],[7,0,2.4],[10,7,1.4],[12.5,0,3]],
+    [[0,0,3.5],[5,0,1.1],[7,7,2.2],[10,0,1.7],[13,12,2]],
+    [[0,0,2.4],[3.5,12,1.1],[6,0,2.0],[9,7,1.7],[12.5,0,2.6]],
+  ];
   for(let bar=0;bar<139;bar++) {
-    const s=section(bar), ch=CHORDS[bar%8], b8=bar%8, energy=s.energy;
-    const last = bar >= 132;
-    // Warm, airy, sustained harmonic cushions: no recorded samples.
-    if (bar%2===0 && bar<138) {
-      for(let k=0;k<ch.pad.length;k++) {
-        if (k===3 && bar<6) continue;
-        add(bar,0,'pad',ch.pad[k]-(k===3?12:0),BAR*2.14,(.090+.020*energy)*s.pad,[-.31,-.12,.12,.31][k], {bright:bar>=32&&bar<124});
+    const s=section(bar),ch=CHORDS[bar%CHORDS.length];
+    const energy=s.energy, late=bar>=132, fill=bar%8===7;
+    // A faint, soft chordless atmospheric root creates space without piano.
+    // Only on some transitions, so bass and drums remain clearly foreground.
+    if(bar%8===0 && bar>0 && bar<132) {
+      add(bar,0,'pad',ch.root+24,STEP*18,.075*s.pad,0,{bright:false});
+    }
+    // Bass is the primary musical hook: staccato, pitch-slid, and syncopated.
+    const phrase=BASS_GROOVES[(Math.floor(bar/2)+bar%2)%BASS_GROOVES.length];
+    for(let i=0;i<phrase.length;i++) {
+      const [st,pitch,len]=phrase[i];
+      const isOctave=pitch===12;
+      const human= (rand(bar*29+i,11)-.5)*.11;
+      add(bar,st+human,'bass',ch.root+pitch,
+        STEP*len, (isOctave?.39:.53) * (.86+energy*.22) * (i===0?1.06:1),0,
+        {squawk:i===2||i===4,slide:i===1||i===3});
+    }
+    // Subtle little walking bass turnaround every fourth bar.
+    if(bar%4===3 && bar<135) {
+      add(bar,15,'bass',CHORDS[(bar+1)%CHORDS.length].root,STEP*1.0,.30,0,{slide:true});
+    }
+    // Late-90s-style breakbeat: kick and hats carry the actual tune.
+    const kicks=KICK_GROOVES[(bar+Math.floor(bar/8))%KICK_GROOVES.length];
+    kicks.forEach((st,i)=>{
+      if(late && i>2 && bar%2===1)return;
+      const human=(i===0?0:(rand(bar*47+i,20)-.5)*.075);
+      add(bar,st+human,'kick',0,STEP*2.8,
+        (i===0?.87:i===kicks.length-1?.65:.74) * (.85+.12*energy)*s.drums,0,
+        {accent:i===0});
+    });
+    // Short dusty backbeat and extremely quiet shuffled ghost hits.
+    [4,12].forEach((st,i)=>add(bar,st+(rand(bar*6+i,24)-.5)*.075,'snare',0,STEP*1.4,
+      (i===1?.43:.40)*s.drums,(i===0?-.09:.09)));
+    if(bar>=4 && !late) {
+      const ghosts=bar%2?[3.25,11.5,15]:[6.75,14.5];
+      ghosts.forEach((st,i)=>add(bar,st,'snare',0,STEP*.65,
+        (.10 + rand(bar+i,13)*.06)*s.drums,(i%2?-.20:.14),{ghost:true}));
+    }
+    // Hats: front-and-center, not glassy. Slight swing, accent variations,
+    // occasional short opens, and 16th-note ticks in busier passages.
+    for(let st=0;st<16;st+=2) {
+      const offbeat=st%4===2;
+      const swing=offbeat?.18:0;
+      const human=(rand(bar*101+st,17)-.5)*.10;
+      const open=(st===14 && bar%4===2) || (st===6 && bar%8===6);
+      add(bar,st+swing+human,'hat',0,STEP*(open?1.4:.63),
+        (offbeat?.44:.30)*(0.91+energy*.15) * (open?.81:1),
+        offbeat?.18:-.16,{open});
+    }
+    if(bar>=4 && !late) {
+      const extras=energy>.9 ? [1.5,5.5,9.5,13.5] : bar%2===0 ? [7.5,15.2] : [3.5,11.5];
+      extras.forEach((st,i)=>add(bar,st+(rand(bar*17+i,18)-.5)*.08,'hat',0,
+        STEP*.33,(.18+rand(bar*19+i,33)*.07)*s.drums,
+        i%2?.31:-.28,{open:false}));
+    }
+    // Drum rolls and rhythmic fills replace the old melodic/flutey flurries.
+    if(fill && bar>=7 && !late) {
+      for(let i=0;i<6;i++) {
+        add(bar,12+i*.6,'hat',0,STEP*.27,.16+i*.015,(i%2?-.26:.26));
+      }
+      for(let i=0;i<4;i++) {
+        add(bar,13+i*.7,'snare',0,STEP*.48,.10+i*.055,0,{ghost:i<3});
       }
     }
-    // Signature bouncing, bright, liquid pluck ostinato.
-    const pluckSteps=last?[0,4,8,12]:[0,3,6,8,11,14];
-    for(let k=0;k<pluckSteps.length;k++) {
-      const st=pluckSteps[k];
-      const ix=choose([0,2,1,3,2,4],k+(bar%4===3?2:0));
-      const n=ch.upper[ix]-12+((bar>=32 && k===5)?0:0);
-      const human=(rand(bar*41+k,2)-.5)*.026;
-      add(bar,st,'pluck',n,.27+(.09*rand(bar*17+k,1)),(.38+energy*.14)*(k===0?1.12:1)+human,
-        [-.27,.19,-.10,.22,-.18,.10][k]);
+    // Rare soft console-style horn punctuations keep a trace of melody without
+    // competing with bass; the arrangement contains no piano or marimba.
+    if(bar%16===12 && bar<128) {
+      add(bar,2,'lead',ch.root+24,STEP*2.3,.10,-.11,{bright:false});
+      add(bar,10,'lead',ch.root+31,STEP*2.0,.075,.14,{bright:false});
     }
-    // Additional mallet bubbles and glass harmonics; sparse in the opening.
-    const bubbleSteps = last?[6,14]:energy>.8?[2,7,10,15]:[6,14];
-    for(let k=0;k<bubbleSteps.length;k++) {
-      const st=bubbleSteps[k];
-      if (bar<4 && k>0) continue;
-      const jump=rand(bar*23+k,3)>.90?12:0;
-      add(bar,st,'bubble',ch.upper[choose([3,2,4,1],k+bar)]-12+jump,.22+rand(bar+k,6)*.12,
-        (.21+energy*.09)*(1-.14*rand(bar+k,7)),(rand(bar*7+k,8)-.5)*.55);
-    }
-    // Soft 90s-console EP chord stabs: jazzy, syncopated harmonic bed.
-    if(bar<138) {
-      const chordSteps = bar<2 ? [0] : energy>.85 ? [0,7,12] : [0,10];
-      chordSteps.forEach((st,k) => {
-        // Each stab is a light three-note voicing, not a dense wall of synth.
-        const voicing = [ch.upper[0]-12,ch.upper[1]-12,ch.upper[3]-12];
-        for(let j=0;j<3;j++) {
-          const n=voicing[j] + (k===2 && j===2 ? -12 : 0);
-          add(bar,st+(j===2?.10:0),'keys',n,STEP*(k===0?4.4:2.6),
-            (.25+energy*.08)*(k===0?1:.75),[-.17,0,.17][j],{soft:true});
-        }
-      });
-    }
-    // Singing middle-register synth-brass lead; short answers to the keys.
-    if (s.lead && bar<139) {
-      const phrase = MELODIES[Math.floor(bar/8)%MELODIES.length];
-      const twoBarStart=bar-(bar%2);
-      for(const [pos,scaleIndex,len] of phrase) {
-        if(Math.floor(pos/16)!==bar%2) continue;
-        const st=pos%16;
-        let n=EB_LEAD[scaleIndex];
-        // Transpose an occasional arpeggiated turnaround, retain Eb tonality.
-        if (energy>1 && rand(bar*37+st,14)>.96) n+=12;
-        add(bar,st,'lead',n,STEP*(len*1.02),.33+energy*.13,Math.sin(bar*.8+st)*.17,
-          {slide:rand(bar*31+st,4)>.42,bright:energy>.83});
-      }
-      // Interstitial tiny jazzy answering phrases.
-      if (bar%4===3 && bar>8 && bar<132) {
-        [11,12,13,14].forEach((st,k)=>add(bar,st,'lead',ch.upper[choose([1,2,3,2],k)]-12,STEP*.78,.21+energy*.07,(k-2)*.12,{slide:k===0}));
-      }
-    }
-    // Elastic, sub-heavy bass with syncopated note and octave articulations.
-    if(bar>=2 && bar<139) {
-      const bassSteps=energy>.7?[0,3,7,10,14]:[0,7,11];
-      bassSteps.forEach((st,k)=> {
-        const octave=k===2 && bar%4===3?12:0;
-        const fifth=k===4?7:0;
-        add(bar,st,'bass',ch.root+octave+fifth,STEP*(k===0?2.6:1.55),
-          (energy>.85?.47:.40)*(st===0?1.2:1),0,{squawk:k===3&&energy>.8});
-      });
-    }
-    // Drum sequencer: synthetic kicks, snares, hats, breaks and rolls.
-    if(s.drums>0) {
-      const full=s.drums>=.7;
-      const kickSteps=full?[0,7,10,14]:[0,10];
-      for(const st of kickSteps) {
-        if(s.drums<.5 && bar%2 && st!==0) continue;
-        add(bar,st,'kick',0,.36,Math.min(.9,s.drums*(st===0?.7:.55)),0);
-      }
-      for(const st of [4,12]) add(bar,st,'snare',0,.20,s.drums*(st===12?.65:.60),.07);
-      if(full && bar%2) for(const st of [10,15]) add(bar,st,'snare',0,.1,.11*s.drums,-.2,{ghost:true});
-      for(let st=0;st<16;st+=(bar<8?4:2)) {
-        if(!full && st%4===2) continue;
-        add(bar,st,'hat',0,.065,Math.min(.17,s.drums*(st%4===2?.16:.11)),(st%4===2?.22:-.18),{open:st===14&&full&&bar%4===1});
-      }
-      if(full && bar%2===1) for(const st of [7,15])
-        add(bar,st,'hat',0,.055,.065*s.drums,.25);
-      // Quick fills every 4/8 bars, 32nd-note rolls.
-      if(full && (bar%8===7 || bar%4===3)) {
-        const density=bar%8===7?8:4;
-        for(let k=0;k<density;k++) add(bar,12+k*(4/density),'snare',0,.08,(.17+k/density*.21)*s.drums,
-          (rand(bar*23+k,99)-.5)*.6,{ghost:k%2===0});
-      }
-    }
-    // Tick-tock chiptune sparkle in high-energy sections.
-    if(energy>.84 && bar%4===2 && bar<132) {
-      for(let k=0;k<4;k++) {
-        const st=9+k*1.5;
-        add(bar,st,'glitch',ch.upper[(k+2)%5]-12,STEP*.68,.09+energy*.06,
-          (k%2?.65:-.65));
-      }
-    }
-    // Transition details, rising spectral noise and a brief bright crash.
-    if([15,31,47,63,79,95,111,123].includes(bar)) {
-      add(bar,8,'rise',0,STEP*8,.18+energy*.13,.0);
-    }
-    if([16,32,48,64,80,96,112,124].includes(bar)) {
-      add(bar,0,'crash',0,1.45,.18+energy*.12,-.05);
-    }
-    // Emphatic 1-beat fills before drops.
-    if([31,63,95,111].includes(bar)) {
-      for(let k=0;k<8;k++)
-        add(bar,12+k*.5,'glitch',ch.upper[(k+bar)%5]-12+(k%3===0?12:0),STEP*.41,.11+k*.009,(k%2?-.6:.6));
-    }
+    // Short, dark transition sweeps, rather than brilliant synth crashes.
+    if([15,31,47,63,79,95,111,123].includes(bar))
+      add(bar,12,'rise',0,STEP*4,.14,0);
+    if([16,32,48,64,80,96,112,124].includes(bar))
+      add(bar,0,'crash',0,.62,.12,-.04);
   }
-  // Final splash and long synthesis-only release, matching audio length.
-  e.push({t:240.1,type:'pad',note:51,duration:3.8,velocity:.11,pan:-.3});
-  e.push({t:240.1,type:'pad',note:58,duration:3.8,velocity:.11,pan:.3});
   e.sort((a,b)=>a.t-b.t);
   return e;
 }
@@ -212,7 +188,7 @@ export class ProceduralRapidRain {
     this.volume=clamp(volume,0,1);this.onEnded=onEnded;
     this.score=SCORE;
     this.tempo=BPM;this.loop=true;
-    this.warmth=.78;
+    this.warmth=.73;
     this.intensity=.63;this.arrangement='auto';
     this.layerVolumes=Object.fromEntries(RAPID_RAIN_LAYERS.map(type=>[type,1]));
     this.muted=new Set();this.soloed=new Set();
@@ -298,13 +274,17 @@ export class ProceduralRapidRain {
     const now=this.ctx.currentTime;
     for(const type of RAPID_RAIN_LAYERS) {
       if(!this.layerGains[type])continue;
-      const isDrum=DRUM_LAYERS.has(type);
-      const weight=type==='pad'?(.80-.21*this.intensity)
-        :type==='keys'?(.75+.07*this.intensity)
-        :isDrum?(.18+.75*this.intensity)
-        :type==='glitch'?(.04+.39*this.intensity)
-        :type==='bass'?(.51+.51*this.intensity)
-        :(.5+.40*this.intensity);
+      // Drum/bass-first default mix. Other lanes are still independently
+      // controllable by the public remix API, but intentionally very quiet.
+      const weight=type==='kick'?(.94+.18*this.intensity)
+        :type==='hat'?(.81+.19*this.intensity)
+        :type==='bass'?(.99+.32*this.intensity)
+        :type==='snare'?(.52+.16*this.intensity)
+        :type==='pad'?(.085+.015*this.intensity)
+        :type==='lead'?(.095+.030*this.intensity)
+        :type==='glitch'?(.11+.05*this.intensity)
+        :type==='rise'||type==='crash'?.18
+        :(.04+.02*this.intensity);
       const audible=!this.muted.has(type) && (this.soloed.size===0||this.soloed.has(type));
       const gain=audible?this.layerVolumes[type]*Math.max(.01,weight):0;
       for(const node of [this.layerGains[type],this.reverbGates[type],this.delayGates[type]]) {
@@ -323,20 +303,23 @@ export class ProceduralRapidRain {
     if(['shatter','power','combo','superRamp','magicTrick','land'].includes(kind)) {
       this._emit('accent',{kind,time:this.getTime(),beat:this.getBeat()});
     }
-    // Gameplay-aware *musical* motifs. These are notes in the current key,
-    // not extra UI beeps, and don't replace any existing game sound effects.
+    // Game accent = a soft rhythmic fill on the nearest grid, not piano,
+    // marimba or bright bell arpeggios; the game's own SFX remain independent.
     if(['pickup','combo','magicTrick','power','shatter'].includes(kind)) {
       const chord=CHORDS[Math.floor(this.getTime()/BAR)%CHORDS.length];
-      const tick=60/this.tempo/2;
-      const next=now+.035; // safe render lead time, independent of game framerate
-      const notes=kind==='power'?[0,1,2,3]
-        :kind==='combo'||kind==='magicTrick'?[1,2,3]
-        :kind==='shatter'?[0,2]:[1,2];
-      notes.forEach((index,i)=>this._scheduleNote({
-        type:kind==='power'?'lead':'pluck',note:chord.upper[index]-12,
-        duration:tick*(kind==='shatter'?.65:.84),
-        velocity:kind==='power'?.22:.15,pan:(i%2?-.12:.12)
-      },next+i*tick*.83));
+      const eighth=60/this.tempo/2, next=now+.025;
+      if(kind==='pickup') {
+        this._scheduleNote({type:'hat',note:0,duration:.045,velocity:.31,pan:.12},next);
+      } else if(kind==='power') {
+        for(let i=0;i<4;i++)this._scheduleNote({type:'kick',note:0,duration:.18,velocity:.27+i*.05,pan:0},next+i*eighth);
+      } else if(kind==='shatter') {
+        this._scheduleNote({type:'kick',note:0,duration:.25,velocity:.33,pan:0},next);
+        this._scheduleNote({type:'hat',note:0,duration:.09,velocity:.30,pan:-.2,open:true},next+eighth*.72);
+      } else {
+        this._scheduleNote({type:'bass',note:chord.root+12,duration:eighth*.79,
+          velocity:.26,pan:0,slide:true},next);
+        this._scheduleNote({type:'hat',note:0,duration:.055,velocity:.27,pan:.20},next+eighth*.82);
+      }
     }
     if(['rockHit','crash','rampHit','shatter'].includes(kind) && this.duck) {
       const depth=kind==='shatter'?.67:.43;
@@ -388,7 +371,7 @@ export class ProceduralRapidRain {
     this.duck=c.createGain();this.duck.gain.value=1;
     // Console-inspired warm bandwidth: less glassy top, strong midrange.
     const hiShelf=this.toneShelf=c.createBiquadFilter();hiShelf.type='highshelf';
-    hiShelf.frequency.value=2050;hiShelf.gain.value=-6.5;
+    hiShelf.frequency.value=2800;hiShelf.gain.value=-4.5;
     const tape=c.createWaveShaper();
     const curve=new Float32Array(1024);
     for(let i=0;i<curve.length;i++){
@@ -396,14 +379,14 @@ export class ProceduralRapidRain {
       curve[i]=Math.tanh(x*1.28)/Math.tanh(1.28);
     }
     tape.curve=curve;tape.oversample='2x';
-    const lo=this.toneLowpass=c.createBiquadFilter();lo.type='lowpass';lo.frequency.value=4800;lo.Q.value=.68;
+    const lo=this.toneLowpass=c.createBiquadFilter();lo.type='lowpass';lo.frequency.value=5100;lo.Q.value=.68;
     master.connect(this.duck);this.duck.connect(tape);tape.connect(hiShelf);
     hiShelf.connect(lo);lo.connect(comp);
     this.analyser=c.createAnalyser();this.analyser.fftSize=512;
     this.analyser.smoothingTimeConstant=.8;
     comp.connect(this.analyser);this.analyser.connect(c.destination);
     this.musicBus=c.createGain();this.drumBus=c.createGain();
-    this.musicBus.gain.value=.92;this.drumBus.gain.value=1;
+    this.musicBus.gain.value=.91;this.drumBus.gain.value=1.08;
     this.musicBus.connect(master);this.drumBus.connect(master);
     // Generate impulse response from math/noise: NOT a sample or network file.
     // Tiny bandlimited ROM-like wavetables synthesized in memory, not sampled.
@@ -428,14 +411,14 @@ export class ProceduralRapidRain {
     }
     this.revIn=c.createGain();this.revIn.gain.value=1;
     const rev=c.createConvolver();rev.buffer=ir;
-    const revWet=c.createGain();revWet.gain.value=.095;
+    const revWet=c.createGain();revWet.gain.value=.060;
     const revTone=c.createBiquadFilter();revTone.type='lowpass';revTone.frequency.value=2500;
     this.revIn.connect(rev);rev.connect(revTone);revTone.connect(revWet);revWet.connect(master);
     this.delayIn=c.createGain();
     const dl=this.delay=c.createDelay(1.2);dl.delayTime.value=STEP*3;
     const feedback=c.createGain();feedback.gain.value=.24;
     const dlTone=c.createBiquadFilter();dlTone.type='lowpass';dlTone.frequency.value=2000;
-    const dlWet=c.createGain();dlWet.gain.value=.14;
+    const dlWet=c.createGain();dlWet.gain.value=.065;
     this.delayIn.connect(dl);dl.connect(dlTone);dlTone.connect(feedback);
     feedback.connect(dl);dlTone.connect(dlWet);dlWet.connect(master);
     // Each lane gets its own dry and FX gates for live mute/solo/remixing.
@@ -452,7 +435,7 @@ export class ProceduralRapidRain {
     this.noise=c.createBuffer(1,Math.ceil(c.sampleRate*1.1),c.sampleRate);
     const nd=this.noise.getChannelData(0);
     for(let i=0;i<nd.length;i++)nd[i]=rand(i,51)*2-1;
-    this.setWarmth(this.warmth ?? .78);
+    this.setWarmth(this.warmth ?? .73);
     await c.resume();
   }
   _makeVoice(t,dur,amp,{attack=.005,release=.12,decay=0,sustain=1,pan=0,reverb=.12,delay=0,bus='music'}={}) {
@@ -592,19 +575,26 @@ export class ProceduralRapidRain {
         }
         break;
       }
-      case 'bass': { // Rounded, rubbery N64-style synth bass with a soft attack
-        v=this._makeVoice(t,dur,ev.velocity*.46,{attack:.004,decay:.22,sustain:.72,release:.10,
-          pan:0,reverb:.008});
-        const o=c.createOscillator();o.type='sine';
-        o.frequency.setValueAtTime(f*1.04,t);o.frequency.exponentialRampToValueAtTime(f,t+.05);
-        o.connect(v.input);v.track(o,t,t+dur+.11);
-        const of=c.createOscillator(),fil=v.add(c.createBiquadFilter()),g=v.add(c.createGain());
-        of.type='triangle';of.frequency.value=f;
-        fil.type='lowpass';fil.Q.value=1.0;
-        fil.frequency.setValueAtTime(ev.squawk?1250:950,t);
-        fil.frequency.exponentialRampToValueAtTime(220,t+.2);
-        g.gain.value=.42;of.connect(fil);fil.connect(g);g.connect(v.input);
-        v.track(of,t,t+dur+.11);
+      case 'bass': { // Deep but audible on mobile: sine sub + filtered harmonics
+        v=this._makeVoice(t,dur,ev.velocity*.68,{attack:.004,decay:.12,sustain:.61,release:.09,
+          pan:0,reverb:.005});
+        const sub=c.createOscillator();sub.type='sine';
+        sub.frequency.setValueAtTime(f*(ev.slide?1.095:1.025),t);
+        sub.frequency.exponentialRampToValueAtTime(f,t+(ev.slide?.085:.034));
+        sub.connect(v.input);v.track(sub,t,t+dur+.11);
+        const body=c.createOscillator(),fil=v.add(c.createBiquadFilter()),g=v.add(c.createGain());
+        body.type='triangle';body.frequency.setValueAtTime(f*(ev.slide?1.08:1),t);
+        if(ev.slide)body.frequency.exponentialRampToValueAtTime(f,t+.09);
+        fil.type='lowpass';fil.Q.value=.71;
+        fil.frequency.setValueAtTime(ev.squawk?890:670,t);
+        fil.frequency.exponentialRampToValueAtTime(175,t+.20);
+        g.gain.value=.78;body.connect(fil);fil.connect(g);g.connect(v.input);
+        v.track(body,t,t+dur+.10);
+        // A quiet second harmonic lets small phone speakers reproduce bass notes.
+        const overtone=c.createOscillator(),og=v.add(c.createGain());
+        overtone.type='sine';overtone.frequency.value=f*2;
+        og.gain.setValueAtTime(.27,t);og.gain.exponentialRampToValueAtTime(.05,t+Math.min(.2,dur));
+        overtone.connect(og);og.connect(v.input);v.track(overtone,t,t+dur+.08);
         break;
       }
       case 'glitch': { // Occasional muted 8-bit-flavored accent, never a sharp square shriek
@@ -617,33 +607,35 @@ export class ProceduralRapidRain {
         o.connect(filt);filt.connect(v.input);v.track(o,t,t+dur+.09);
         break;
       }
-      case 'kick': {
-        v=this._makeVoice(t,.33,ev.velocity*.86,{attack:.002,decay:.095,sustain:.22,release:.07,bus:'drum',reverb:.012});
+      case 'kick': { // Chunky late-90s drum machine: body before click
+        v=this._makeVoice(t,.29,ev.velocity*.96,{attack:.0015,decay:.080,sustain:.29,release:.060,
+          bus:'drum',reverb:.004});
         const o=c.createOscillator();o.type='sine';
-        o.frequency.setValueAtTime(135,t);
-        o.frequency.exponentialRampToValueAtTime(52,t+.09);
-        o.frequency.exponentialRampToValueAtTime(46,t+.31);
-        o.connect(v.input);v.track(o,t,t+.345);
-        // Transient click adds attack without a stored drum sample.
-        this._noise(v,t,t+.015,{filterType:'bandpass',cutoff:1650,q:.8,gain:.06});
-        // Algorithmic sidechain dip, scheduled alongside the kick.
-        // Music bus kept stable: avoid overpowering the game's existing SFX.
+        o.frequency.setValueAtTime(ev.accent?155:133,t);
+        o.frequency.exponentialRampToValueAtTime(55,t+.073);
+        o.frequency.exponentialRampToValueAtTime(43,t+.26);
+        o.connect(v.input);v.track(o,t,t+.315);
+        // Very quiet click for articulation, deliberately below snare/hats.
+        this._noise(v,t,t+.012,{filterType:'bandpass',cutoff:1080,q:.8,gain:.075});
         break;
       }
-      case 'snare': {
+      case 'snare': { // Dusty snare with a short, warm body and soft noise
         const ghost=!!ev.ghost;
-        v=this._makeVoice(t,ghost?.08:.15,ev.velocity*.66,{attack:.003,decay:.07,sustain:.31,release:.075,bus:'drum',pan:ev.pan,reverb:.13});
-        this._noise(v,t,t+(ghost?.13:.20),{filterType:'bandpass',cutoff:1500,q:.7,gain:.92});
+        v=this._makeVoice(t,ghost?.07:.12,ev.velocity*.59,{attack:.0018,decay:.063,sustain:.24,
+          release:ghost?.043:.064,bus:'drum',pan:ev.pan,reverb:.07});
+        this._noise(v,t,t+(ghost?.09:.16),{filterType:'bandpass',cutoff:1320,q:.8,gain:.79});
         const o=c.createOscillator();o.type='triangle';
-        o.frequency.setValueAtTime(175,t);o.frequency.exponentialRampToValueAtTime(115,t+.08);
-        const g=v.add(c.createGain());g.gain.value=.36;
-        o.connect(g);g.connect(v.input);v.track(o,t,t+.13);
+        o.frequency.setValueAtTime(172,t);o.frequency.exponentialRampToValueAtTime(117,t+.075);
+        const g=v.add(c.createGain());g.gain.value=.46;
+        o.connect(g);g.connect(v.input);v.track(o,t,t+.14);
         break;
       }
-      case 'hat': {
+      case 'hat': { // Front-of-mix warm hats, never high-register glassy bells
         const open=!!ev.open;
-        v=this._makeVoice(t,open?.16:.045,ev.velocity*.34,{attack:.003,decay:.04,sustain:.15,release:open?.09:.025,pan:ev.pan,bus:'drum',reverb:.018});
-        this._noise(v,t,t+(open?.22:.08),{filterType:'bandpass',cutoff:open?2800:3150,q:.9,gain:.76});
+        v=this._makeVoice(t,open?.115:.035,ev.velocity*.56,{attack:.0015,decay:.035,
+          sustain:.13,release:open?.082:.018,pan:ev.pan,bus:'drum',reverb:.008});
+        this._noise(v,t,t+(open?.19:.062),{filterType:'bandpass',cutoff:open?2750:2450,q:.67,
+          gain:open?.74:.92});
         break;
       }
       case 'rise': {
@@ -667,10 +659,10 @@ export class ProceduralRapidRain {
     const level=this.intensity;
     if(this.arrangement==='calm' && (ev.type==='glitch'||ev.type==='rise'||ev.type==='crash'))return false;
     if(ev.type==='glitch' && level<.62)return false;
-    if(ev.type==='hat' && level<.70 && index%3!==0)return false;
-    if(ev.type==='kick' && level<.42 && index%2!==0)return false;
-    if(ev.type==='snare' && level<.21)return false;
-    if(ev.type==='bass' && level<.22 && index%3!==0)return false;
+    if(ev.type==='hat' && level<.24 && index%5===0)return false;
+    if(ev.type==='kick' && level<.16 && index%4===0)return false;
+    if(ev.type==='snare' && level<.19 && ev.ghost)return false;
+    if(ev.type==='bass' && level<.14 && index%3===0)return false;
     if(ev.type==='lead' && level<.20 && index%4!==0)return false;
     return true;
   }
