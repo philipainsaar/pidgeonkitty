@@ -22,6 +22,11 @@ import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64Audi
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
 // No Nintendo/N64 game assets are used. Scenery can optionally use custom GLBs from public/models/.
+// Files inside public/ are loaded from the site root (without the /public prefix).
+// Swap either image in public/images/ to update the brand without editing JSX.
+const SNOW360_LOGO = "/images/Snow360Logo.png";
+const SNOW360_LOGO_BACKGROUND = "/images/Snow360Logo-background.png";
+
 const WEB_MODEL = SNOW64_MODEL_PATHS.riderDesktop;
 const MOBILE_MODEL = SNOW64_MODEL_PATHS.riderMobile;
 const SLOPE = 0.077;
@@ -1994,6 +1999,45 @@ function FollowCameraDragArea({ cameraOrbitRef, mobile }) {
   </div>;
 }
 
+/**
+ * PNG branding: layered logo + background on the title screen, logo only in HUD.
+ * Transparent PNGs work best. Missing assets fall back to readable text,
+ * so the game remains usable before the image files are uploaded.
+ */
+function Snow360Logo({ startScreen = false, mobile = false }) {
+  const [logoMissing, setLogoMissing] = useState(false);
+  const [backgroundMissing, setBackgroundMissing] = useState(false);
+  const frame = startScreen
+    ? { width: "min(100%, 480px)", height: "clamp(110px, 21vh, 185px)", margin: "9px auto 8px" }
+    : { width: mobile ? 130 : 214, height: mobile ? 47 : 66, margin: 0 };
+  const imgStyle = {
+    position: "absolute", inset: 0, width: "100%", height: "100%",
+    objectFit: "contain", objectPosition: startScreen ? "center" : "left center",
+    userSelect: "none", WebkitUserSelect: "none", pointerEvents: "none",
+  };
+  return <div style={{ ...frame, position: "relative", flexShrink: 0 }}>
+    {logoMissing ? (
+      <div style={{ width: "100%", height: "100%", display: "flex",
+        justifyContent: startScreen ? "center" : "flex-start", alignItems: "center",
+        fontSize: startScreen ? "clamp(34px, 8vw, 64px)" : mobile ? 25 : 42,
+        fontStyle: "italic", fontWeight: 1000, letterSpacing: "-.04em", lineHeight: 1,
+        color: "#fdf3ce", textShadow: "3px 4px #245a6e" }}>
+        SNOW<span style={{ color: "#f796b6" }}>360</span>
+      </div>
+    ) : <>
+      {startScreen && !backgroundMissing && <img
+        src={SNOW360_LOGO_BACKGROUND} alt="" aria-hidden="true"
+        loading="eager" decoding="async" draggable={false}
+        onError={() => setBackgroundMissing(true)}
+        style={{ ...imgStyle, zIndex: 0 }} />}
+      <img src={SNOW360_LOGO} alt="SNOW 360"
+        loading="eager" decoding="async" draggable={false}
+        onError={() => setLogoMissing(true)}
+        style={{ ...imgStyle, zIndex: 1 }} />
+    </>}
+  </div>;
+}
+
 export default function SnowboardGame(){
   const [phase,setPhase]=useState("ready");
   const [runKey,setRunKey]=useState(0);
@@ -2127,7 +2171,7 @@ export default function SnowboardGame(){
     <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,pointerEvents:"none"}}>
       <div style={{display:"flex",flexDirection:"column",gap:5,filter:"drop-shadow(2px 3px #103348)"}}>
         <div style={{fontSize:10,fontWeight:900,letterSpacing:".24em",color:"#eefffc"}}>PIDGEONKITTY PRESENTS</div>
-        <div style={{fontSize:"clamp(22px,4vw,47px)",fontWeight:1000,fontStyle:"italic",lineHeight:.95,letterSpacing:"-.02em",color:"#fdf3ce",textShadow:"3px 4px #245a6e"}}>SNOW <span style={{color:"#f796b6"}}>64</span></div>
+        <Snow360Logo mobile={mobile===true} />
         <div style={{fontSize:10,fontWeight:900,letterSpacing:".16em",color:"#cdfaff"}}>DOWNHILL FREESTYLE</div>
       </div>
       <div className="snow64-hud" style={{display:"flex",gap:8,alignItems:"stretch"}}>
@@ -2150,7 +2194,7 @@ export default function SnowboardGame(){
     {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onClick={e=>{if(e.target?.closest?.("button"))return;phase==="paused"?pause():start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
       <div style={{maxWidth:560,width:"min(100%,560px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
-        <h1 style={{fontSize:"clamp(34px,7vw,70px)",fontStyle:"italic",fontWeight:1000,color:"#ffedb6",textShadow:"4px 5px #28586e",margin:"14px 0 8px",lineHeight:.94}}>PIDGEON KITTY<br/><span style={{color:"#f6a0bc"}}>SNOW 64</span></h1>
+        <Snow360Logo startScreen mobile={mobile===true} />
         <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`SCORE DEPLETED! Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST PEAK: {currentBest.toLocaleString()} PTS</div>}
         {phase==="paused"&&<button type="button" aria-pressed={soundOn}
