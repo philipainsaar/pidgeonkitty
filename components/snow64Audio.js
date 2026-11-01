@@ -4,15 +4,18 @@
  * A single AudioContext plays continuous snow/speed/carve/wind noise, event cues,
  * and the original Frost Shroom arpeggio. Sound starts on a user gesture.
  *
- * SNOW 64 ORIGINAL FOOTSTEP RESTORATION:
- * Original step waveform, filter, timing and envelope. Only amplitude changes.
- * Token pickup remains at its previous boosted level; other SFX stay intact.
- * 1.0 = the original amplitude; adjust footsteps to taste.
+ * SNOW 64: SOFT BUBBLE FOOTSTEPS
+ * Only walking/chasing footsteps are redesigned: a tiny, gentle sine-wave
+ * bubble or squeak (no metallic thump, noise crackle or resonant filtering).
+ * Token pickup, original game SFX and master volume remain unchanged.
  */
 export const SNOW64_EFFECT_LEVELS = {
-  footsteps: 7.0,    // Original exact sound, only 7x original amplitude
-  tokenPickup: 1.9, // Original 1.0; clearer token collection chimes
+  footsteps: 1.0,    // Soft bubble loudness; try 0.65 for extra quiet, 1.4 for louder
+  tokenPickup: 1.9,  // Keep the token pickup volume unchanged
 };
+// Change to 'squeak' for a slightly higher, whisper-soft "peep".
+export const SNOW64_FOOTSTEP_STYLE = 'bubble'; // 'bubble' | 'squeak'
+
 
 let engine = null;
 let enabled = true;
@@ -177,6 +180,40 @@ function burst(e,when,length,level=.095,frequency=850,type='lowpass') {
   source.onended=()=>{source.disconnect();filter.disconnect();env.disconnect();};
 }
 
+/**
+ * Very soft, single-voice fish-on-snow footstep. No synthesized noise,
+ * low-frequency thud, hard click or metallic harmonics.
+ * A rounded sine glides slightly upward and down, with a gentle envelope.
+ * Tiny alternating variations prevent identical repeated "notes".
+ * Generated on demand, never downloads or plays a sound file.
+ */
+function playSoftSnowStep(e, when) {
+  const level = clamp(SNOW64_EFFECT_LEVELS.footsteps, 0, 2.5);
+  if (level <= 0) return;
+  const squeak = SNOW64_FOOTSTEP_STYLE === 'squeak';
+  const alternate = (e.softStepIndex = (e.softStepIndex || 0) + 1) % 2;
+  const ctx = e.ctx;
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+  const start = squeak ? (alternate ? 495 : 515) : (alternate ? 358 : 385);
+  const peak  = squeak ? (alternate ? 605 : 620) : (alternate ? 452 : 478);
+  const end   = squeak ? (alternate ? 455 : 480) : (alternate ? 390 : 405);
+  const duration = squeak ? 0.118 : 0.145;
+  const peakVolume = (squeak ? 0.061 : 0.087) * level;
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(start, when);
+  osc.frequency.exponentialRampToValueAtTime(peak, when + (squeak ? .041 : .064));
+  osc.frequency.exponentialRampToValueAtTime(end, when + duration);
+  env.gain.setValueAtTime(FLOAT_ZERO, when);
+  env.gain.linearRampToValueAtTime(Math.max(FLOAT_ZERO, peakVolume), when + .026);
+  env.gain.exponentialRampToValueAtTime(FLOAT_ZERO, when + duration);
+  osc.connect(env);
+  env.connect(e.master);
+  osc.start(when);
+  osc.stop(when + duration + .012);
+  osc.onended = () => { osc.disconnect(); env.disconnect(); };
+}
+
 /** Gameplay sound cues are material-specific, not generic UI beeps. */
 export function playSnow64Sound(kind) {
   if(!enabled)return;
@@ -233,13 +270,8 @@ export function playSnow64Sound(kind) {
     case 'remount':
       burst(e,n,.08,.055,1800,'highpass');
       tone(e,n,345,.13,.042,'triangle',570);break;
-    case 'step': {
-      // The ORIGINAL snow-step sound: exactly the same timbre, pitch,
-      // filter, length and envelope. Only the gain is increased.
-      const boost=clamp(SNOW64_EFFECT_LEVELS.footsteps,0,10);
-      burst(e,n,.075,.038*boost,720,'lowpass');
-      break;
-    }
+    case 'step':
+      playSoftSnowStep(e,n);break;
     case 'pause':
       tone(e,n,470,.11,.035,'sine',360);break;
     case 'resume':
