@@ -12,7 +12,7 @@ import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } fr
 import { recordSnowPoints, maybeSpawnSnowMushroom, mushroomCollision, activateSnowMushroom } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
-import { createCrashBoard, stepCrashBoard, riderRecoveryGroundLift } from "./snow64CrashPhysics";
+import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider, riderRecoveryGroundLift } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
 import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
@@ -479,16 +479,19 @@ function safeHud(s) {
 }
 function smoothstep(t) { const v=clamp(t,0,1);return v*v*(3-2*v); }
 
-function beginSnowRecovery(s, kind, reason, onSound) {
+function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
   // Total invulnerability lasts only for the actual Frost Shroom boost.
   if (s.recovery || s.powerTime > 0 || s.frostHover) return;
   const penalty = (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
   s.score = Math.max(0,s.score - penalty);
   s.combo = 0;
   s.hits += 1;
-  // Snapshot momentum BEFORE slowing the rider: the board becomes a separate
-  // flying object for the whole wipeout/remount sequence.
-  s.recovery = { kind, t: 0, duration: recoveryDuration(kind), board: createCrashBoard(s,kind) };
+  // Sample a fresh impact trajectory before slowing momentum. Rock/ramp
+  // contact normals bias the kick, while randomness changes the side, spin,
+  // throw length and how far the rider slides on every wipeout.
+  const looseBoard = createCrashBoard(s, kind, Math.random, impact);
+  const fallenRider = createCrashRider(s, looseBoard, kind, Math.random, impact);
+  s.recovery = {kind, t:0, duration:recoveryDuration(kind), board:looseBoard, rider:fallenRider};
   s.powerAutoJumpDelay=2.0;
   s.lastText = `${reason}  −${penalty} PTS`;
   s.textUntil = s.t + 1.85;
@@ -684,12 +687,19 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           const footstep=Math.floor(s.recovery.t*3.8);
           if(s.recovery.footstep!==footstep){s.recovery.footstep=footstep;onSound("step");}
         }
-        // A single independent board rigid body bounces on terrain and ramp
-        // decks. Only a few substeps run during a crash, even on slow phones.
+        // Simulate two small crash bodies, not a full ragdoll solver. Rock
+        // ricochets, snow contacts and variable distance are calculated only
+        // during recovery so normal mobile gameplay stays lightweight.
+        const crashGround=(x,z)=>snowSurfaceAt(x,z,localChunks,groundY).height;
+        const crashRocks=localChunks.flatMap(chunk=>chunk.rocks).filter(rock=>
+          Math.abs(rock.z-s.z)<17 && Math.abs(rock.x-s.x)<16);
         if (s.recovery.board) {
           const bouncesBefore=s.recovery.board.bounces;
-          stepCrashBoard(s.recovery.board,dt,(x,z)=>snowSurfaceAt(x,z,localChunks,groundY).height);
+          stepCrashBoard(s.recovery.board,dt,crashGround,crashRocks);
           if(s.recovery.board.bounces>bouncesBefore)onSound("boardBounce");
+        }
+        if (s.recovery.rider && recoveryStage(s.recovery)==="falling") {
+          stepCrashRider(s.recovery.rider,dt,crashGround,crashRocks);
         }
         s.speed = lerp(s.speed, 1.35, Math.min(1, dt * 2.2));
         s.z -= s.speed * dt;
@@ -742,13 +752,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
                   break;
                 }
                 s.x=previousX;s.z=previousZ;
-                beginSnowRecovery(s,"wipeout","RAMP COLLISION!",onSound);
+                beginSnowRecovery(s,"wipeout","RAMP COLLISION!",onSound,{x:ramp.x,z:ramp.z});
                 break;
               }
             }
             if (sweptRampSideHit(from,to,ramp,groundY)) {
               s.x=previousX;s.z=previousZ;
-              beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound);
+              beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound,{x:ramp.x,z:ramp.z});
               break;
             }
           }
@@ -762,7 +772,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             if(s.consumedRamps.has(ramp.id)) continue;
             if(crossedRampLip(ramp,previousZ,s.z,s.x,previousX)){
               if(s.jumpCooldown>0){
-                beginSnowRecovery(s,"wipeout","RAMP LIP COLLISION!",onSound);
+                beginSnowRecovery(s,"wipeout","RAMP LIP COLLISION!",onSound,{x:ramp.x,z:ramp.z});
                 break;
               }
               const verticalSpeed=rampTakeoffSpeed(s.speed,ramp);
@@ -876,7 +886,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
               // Normal collisions never destroy or hide a rock.
               s.hitRocks.add(rock.id);
               s.x=previousX;s.z=previousZ;
-              beginSnowRecovery(s, "wipeout", "ROCK COLLISION!", onSound);
+              beginSnowRecovery(s, "wipeout", "ROCK COLLISION!", onSound,{x:rock.x,z:rock.z});
               break;
             }
           }
@@ -981,26 +991,40 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const chasing = recoveryMode === "chasing";
         const fallEnd = rec.kind === "wipeout" ? .95 : .72;
         const chaseEnd = fallEnd + (rec.kind === "wipeout" ? 1.62 : 1.25);
-        const fallP = smoothstep(rec.t / fallEnd);
-        const chaseP = smoothstep((rec.t - fallEnd) / (chaseEnd - fallEnd));
-        const separation = falling ? fallP : chasing ? (1 - chaseP) : 0;
-        // The rider is genuinely detached from the board: falls into powder,
-        // stands, runs from behind and climbs back into the bindings.
-        riderCarrier.current.position.set(separation * (rec.kind === "wipeout" ? 1.25 : .8),
-          falling ? -.03 * fallP : chasing ? 0 : -.08 * Math.sin(Math.PI * smoothstep((rec.t - chaseEnd) / .5)),
-          separation * (rec.kind === "wipeout" ? 2.7 : 1.8));
-        const downAngle = rec.kind === "wipeout" ? -1.35 : -.98;
-        const getUp = smoothstep((rec.t - fallEnd) / .38);
-        riderCarrier.current.rotation.set(0, 0,
-          falling ? downAngle * Math.sin(Math.PI * fallP * .5) :
-          chasing ? downAngle * (1 - getUp) - .055 * Math.sin(chaseP * 17) : 0);
-        const turnToRun = smoothstep((rec.t - fallEnd) / .38);
-        const turnToBoard = smoothstep((rec.t - chaseEnd + .34) / .34);
-        riderModel.current.rotation.y = chasing ? (Math.PI / 2) * (1 - turnToRun + turnToRun * turnToBoard) : Math.PI / 2;
-        // When chasing the board, feet stay close to snow; rise into the bindings during remount.
-        const remountBlend = recoveryMode === "remounting"
-          ? smoothstep((rec.t - chaseEnd) / .58) : 0;
-        riderModel.current.position.y = lerp(.06, RIDER_BINDING_HEIGHT, remountBlend);
+        const fallP=smoothstep(rec.t/fallEnd);
+        const chaseP=smoothstep((rec.t-fallEnd)/(chaseEnd-fallEnd));
+        const remountBlend=recoveryMode==="remounting"
+          ? smoothstep((rec.t-chaseEnd)/Math.max(.3,rec.duration-chaseEnd)) : 0;
+        const fallen=rec.rider;
+        const loose=rec.board;
+        const crashedX=fallen?.x ?? s.x;
+        const crashedZ=fallen?.z ?? s.z;
+        const boardX=loose?.x ?? s.x;
+        const boardZ=loose?.z ?? s.z;
+        // Genuine individual crash routes: the rider slides along the sampled
+        // impulse, runs toward the actual fallen snowboard, and both return to
+        // the bindings together during the last remount phase.
+        const chaseX=falling ? crashedX : chasing ? lerp(crashedX,boardX,chaseP) : lerp(boardX,s.x,remountBlend);
+        const chaseZ=falling ? crashedZ : chasing ? lerp(crashedZ,boardZ,chaseP) : lerp(boardZ,s.z,remountBlend);
+        const groundLift=falling && fallen ? Math.max(-.12,fallen.y-root.current.position.y) :
+          chasing ? .04*Math.sin(chaseP*21) : -.05*Math.sin(Math.PI*remountBlend);
+        riderCarrier.current.position.set(chaseX-s.x,groundLift,chaseZ-s.z);
+        const getUp=smoothstep((rec.t-fallEnd)/.38);
+        const downRoll=(fallen?.roll ?? -1.35)*Math.sin(Math.PI*fallP*.5);
+        const downPitch=(fallen?.pitch ?? 0)*Math.sin(Math.PI*fallP*.5);
+        const downYaw=(fallen?.yaw ?? 0)*Math.sin(Math.PI*fallP*.5);
+        riderCarrier.current.rotation.set(
+          falling?downPitch:chasing?downPitch*(1-getUp):0,
+          falling?downYaw:chasing?downYaw*(1-getUp):0,
+          falling?downRoll:chasing?downRoll*(1-getUp)-.04*Math.sin(chaseP*17):0,
+          "YXZ");
+        const toBoardX=boardX-chaseX, toBoardZ=boardZ-chaseZ;
+        const lookTowardBoard=clamp(Math.atan2(toBoardX,-toBoardZ),-1.1,1.1);
+        riderModel.current.rotation.y=Math.PI/2 + (chasing ? lookTowardBoard*.72*getUp :
+          falling ? (fallen?.modelTurn||0) : 0);
+        // Recovery animation feet stay close to the terrain; binding height is
+        // restored gradually as the board rejoins the rider.
+        riderModel.current.position.y=lerp(.06,RIDER_BINDING_HEIGHT,remountBlend);
         // Capsule-like pose/ground collision for the skinned rider. A sideways
         // fall rotates its broad head/body below the feet; simply putting the
         // model root at snow level was causing it to sink underground.
@@ -1019,6 +1043,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           modelY:riderModel.current.position.y,
           roll:riderCarrier.current.rotation.z,
           yaw:riderModel.current.rotation.y,
+          pitch:riderCarrier.current.rotation.x,
           floor:colliderFloor,
         });
         riderCarrier.current.position.y += lift;
