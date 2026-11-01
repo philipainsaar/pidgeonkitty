@@ -1281,28 +1281,28 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         director.exitTarget=null;
         director.lastBoard=null;
       }
-      if(s.powerTime>1 && s.t>=director.nextAt){
+      if(s.powerTime>3 && s.t>=director.nextAt){
         const next=nextFrostCameraShot(director.index);
         director.index=next.index;
         director.shot=next.shot;
-        director.nextAt=s.t+.95+Math.random()*.53;
+        director.nextAt=s.t+1.0+Math.random()*.58;
       }
-      if(director.shot && s.powerTime>1){
+      if(director.shot && s.powerTime>3){
         const step=Math.min(1,dt*3.9);
         director.yaw=approachAngle(director.yaw,director.shot.yaw,step);
         director.elevation=lerp(director.elevation,director.shot.elevation,step);
         // Portrait screens get a little more room for the board and feet.
-        const shotRadius=director.shot.radius*(mobile?1.17:1);
+        const shotRadius=director.shot.radius*(mobile?1.26:1.12);
         director.radius=lerp(director.radius,shotRadius,Math.min(1,dt*5.5));
         director.lookHeight=lerp(director.lookHeight,director.shot.lookHeight,step);
       }
       const intro=smoothstep((s.t-director.startAt)/.43);
-      const exit=smoothstep(s.powerTime); // Last 1 second returns to usual view.
+      const exit=smoothstep(s.powerTime/3); // Last 3 seconds return to usual view.
       frostMix=intro*exit;
-      // Keep one continuous angle path during the final second. Otherwise
+      // Keep one continuous angle path during the final 3 seconds. Otherwise
       // blending angles at the +/-PI seam can make the camera suddenly whip
       // to the opposite side midway through the return animation.
-      if(s.powerTime<=1){
+      if(s.powerTime<=3){
         if(director.exitYaw===null){
           director.exitYaw=director.yaw;
         }
