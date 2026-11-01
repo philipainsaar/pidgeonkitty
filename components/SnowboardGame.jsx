@@ -2305,7 +2305,9 @@ export default function SnowboardGame(){
         </div>}
       </div>
     </div>
-    {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?277:145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none",maxWidth:mobile?"94vw":undefined}}>
+    {/* Mobile trick/score/combo notices are anchored just below the compact top HUD,
+        instead of hovering over the rider and snowboard. Desktop is unchanged. */}
+    {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?"clamp(168px, 20dvh, 190px)":145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none",maxWidth:mobile?"94vw":undefined}}>
       {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".07em"}}>✦ FROST SHROOM {hud.powerRemaining.toFixed(1)}s • {hud.rockShattered||0} ROCKS ✦</div>}
       {hud.powerRemaining<=0 && hud.shieldRemaining>0 && <div style={{font:"900 12px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".08em"}}>❄ FROST SHIELD {hud.shieldRemaining.toFixed(1)}s ❄</div>}
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
