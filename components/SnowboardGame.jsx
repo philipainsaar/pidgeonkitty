@@ -15,6 +15,7 @@ import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChai
 import { createCrashBoard, stepCrashBoard, riderRecoveryGroundLift } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
 import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
+import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
 // No Nintendo/N64 game assets are used. Scenery can optionally use custom GLBs from public/models/.
@@ -46,94 +47,6 @@ const TRICKS = [
   { key: "0", name: "NOSE GRAB", points: 520, duration: 0.64, minHeight: 1.87, roll: 0.16, pitch: -0.49, pose: "SnowboardNosegrab" },
   { key: "f", name: "FRONTFLIP", points: 960, duration: 0.88, minHeight: 2.8, bigAir: true, flip: 360, pose: "SnowboardFrontflip" },
 ];
-
-let snowAudioContext;
-function synthSfx(kind) {
-  if (typeof window === "undefined") return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    if (!snowAudioContext) snowAudioContext = new AC();
-    if (snowAudioContext.state === "suspended") snowAudioContext.resume();
-    const notes = {
-      start: [[330,.00,.09],[440,.10,.10],[660,.22,.17]],
-      jump: [[190,.00,.08],[290,.09,.11]],
-      pickup: [[660,.00,.075],[880,.085,.12]],
-      trick: [[520,.00,.07],[780,.08,.09],[1040,.18,.17]],
-      crash: [[140,.00,.14],[90,.12,.26]],
-      finish: [[392,.00,.14],[494,.17,.15],[587,.35,.16],[784,.56,.32]],
-      power: [[590,.00,.10],[790,.12,.14],[1050,.27,.19]],
-      shatter: [[330,.00,.065],[510,.055,.07],[860,.14,.15]],
-    }[kind] || [];
-    const now=snowAudioContext.currentTime;
-    notes.forEach(([freq,delay,duration])=>{
-      const osc=snowAudioContext.createOscillator();
-      const env=snowAudioContext.createGain();
-      osc.type="triangle";osc.frequency.setValueAtTime(freq,now+delay);
-      osc.frequency.exponentialRampToValueAtTime(Math.max(50,freq*.75),now+delay+duration);
-      env.gain.setValueAtTime(.0001,now+delay);
-      env.gain.exponentialRampToValueAtTime(.055,now+delay+.012);
-      env.gain.exponentialRampToValueAtTime(.0001,now+delay+duration);
-      osc.connect(env);env.connect(snowAudioContext.destination);
-      osc.start(now+delay);osc.stop(now+delay+duration+.02);
-    });
-  }catch{ /* Optional audio should never interrupt gameplay. */ }
-}
-
-/** Original enchanted-snow arpeggio, synthesized with Web Audio (no music assets).
- * Only one interval runs while Frost Shroom is active; clean shutdown on pause/end.
- */
-function playFrostShroomMusic() {
-  if (typeof window === "undefined") return () => {};
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return () => {};
-  try {
-    if (!snowAudioContext) snowAudioContext = new AC();
-    const ctx = snowAudioContext;
-    if (ctx.state === "suspended") ctx.resume().catch(() => {});
-    const bus = ctx.createGain();
-    bus.gain.setValueAtTime(0.0001, ctx.currentTime);
-    bus.gain.exponentialRampToValueAtTime(0.62, ctx.currentTime + .20);
-    bus.connect(ctx.destination);
-    const semitones = [0,7,12,16, 14,9,7,12, 5,9,12,17, 16,12,9,7,
-      0,5,9,12, 19,17,14,9, 7,12,16,19, 17,12,7,4];
-    let step = 0, next = ctx.currentTime + .06;
-    let stopped = false;
-    const playBell = (time, freq, duration, volume, type = "sine") => {
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = type;
-      oscillator.frequency.setValueAtTime(freq, time);
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.exponentialRampToValueAtTime(Math.max(.0002, volume), time + .018);
-      gain.gain.exponentialRampToValueAtTime(.0001, time + duration);
-      oscillator.connect(gain); gain.connect(bus);
-      oscillator.start(time);
-      oscillator.stop(time + duration + .025);
-      oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
-    };
-    const schedule = () => {
-      if (stopped) return;
-      while(next < ctx.currentTime + .26) {
-        const note = semitones[step % semitones.length];
-        const frequency = 392 * Math.pow(2, note / 12);
-        playBell(next, frequency, .29, .032);
-        if (step % 4 === 0) playBell(next, 196 * Math.pow(2, semitones[(step + 2) % semitones.length] / 24), .68, .016, "triangle");
-        step++; next += .19;
-      }
-    };
-    schedule();
-    const interval = window.setInterval(schedule, 90);
-    return () => {
-      stopped = true;
-      window.clearInterval(interval);
-      const t=ctx.currentTime;
-      bus.gain.cancelScheduledValues(t);
-      bus.gain.setTargetAtTime(.0001, t, .045);
-      window.setTimeout(() => bus.disconnect(), 400);
-    };
-  } catch { return () => {}; }
-}
 
 function rand(seed) {
   let n = seed >>> 0;
@@ -590,7 +503,8 @@ function beginSnowRecovery(s, kind, reason, onSound) {
   s.speed = Math.min(8, s.speed * .34);
   s.steer = 0;
   s.fakie = false;
-  onSound("crash");
+  // Different impact materials get different sound signatures.
+  onSound(reason.startsWith("ROCK") ? "rockHit" : reason.startsWith("RAMP") ? "rampHit" : "crash");
 }
 
 
@@ -721,7 +635,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         activateArmedTrick(s);
         s.lastText = s.trick ? `${s.trick.name} TAKEOFF!` : boost>.6 ? "CHARGED OLLIE!" : "OLLIE!";
         s.textUntil = s.t + .9;
-        onSound("jump");
+        onSound("ollie");
       }
       if (command.type === "trick") {
         const found=TRICKS.find(q=>q.key===command.key);
@@ -738,6 +652,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           // when each animation duration finishes, including repeated identical clips.
           enqueueAirTrick(s,trick);
           beginNextAirTrick(s);
+          onSound("trickStart");
           s.lastText=`${trick.name} QUEUED • ${s.completedAirTricks.length+(s.trick?1:0)+s.airQueue.length} TRICKS`;
           s.textUntil=s.t+1.1;
         }
@@ -749,9 +664,14 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       // Endless survival timer: drains every frame, even while chasing a lost board.
       s.drainRate=snowDrainPerSecond(Math.max(0,-s.z));
       s.score=Math.max(0,s.score-s.drainRate*dt);
+      // Arcade warning when the score has under ~5 seconds of runway.
+      if(s.score>0 && s.score<s.drainRate*5 && (!s.lastDangerAt||s.t-s.lastDangerAt>2.7)){
+        s.lastDangerAt=s.t;onSound("danger");
+      }
       s.powerTime=Math.max(0,s.powerTime-dt);
       if (s.powerTime <= 0 && s.frostHover) {
         finishFrostHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
+        onSound("powerEnd");
       }
       s.powerAutoJumpDelay=Math.max(0,s.powerAutoJumpDelay-dt);
       if(s.mushroom && s.z < s.mushroom.z - 8) s.mushroom=null;
@@ -760,10 +680,16 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       if (s.recovery) {
         // The board slides just ahead while the rider falls, runs after it and remounts.
         s.recovery.t += dt;
+        if(recoveryStage(s.recovery)==="chasing"){
+          const footstep=Math.floor(s.recovery.t*3.8);
+          if(s.recovery.footstep!==footstep){s.recovery.footstep=footstep;onSound("step");}
+        }
         // A single independent board rigid body bounces on terrain and ramp
         // decks. Only a few substeps run during a crash, even on slow phones.
         if (s.recovery.board) {
+          const bouncesBefore=s.recovery.board.bounces;
           stepCrashBoard(s.recovery.board,dt,(x,z)=>snowSurfaceAt(x,z,localChunks,groundY).height);
+          if(s.recovery.board.bounces>bouncesBefore)onSound("boardBounce");
         }
         s.speed = lerp(s.speed, 1.35, Math.min(1, dt * 2.2));
         s.z -= s.speed * dt;
@@ -776,6 +702,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           s.jumpCooldown = .45;
           s.lastText = "BACK ON BOARD!";
           s.textUntil = s.t + 1.1;
+          onSound("remount");
         }
       } else {
         if (s.powerTime > 0 && !s.frostHover) {
@@ -849,7 +776,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
               s.consumedRamps.add(ramp.id);
               s.lastText=ramp.superAir?"✦ SUPER AIR! CHAIN THOSE TRICKS! ✦":s.speed>=28?"RAMP BIG AIR!":"RAMP TAKEOFF!";
               s.textUntil=s.t+(ramp.superAir?2.3:1.5);
-              onSound("jump");break;
+              onSound(ramp.superAir?"superRamp":"ramp");break;
             }
           }
         }
@@ -881,7 +808,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             s.combo += 1;
             s.lastText = `✦ FROST ${finished.name}! +${bonus} ✦`;
             s.textUntil = s.t + .85;
-            onSound("trick");
+            onSound("magicTrick");
           }
         } else if(s.inAir && !s.recovery){
           // Standard non-magical jumps retain the original gravity and risky
@@ -893,6 +820,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             const outcome=judgeAirTrickChain(s,s.steer,judgeSnowLanding,Math.random());
             if(outcome.grade === "clean"){
               if(outcome.trickCount===0){
+                onSound("land");
                 s.impact=.45;
                 resetAirTrickChain(s);
               }else{
@@ -906,7 +834,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
                 s.lastText=spawnedMushroom ? "✦ RARE FROST SHROOM AHEAD! ✦" : `CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
                 s.textUntil=s.t+1.85;
                 s.impact=.45;
-                if(outcome.trickCount)onSound("trick");
+                if(outcome.trickCount){onSound("land");onSound("combo");}
                 resetAirTrickChain(s);
               }
             }else{
@@ -1167,6 +1095,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     targetLook.lerp(look,Math.min(1,dt*7));camera.lookAt(targetLook);
     const baseFov=mobile?43:42;
     camera.fov=lerp(camera.fov,baseFov+Math.max(0,s.speed-20)*.16,Math.min(1,dt*2));camera.updateProjectionMatrix();
+    updateSnow64AudioFrame({playing, speed:s.speed,steer:s.steer,tuck,
+      inAir:s.inAir,recovery:!!s.recovery,powered:s.frostHover&&s.powerTime>0,airHeight:s.air});
     frame.current+=dt;
     if(frame.current>.12){frame.current=0;onHud(safeHud(s));}
   });
@@ -1551,16 +1481,24 @@ export default function SnowboardGame(){
   const [retro,setRetro]=useState(false);
   // Default to classic drawing; selectable on the start / new-run screen.
   const [trickMode,setTrickMode]=useState("draw");
+  const [soundOn,setSoundOn]=useState(true);
   const soundRef=useRef(true);
   const [best,setBest]=useState(0);
   const [hud,setHud]=useState({speed:57,score:SNOW_INITIAL_SCORE,peakScore:SNOW_INITIAL_SCORE,drainRate:snowDrainPerSecond(0),distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
   const [touchTuckFx,setTouchTuckFx]=useState(false);
-  const sound=useCallback(kind=>{if(soundRef.current)synthSfx(kind);},[]);
+  const sound=useCallback(kind=>{if(soundRef.current)playSnow64Sound(kind);},[]);
   const frostMusicActive=phase==="playing" && hud.powerRemaining>0;
   useEffect(()=>{
     if(!frostMusicActive || !soundRef.current)return;
-    return playFrostShroomMusic();
-  },[frostMusicActive]);
+    return playSnow64FrostMusic();
+  },[frostMusicActive,soundOn]);
+  useEffect(()=>{
+    if(phase!=="playing")updateSnow64AudioFrame({playing:false});
+  },[phase]);
+  useEffect(()=>()=>{
+    updateSnow64AudioFrame({playing:false});
+    shutdownSnow64Audio();
+  },[]);
   const input=useRef({left:false,right:false,tuck:false,steerAnalog:0,touchTuck:false});
   const queue=useRef([]);
   const cameraOrbit=useRef({yaw:0,pitch:0,dragging:false});
@@ -1568,7 +1506,14 @@ export default function SnowboardGame(){
   const collected=useRef(new Set());
   const lastPhase=useRef(phase);
   const lastHeldTrick=useRef(0);
-  useEffect(()=>{lastPhase.current=phase;},[phase]);
+  useEffect(()=>{
+    // Play pause/resume cues on committed state changes, not inside React setState updaters.
+    if(lastPhase.current!==phase){
+      if(phase==="paused")sound("pause");
+      else if(phase==="playing" && lastPhase.current==="paused")sound("resume");
+    }
+    lastPhase.current=phase;
+  },[phase,sound]);
   useEffect(()=>{
     const m=window.matchMedia("(max-width: 720px), (pointer: coarse)");
     const update=()=>setMobile(m.matches);update();m.addEventListener?.("change",update);
@@ -1579,6 +1524,8 @@ export default function SnowboardGame(){
     input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;
     queue.current.length=0;collected.current.clear();state.current=initialState(mobile?1:0);
     cameraOrbit.current.yaw=0;cameraOrbit.current.pitch=0;cameraOrbit.current.dragging=false;
+    // Start audio only on this user gesture (required by mobile browsers).
+    if(soundRef.current)unlockSnow64Audio();
     setHud(safeHud(state.current));setRunKey(k=>k+1);setPhase("playing");sound("start");
   },[sound,mobile]);
   const onFinish=useCallback(h=>{
@@ -1678,12 +1625,20 @@ export default function SnowboardGame(){
       <div style={{fontSize:mobile?15:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
       <div style={{fontSize:mobile?10:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
     </div>
-    {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onClick={e=>{if(e.target?.closest?.("button"))return;phase==="paused"?setPhase("playing"):start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
+    {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onClick={e=>{if(e.target?.closest?.("button"))return;phase==="paused"?pause():start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
       <div style={{maxWidth:560,width:"min(100%,560px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
         <h1 style={{fontSize:"clamp(34px,7vw,70px)",fontStyle:"italic",fontWeight:1000,color:"#ffedb6",textShadow:"4px 5px #28586e",margin:"14px 0 8px",lineHeight:.94}}>PIDGEON KITTY<br/><span style={{color:"#f6a0bc"}}>SNOW 64</span></h1>
         <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`SCORE DEPLETED! Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST PEAK: {currentBest.toLocaleString()} PTS</div>}
+        {phase==="paused"&&<button type="button" aria-pressed={soundOn}
+          onClick={e=>{e.stopPropagation();const next=!soundRef.current;soundRef.current=next;
+            setSoundOn(next);setSnow64AudioEnabled(next);if(next)unlockSnow64Audio();}}
+          style={{padding:"9px 15px",border:"2px solid #d7f4ff",borderRadius:9,
+            background:soundOn?"#b7e8ce":"#163d59",color:soundOn?"#213e42":"#f3fbff",
+            font:"900 11px system-ui",cursor:"pointer",touchAction:"manipulation"}}>
+          {soundOn?"♪ SOUND & MUSIC: ON":"♪ SOUND & MUSIC: OFF"}
+        </button>}
         {(phase==="ready"||phase==="finished") && <div data-snow64-settings="true"
           onPointerDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
           style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10,margin:"0 0 16px"}}>
@@ -1701,6 +1656,15 @@ export default function SnowboardGame(){
               ? "Draw glowing gestures on mobile; airborne taps still perform grabs."
               : "All 11 tricks + an Ollie button appear in a compact corner pad."}</div>
           </div>
+          <button type="button" aria-pressed={soundOn} aria-label="Toggle game sound effects and music"
+            onClick={e=>{e.stopPropagation();const next=!soundRef.current;
+              soundRef.current=next;setSoundOn(next);setSnow64AudioEnabled(next);
+              if(next){unlockSnow64Audio();playSnow64Sound("pickup");}}}
+            style={{padding:"8px 14px",border:"2px solid #d7f4ff",borderRadius:9,
+              background:soundOn?"#b7e8ce":"#163d59",color:soundOn?"#213e42":"#f3fbff",
+              font:"900 11px system-ui,sans-serif",letterSpacing:".055em",cursor:"pointer",touchAction:"manipulation"}}>
+            {soundOn?"♪ SOUND & MUSIC: ON":"♪ SOUND & MUSIC: OFF"}
+          </button>
           <button type="button" aria-pressed={retro}
             onClick={e=>{e.stopPropagation();setRetro(v=>!v);}}
             style={{padding:"8px 14px",border:"2px solid #d7f4ff",borderRadius:9,
