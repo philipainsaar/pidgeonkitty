@@ -23,6 +23,8 @@ export const SNOW64_MODEL_PATHS = Object.freeze({
   snowboard: "/models/snow64-snowboard.glb",
   courseMarker: "/models/snow64-course-marker.glb",
   mountain: "/models/snow64-mountain.glb",
+  explosionShard: "/models/snow64-explosion-shard.glb",
+  explosionBurst: "/models/snow64-explosion-burst.glb",
 });
 
 /** Multiplies auto-fitted size. 1.0 means fit the established game footprint.
@@ -32,4 +34,5 @@ export const SNOW64_MODEL_SCALE = Object.freeze({
   tree: [1,1,1], rock: [1,1,1], ramp: [1,1,1], superRamp: [1,1,1],
   token: [1,1,1], frostShroom: [1,1,1], snowboard: [1,1,1],
   courseMarker: [1,1,1], mountain: [1,1,1],
+  explosionShard: [1,1,1], explosionBurst: [1,1,1],
 });

@@ -15,6 +15,9 @@ import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChai
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider, riderRecoveryGroundLift } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
 import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
+import { SNOW64_TERRAIN } from "./snow64Appearance";
+import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture } from "./snow64VisualMaterials";
+import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -74,8 +77,9 @@ function groundY(x, z) {
 }
 
 function Terrain({index}) {
+  const materials=useSnow64TerrainMaterials();
   const geometry = useMemo(() => {
-    const verts = [], colors = [], indices = [];
+    const verts = [], colors = [], uvs = [], centerIndices = [], bankIndices = [];
     const w = 34, stepsX = 34, stepsZ = 55;
     const c = new THREE.Color();
     for (let i = 0; i <= stepsZ; i++) {
@@ -84,6 +88,8 @@ function Terrain({index}) {
         const x = -w + (j / stepsX) * w * 2;
         const y = groundY(x, z);
         verts.push(x, y, z);
+        // World-space UVs continue seamlessly across endless terrain chunks.
+        uvs.push(x / SNOW64_TERRAIN.textureTileMeters, -z / SNOW64_TERRAIN.textureTileMeters);
         const texture = 0.5 + 0.5 * Math.sin(j * 12.93 + i * 17.77);
         const center = Math.abs(x) < 11;
         const shade = center ? 0.965 + 0.022 * texture : 0.88 + texture * 0.065;
@@ -94,18 +100,22 @@ function Terrain({index}) {
     for (let i = 0; i < stepsZ; i++) {
       for (let j = 0; j < stepsX; j++) {
         const a = i * (stepsX + 1) + j, b = a + stepsX + 1;
-        indices.push(a, a + 1, b, a + 1, b + 1, b);
+        const destination = Math.abs(-w+((j+.5)/stepsX)*w*2)<11 ? centerIndices : bankIndices;
+        destination.push(a, a + 1, b, a + 1, b + 1, b);
       }
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    g.setIndex(indices);
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs,2));
+    g.setIndex([...centerIndices,...bankIndices]);
+    g.addGroup(0,centerIndices.length,0);
+    g.addGroup(centerIndices.length,bankIndices.length,1);
     g.computeVertexNormals();
     return g;
   }, [index]);
   useEffect(() => () => geometry.dispose(), [geometry]);
-  return <mesh geometry={geometry} receiveShadow={false}><meshLambertMaterial vertexColors side={THREE.DoubleSide} /></mesh>;
+  return <mesh geometry={geometry} material={materials} receiveShadow={false}/>;
 }
 
 function Forest({trees}) {
@@ -153,63 +163,6 @@ function Rock({ id, x, z, size, stateRef }) {
     <SnowGLBVisual asset={custom} type="rock" dimensions={[size*2,size*1.6,size*2.2]}/>
   </group>;
   return <mesh ref={mesh} position={[x, groundY(x, z) + size * 0.52, z]} rotation={[0.2, 0.8, 0.1]} scale={[size, size * 0.8, size * 1.1]}><dodecahedronGeometry args={[1, 0]} /><meshLambertMaterial color="#72879e" flatShading /></mesh>;
-}
-
-/** Instance-pooled icy rock fragments: one draw call, capped bursts, no geometry churn. */
-function FrostRockShatter({ stateRef, mobile }) {
-  const instance = useRef();
-  const hadBurst = useRef(false);
-  const maxBursts = mobile ? 5 : 9;
-  const shardsPerBurst = mobile ? 7 : 10;
-  const total = maxBursts * shardsPerBurst;
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-  const palette = useMemo(() => ["#91adbe", "#c2dbed", "#95ffef", "#b776eb", "#e5faff"].map(c=>new THREE.Color(c)), []);
-  useEffect(() => {
-    const mesh=instance.current;
-    if(!mesh)return;
-    dummy.scale.setScalar(.00001);dummy.updateMatrix();
-    for(let i=0;i<total;i++) {
-      mesh.setMatrixAt(i,dummy.matrix);
-      mesh.setColorAt(i,palette[i%palette.length]);
-    }
-    mesh.instanceMatrix.needsUpdate=true;
-    if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
-  },[dummy,palette,total]);
-  useFrame(() => {
-    const mesh=instance.current;
-    if(!mesh)return;
-    const state=stateRef.current;
-    const live=(state.rockExplosions||[]).filter(b=>state.t-b.at<1.12).slice(-maxBursts);
-    if(state.rockExplosions?.length!==live.length)state.rockExplosions=live;
-    if(!live.length && !hadBurst.current)return;
-    hadBurst.current=live.length>0;
-    for(let b=0;b<maxBursts;b++) {
-      const blast=live[b];
-      for(let k=0;k<shardsPerBurst;k++) {
-        const i=b*shardsPerBurst+k;
-        if(!blast) {
-          dummy.scale.setScalar(.00001);
-          dummy.position.set(0,-5000,0);
-        } else {
-          const elapsed=Math.max(0,state.t-blast.at);
-          const theta=(k*2.39996+blast.seed*.37);
-          const speed=2.2+(k%4)*.46;
-          const spread=elapsed*speed*(1+blast.size*.12);
-          dummy.position.set(blast.x+Math.cos(theta)*spread,
-            blast.y+Math.max(0,elapsed*(4.9+(k%3)*.5)-9.8*elapsed*elapsed),
-            blast.z+Math.sin(theta)*spread);
-          dummy.scale.setScalar(Math.max(.001,(.13+blast.size*.11)*(1-elapsed/1.12)));
-          dummy.rotation.set(theta+elapsed*6,elapsed*8+k,theta*.5+elapsed*4);
-        }
-        dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
-      }
-    }
-    mesh.instanceMatrix.needsUpdate=true;
-  });
-  return <instancedMesh ref={instance} args={[null,null,total]} frustumCulled={false}>
-    <dodecahedronGeometry args={[.9,0]}/>
-    <meshLambertMaterial color="#ffffff" flatShading/>
-  </instancedMesh>;
 }
 
 function Ramp({ x, z, index, height = 1.12, length = 3, superAir = false }) {
@@ -361,6 +314,7 @@ function BoardTrail({stateRef,mobile}) {
   // Fewer dynamic points and spawn calls on mobile; never tie particle updates to React state.
   const num=mobile?110:250;
   const ref=useRef(),next=useRef(0),spawnAccumulator=useRef(0);
+  const sprayTexture=useSnow64Texture("snowSpray");
   const snow=useMemo(()=>Array.from({length:num},()=>({x:0,y:0,z:0,life:0,vx:0,vy:0,vz:0})),[num]);
   const coords=useMemo(()=>new Float32Array(num*3).fill(100000),[num]);
   useFrame((_,rawDt)=>{
@@ -394,12 +348,13 @@ function BoardTrail({stateRef,mobile}) {
   });
   return <points ref={ref} frustumCulled={false}>
     <bufferGeometry><bufferAttribute attach="attributes-position" array={coords} count={num} itemSize={3}/></bufferGeometry>
-    <pointsMaterial color="#faffff" size={.18} transparent opacity={.86} depthWrite={false} sizeAttenuation/>
+    <pointsMaterial color="#faffff" map={sprayTexture} alphaTest={sprayTexture ? .08 : 0} size={.18} transparent opacity={.86} depthWrite={false} sizeAttenuation/>
   </points>;
 }
 
 function Snowfall({ stateRef,mobile }) {
   const count=mobile?80:180;
+  const flakeTexture=useSnow64Texture("snowflake");
   const data=useMemo(()=>{
     const r=rand(64); return Array.from({length:count},()=>({x:(r()-.5)*34,z:(r()-.5)*44,y:r()*15,speed:2+r()*4}));
   },[count]);
@@ -418,7 +373,7 @@ function Snowfall({ stateRef,mobile }) {
   });
   return <points ref={points} frustumCulled={false}>
     <bufferGeometry><bufferAttribute attach="attributes-position" array={coords} count={count} itemSize={3}/></bufferGeometry>
-    <pointsMaterial color="#ffffff" size={.13} transparent opacity={.85} depthWrite={false} sizeAttenuation />
+    <pointsMaterial color="#ffffff" map={flakeTexture} alphaTest={flakeTexture ? .04 : 0} size={.13} transparent opacity={.85} depthWrite={false} sizeAttenuation />
   </points>;
 }
 
@@ -1689,14 +1644,14 @@ function Loading() {
   return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
 }
 function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
-  return <Snow64ModelProvider>
+  return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
     <color attach="background" args={["#bfd9e6"]}/>
     <fog attach="fog" args={["#c1dce9",30,138]}/>
     <ambientLight intensity={1.7}/>
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
     <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef}/>
-    <FrostRockShatter stateRef={stateRef} mobile={mobile}/>
+    <Snow64ExplosionVFX stateRef={stateRef} mobile={mobile}/>
     <FrostMushroom stateRef={stateRef}/>
     <Mountains stateRef={stateRef}/>
     <Suspense fallback={<Loading/>}>
@@ -1704,7 +1659,7 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     </Suspense>
     <Snowfall mobile={mobile} stateRef={stateRef}/>
     <BoardTrail mobile={mobile} stateRef={stateRef}/>
-  </Snow64ModelProvider>;
+  </Snow64TextureProvider></Snow64ModelProvider>;
 }
 
 function FrostMagicOverlay({ remaining, mobile }) {
