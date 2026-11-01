@@ -1993,9 +1993,7 @@ function FollowCameraDragArea({ cameraOrbitRef, mobile }) {
       top:mobile?191:9,height:mobile?74:119,width:mobile?"min(52vw,230px)":"min(36vw,420px)",
       touchAction:"none",userSelect:"none",WebkitUserSelect:"none",cursor:"grab",
       display:"flex",alignItems:"flex-start",justifyContent:"center"}}>
-    <span aria-hidden="true" style={{font:"800 10px system-ui, sans-serif",letterSpacing:1.2,
-      marginTop:mobile?4:14,opacity:.76,color:"#eaffff",pointerEvents:"none",
-      textShadow:"0 2px 4px #19445b, 0 0 7px #19445b"}}>↔ DRAG CAMERA ↕</span>
+
   </div>;
 }
 
@@ -2010,6 +2008,10 @@ function FollowCameraDragArea({ cameraOrbitRef, mobile }) {
 const SNOW360_LOGO_ALPHA_THRESHOLD = 12;
 const SNOW360_LOGO_TRIM_MARGIN = 0.015; // Keep 1.5% breathing room around artwork.
 const SNOW360_LOGO_HUD_GAP = 2; // Distance to the HUD text above and below.
+const SNOW360_MOBILE_STATS_WIDTH = 91; // Compact right-hand SPEED/TIME/SCORE stack.
+const SNOW360_MOBILE_STATS_HEIGHT = "clamp(69px, 21vw, 89px)"; // Approximately the logo artwork height.
+const SNOW360_MOBILE_STATS_GAP = 3;
+
 const snow360LogoCropCache = new Map();
 
 function loadSnow360Image(src) {
@@ -2102,7 +2104,7 @@ function Snow360Logo({ startScreen = false, mobile = false }) {
   const frame = {
     // On phones, leave the top-right corner free for a compact vertical HUD.
     width:startScreen ? `min(100%, ${width.toFixed(2)}px)`
-      : mobile ? `min(calc(100vw - 145px), ${width.toFixed(2)}px)` : width,
+      : mobile ? `min(calc(100vw - 118px), ${width.toFixed(2)}px)` : width,
     aspectRatio:String(aspect),
     margin:startScreen ? "3px auto 3px" : 0,
     position:"relative", flexShrink:0,
@@ -2263,36 +2265,43 @@ export default function SnowboardGame(){
     {phase==="playing" && <FrostMagicOverlay remaining={hud.powerRemaining||0} mobile={mobile===true}/>}
     {/* Original retro filter, enabled only by the optional title-screen setting. */}
     {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
-    {/* The mobile HUD is a real two-column overlay. The large logo occupies
-        the left; SPEED / TIME / SCORE form a narrow vertical rail at top right.
-        Distance lives inside that rail, so nothing overlaps when PNG trim
-        finishes or the screen rotates. Desktop retains the horizontal HUD. */}
+    {/* Mobile: an ultra-compact SPEED / TIME / SCORE rail at top-right, about
+        as tall as the visible logo. Distance hangs below the rail without
+        stretching its cards. Desktop keeps the original horizontal HUD. */}
     <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,
       padding:mobile?"max(8px, env(safe-area-inset-top)) 9px 0":"clamp(9px,2vw,22px)",
       display:"flex",flexDirection:"row",justifyContent:"space-between",alignItems:"flex-start",
       gap:mobile?6:10,pointerEvents:"none"}}>
       <div style={{display:"flex",flexDirection:"column",gap:SNOW360_LOGO_HUD_GAP,
-        minWidth:0,maxWidth:mobile?"calc(100vw - 145px)":undefined,
+        minWidth:0,maxWidth:mobile?"calc(100vw - 118px)":undefined,
         filter:"drop-shadow(2px 3px #103348)"}}>
         <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".12em":".24em",color:"#eefffc",whiteSpace:"nowrap"}}>PIDGEONKITTY PRESENTS</div>
         <Snow360Logo mobile={mobile===true} />
         <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".095em":".16em",color:"#cdfaff",whiteSpace:"nowrap"}}>DOWNHILL FREESTYLE</div>
       </div>
-      <div className="snow64-hud" style={{display:"flex",flexDirection:mobile?"column":"row",gap:mobile?5:8,
+      <div className="snow64-hud" style={{display:"flex",flexDirection:mobile?"column":"row",
+        position:"relative",gap:mobile?SNOW360_MOBILE_STATS_GAP:8,
         alignItems:"stretch",alignSelf:"flex-start",justifyContent:"flex-start",
-        flexShrink:0,width:mobile?112:undefined}}>
+        flexShrink:0,width:mobile?SNOW360_MOBILE_STATS_WIDTH:undefined,
+        height:mobile?SNOW360_MOBILE_STATS_HEIGHT:undefined,
+        marginTop:mobile?12:0}}>
         {[{label:"SPEED",value:hud.speed,unit:"KM/H"},{label:"TIME",value:formatTime(hud.time)},{label:"SCORE",value:hud.score.toLocaleString()}].map(v=><div
           key={v.label} className="snow64-panel" style={{minWidth:mobile?0:100,width:mobile?"100%":undefined,
-            boxSizing:"border-box",textAlign:"center",padding:mobile?"4px 5px":"8px 13px",
-            borderRadius:mobile?8:9}}>
-          <div className="snow64-label" style={mobile?{fontSize:8,letterSpacing:".12em",lineHeight:1.15}:undefined}>{v.label}</div>
-          <div className="snow64-number" style={mobile?{fontSize:17,lineHeight:1.15,whiteSpace:"nowrap"}:undefined}>{v.value}<span
-            style={{fontSize:mobile?7:9,marginLeft:2}}>{v.unit}</span></div>
+            flex:mobile?"1 1 0":undefined,minHeight:0,
+            display:mobile?"flex":undefined,flexDirection:"column",justifyContent:"center",alignItems:"center",
+            boxSizing:"border-box",textAlign:"center",padding:mobile?"1px 3px":"8px 13px",
+            border:mobile?"1.5px solid #c5eff4":undefined,
+            borderRadius:mobile?6:9,
+            boxShadow:mobile?"2px 2px 0 #0e2a39bb":undefined}}>
+          <div className="snow64-label" style={mobile?{fontSize:6.5,letterSpacing:".08em",lineHeight:1}:undefined}>{v.label}</div>
+          <div className="snow64-number" style={mobile?{fontSize:12.5,lineHeight:1.02,whiteSpace:"nowrap",letterSpacing:"0"}:undefined}>{v.value}<span
+            style={{fontSize:mobile?6.5:9,marginLeft:mobile?1:2}}>{v.unit}</span></div>
         </div>)}
-        {mobile && <div style={{textAlign:"right",padding:"3px 1px 0",lineHeight:1.2}}>
-          <div style={{color:"#22546c",fontSize:8,fontWeight:900,letterSpacing:".08em",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
-          <div style={{fontSize:15,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
-          <div style={{fontSize:9,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
+        {mobile && <div style={{position:"absolute",top:"calc(100% + 7px)",right:0,width:"max-content",
+          maxWidth:"min(45vw, 150px)",textAlign:"right",lineHeight:1.18,pointerEvents:"none"}}>
+          <div style={{color:"#22546c",fontSize:7,fontWeight:900,letterSpacing:".055em",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
+          <div style={{fontSize:13,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
+          <div style={{fontSize:8,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
         </div>}
       </div>
     </div>
@@ -2358,7 +2367,7 @@ export default function SnowboardGame(){
           </button>
         </div>}
         <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RIDE AGAIN"}</div>
-        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>{trickMode==="draw"?"RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS":"RIGHT HALF: TAP TO JUMP · USE THE ICONS FOR ALL TRICKS"}<br/>TOP CENTER: DRAG TO ROTATE FOLLOW CAMERA (CAMERA 2 DEFAULT)</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>{trickMode==="draw"?"1–0 / F = TRICKS":"TAP ICON BUTTONS OR USE 1–0 / F FOR TRICKS"} &nbsp; • &nbsp; TOP CENTER DRAG = ORBIT &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
+        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>{trickMode==="draw"?"RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS":"RIGHT HALF: TAP TO JUMP · USE THE ICONS FOR ALL TRICKS"}</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>{trickMode==="draw"?"1–0 / F = TRICKS":"TAP ICON BUTTONS OR USE 1–0 / F FOR TRICKS"} &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
     {phase==="playing" && <FollowCameraDragArea cameraOrbitRef={cameraOrbit} mobile={mobile} />}
@@ -2366,7 +2375,7 @@ export default function SnowboardGame(){
     {phase==="playing" && trickMode==="buttons" && <Snow64TrickButtonPad act={act} mobile={mobile===true}/>}
     {phase==="playing" && <>
       <div style={{position:"absolute",bottom:mobile?14:18,left:mobile?10:24,zIndex:3,pointerEvents:"none",color:"#1a5268",fontSize:mobile?9:12,fontWeight:900,textShadow:"1px 1px #e9f8ff"}}>BEST {currentBest.toLocaleString()} &nbsp; ✦ {hud.coins} TOKENS</div>
-      {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>{trickMode==="buttons"?"A / D CARVE · W TUCK · TAP TRICK ICONS OR 1–0 / F · TOP CENTER DRAG ORBIT · P PAUSE · C CAMERA":"A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · TOP CENTER DRAG ORBIT · P PAUSE · C CAMERA"}</div>}
+      {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>{trickMode==="buttons"?"A / D CARVE · W TUCK · TAP TRICK ICONS OR 1–0 / F · P PAUSE · C CAMERA":"A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · P PAUSE · C CAMERA"}</div>}
     </>}
   </main>;
 }
