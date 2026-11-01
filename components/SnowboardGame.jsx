@@ -34,6 +34,11 @@ const FROST_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-safe 
 const FROST_CARVE_AMPLITUDE = 4.45;
 const FROST_CARVE_PERIOD = 2.95;
 const FROST_CARVE_MAX_LATERAL_SPEED = 14.5;
+// V34: lock onto reachable obstacles ahead, instead of nudging only toward
+// rocks already close to the slalom line. Impact camera briefly stays with
+// the actual explosion, so it remains visible at Frost speed.
+const FROST_ROCK_LOOKAHEAD = 103;
+const FROST_IMPACT_SHOT_SECONDS = .38;
 // The original mushroom boost lasts 9 seconds (snow64Powerup.js).
 const FROST_AUTO_TRICKS = ["6", "2", "5", "9", "7", "0", "3", "f", "8", "4"];
 const clamp = THREE.MathUtils.clamp;
@@ -464,7 +469,7 @@ function initialState(cameraMode = 0) {
     mushroom:null, mushroomTime:0, mushroomCooldownTime:-200, mushroomCooldownDistance:-1000,
     mushroomCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
     frostHover:false, frostAutoIndex:0, frostPaidTricks:0, frostCollisionGrace:0,
-    frostCarveStart:0, frostCarveCenter:0, frostCarveDirection:1,
+    frostCarveStart:0, frostCarveCenter:0, frostCarveDirection:1, frostRockTargetId:null,
     scoreGainEvents:[],
     rockExplosions:[], rockShattered:0,
     consumedRamps:new Set(),consumedRocks:new Set(),hitRocks:new Set(),
@@ -610,6 +615,13 @@ function frostRockCameraTarget(s,localChunks){
   return closest;
 }
 
+/** A rock close-up must never run during the soft entry or 3s return. */
+function cinematicPhaseAvailable(s,director,frostActive){
+  if(!frostActive || !director.actionFocus)return null;
+  return s.t-director.startAt>=FROST_CAMERA_INTRO_SECONDS &&
+    s.powerTime>FROST_CAMERA_RETURN_SECONDS ? director.actionFocus : null;
+}
+
 /** Shortest angular path prevents an orbit from doing an unwanted extra spin. */
 function approachAngle(a,b,weight) {
   return a+Math.atan2(Math.sin(b-a),Math.cos(b-a))*weight;
@@ -673,6 +685,7 @@ function beginFrostHover(s, supportHeight) {
   s.frostPaidTricks = 0;
   // Keep the first turn continuous with the rider's current course position.
   // Outside edges begin by turning toward the center of the mountain.
+  s.frostRockTargetId = null;
   s.frostCarveStart = s.t;
   s.frostCarveCenter = clamp(s.x, -4, 4);
   s.frostCarveDirection = s.x > 5 ? -1 : s.x < -5 ? 1 : (Math.random() < .5 ? -1 : 1);
@@ -698,54 +711,71 @@ function finishFrostHover(s, supportHeight) {
   s.jumpCooldown = .48; // Prevent a landing-frame ramp hit.
   s.impact = .3;
   s.frostPaidTricks = 0;
+  s.frostRockTargetId = null;
   resetAirTrickChain(s);
   s.lastText = "FROST SHIELD • 2s SAFE LANDING";
   s.textUntil = s.t + 1.1;
 }
 
 /**
- * Automatic Frost slalom. A time-based side-to-side target is backed by a
- * velocity feed-forward term, so actual world-space X changes are visible even
- * while the snowboard is hovering. Rock targeting is a *small nudge*; it must
- * never replace the slalom with a nearly stationary target on the center line.
- *
- * Pure calculation: no allocations or scene changes on the animation frame.
+ * V34: choose a *reachable* live rock in front of the rider, including rocks
+ * outside the current carving lane. Keep the same rock locked until impact or
+ * passing it; continuously changing targets causes straight-line steering.
+ * Scans only the three existing nearby chunks, and allocates no geometry.
  */
-function frostAutoCarveVelocity(s, chunks) {
-  const age = Math.max(0, s.t - (s.frostCarveStart ?? s.t));
-  const omega = 2 * Math.PI / FROST_CARVE_PERIOD;
-  const phase = age * omega;
-  const direction = s.frostCarveDirection || 1;
-  const ramp = smoothstep(age / .70); // Start carving without a sudden sideways jerk.
-  const center = s.frostCarveCenter ?? clamp(s.x, -4, 4);
-  const waveX = center + direction * FROST_CARVE_AMPLITUDE * Math.sin(phase) * ramp;
-  const waveVelocity = direction * FROST_CARVE_AMPLITUDE * omega * Math.cos(phase) * ramp;
-
-  // Preserve rock-shattering path choices: gently bend the slalom toward a
-  // reachable nearby rock, but never let one rock cancel the entire turn.
-  let rockBias = 0;
-  let nearest = null;
-  let best = Infinity;
-  for (const chunk of chunks) for (const rock of chunk.rocks) {
-    if (s.consumedRocks.has(rock.id)) continue;
-    const ahead = s.z - rock.z;
-    const lateral = Math.abs(rock.x - s.x);
-    if (ahead < 10 || ahead > 38 || lateral > 6.7) continue;
-    const priority = ahead + lateral * 2.1;
-    if (priority < best) { best = priority; nearest = rock; }
+function frostRockToChase(s, chunks) {
+  let locked=null, candidate=null, best=Infinity;
+  const forwardSpeed=Math.max(32,s.speed);
+  for(const chunk of chunks) for(const rock of chunk.rocks){
+    if(s.consumedRocks.has(rock.id))continue;
+    const ahead=s.z-rock.z;
+    if(ahead < -2 || ahead > FROST_ROCK_LOOKAHEAD)continue;
+    if(rock.id===s.frostRockTargetId){locked=rock;continue;}
+    const sideways=Math.abs(rock.x-s.x);
+    // Do not chase an impossible last-moment target: an early decision is
+    // crucial at 60 units/s. Crossing sideways takes time even with a boost.
+    const flightSeconds=ahead/forwardSpeed;
+    if(ahead<11 || sideways>Math.max(1.7,(flightSeconds-.10)*12.7))continue;
+    const rating=ahead+sideways*2.4;
+    if(rating<best){best=rating;candidate=rock;}
   }
-  if (nearest) {
-    const ahead = s.z - nearest.z;
-    const arrival = ahead / Math.max(s.speed, 18);
-    const crossingWave = center + direction * FROST_CARVE_AMPLITUDE *
-      Math.sin(phase + omega * arrival) * ramp;
-    const correction = clamp((nearest.x - crossingWave) * .46, -1.85, 1.85);
-    rockBias = correction * smoothstep((38 - ahead) / 25);
+  if(locked){
+    const ahead=s.z-locked.z;
+    // Release a missed rock at its trailing edge, so another can be acquired.
+    if(ahead> -1.4)return locked;
   }
+  s.frostRockTargetId=candidate?.id||null;
+  return candidate;
+}
 
-  const targetX = clamp(waveX + rockBias, -9, 9);
-  return clamp((targetX - s.x) * 2.9 + waveVelocity * .95,
-    -FROST_CARVE_MAX_LATERAL_SPEED, FROST_CARVE_MAX_LATERAL_SPEED);
+/**
+ * Slalom when the course is clear, purposeful turns toward reachable rocks.
+ * The approach estimates time to contact, so the character reaches the target
+ * before passing it at very high speed. Just before impact the oscillation is
+ * reduced for a reliable shatter, then carving resumes toward the next rock.
+ * Player touch/keyboard steering still overrides this automatic steering.
+ */
+function frostAutoCarveVelocity(s,chunks){
+  const age=Math.max(0,s.t-(s.frostCarveStart??s.t));
+  const omega=2*Math.PI/FROST_CARVE_PERIOD;
+  const phase=age*omega;
+  const dir=s.frostCarveDirection||1;
+  const fade=smoothstep(age/.70);
+  const center=s.frostCarveCenter??clamp(s.x,-4,4);
+  const waveX=center+dir*FROST_CARVE_AMPLITUDE*Math.sin(phase)*fade;
+  const waveSpeed=dir*FROST_CARVE_AMPLITUDE*omega*Math.cos(phase)*fade;
+  const target=frostRockToChase(s,chunks);
+  if(target){
+    const ahead=Math.max(0,s.z-target.z);
+    const untilImpact=Math.max(.14,(ahead-1.0)/Math.max(s.speed,25));
+    // Plenty of slalom early in the approach, accurate alignment at contact.
+    const weaveStrength=smoothstep((ahead-13)/45);
+    const arrivalX=target.x+Math.sin(phase)*1.15*weaveStrength;
+    const requested=(arrivalX-s.x)*1.13/untilImpact+waveSpeed*.19*weaveStrength;
+    return clamp(requested,-FROST_CARVE_MAX_LATERAL_SPEED,FROST_CARVE_MAX_LATERAL_SPEED);
+  }
+  return clamp((clamp(waveX,-9,9)-s.x)*2.9+waveSpeed*.95,
+    -FROST_CARVE_MAX_LATERAL_SPEED,FROST_CARVE_MAX_LATERAL_SPEED);
 }
 
 /** Pure horizontal swept test for magical impacts. Ignoring jump height ensures
@@ -784,7 +814,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
   const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), kickSnow=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
-  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null});
+  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null,actionFocus:null});
   const frostBoardAnchor=useMemo(()=>new THREE.Vector3(),[]);
   const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
@@ -792,7 +822,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   useEffect(()=>{
     stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;crashCameraBlend.current=0;
-    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null};
+    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null,actionFocus:null};
     nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
@@ -1454,8 +1484,25 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       const rockFocus=frostRockCameraTarget(s,localChunks);
       const cinematicPhase=s.t-director.startAt>=FROST_CAMERA_INTRO_SECONDS &&
         s.powerTime>FROST_CAMERA_RETURN_SECONDS;
-      const impactCut=cinematicPhase && newImpact && s.t-director.lastCutAt>.34;
-      if(s.powerTime>FROST_CAMERA_RETURN_SECONDS && (s.t>=director.nextAt || impactCut)){
+      const impactCut=cinematicPhase && s.powerTime>FROST_CAMERA_RETURN_SECONDS+FROST_IMPACT_SHOT_SECONDS+.12 &&
+        newImpact && s.t-director.lastCutAt>.34;
+      // Freeze the lens on the shattered rock for a few frames. Following the
+      // board here would carry the lens 20+ world units away before the shards
+      // have finished flying, making the explosion impossible to see.
+      if(impactCut){
+        const blast=s.rockExplosions?.[s.rockExplosions.length-1];
+        if(blast){
+          director.actionFocus={x:blast.x,y:blast.y,z:blast.z,
+            until:s.t+FROST_IMPACT_SHOT_SECONDS,
+            side:Math.random()<.5?-1:1};
+        }
+      }
+      if(director.actionFocus && s.t>=director.actionFocus.until){
+        director.actionFocus=null;
+        director.nextAt=s.t; // Cut straight back to the board after the blast.
+      }
+      if(s.powerTime>FROST_CAMERA_RETURN_SECONDS &&
+          (impactCut || (!director.actionFocus && s.t>=director.nextAt))){
         const firstShot=director.index<0;
         // Guarantee at least one rear-speed shot by the first few cuts, then
         // leave the order randomized. Shatters still take priority over it.
@@ -1540,6 +1587,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       director.active=false;
       director.shot=null;
       director.lastBoard=null;
+      director.actionFocus=null;
     }
 
     const projected=radius*Math.cos(elevation);
@@ -1593,7 +1641,21 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         camera.lookAt(targetLook);
       }
     }
-    camera.fov=lerp(camera.fov,desiredFov,Math.min(1,dt*(frostMix>.01?8:2)));
+    const impactFocus=cinematicPhaseAvailable(s, director, frostActive);
+    if(impactFocus){
+      // Dedicated impact edit: eye *and* lookAt remain world-locked to the
+      // rock, while the board passes through the frame and shards explode.
+      // The subsequent shot cuts back to the tracking camera automatically.
+      const p=impactFocus;
+      camera.position.set(p.x+p.side*3.9,p.y+2.55,p.z-4.45);
+      targetLook.set(p.x,p.y+.55,p.z);
+      camera.lookAt(targetLook);
+      camera.fov=mobile?55:51;
+      // Keep board displacement bookkeeping current during the static edit.
+      if(frostAnchorValid)director.lastBoard?.copy(frostBoardAnchor);
+    }else{
+      camera.fov=lerp(camera.fov,desiredFov,Math.min(1,dt*(frostMix>.01?8:2)));
+    }
     camera.updateProjectionMatrix();
     updateSnow64AudioFrame({playing, speed:s.speed,steer:s.steer,tuck,
       inAir:s.inAir,recovery:!!s.recovery,powered:s.frostHover&&s.powerTime>0,airHeight:s.air});
