@@ -29,6 +29,11 @@ const RIDER_BINDING_HEIGHT = 0.33; // Keep feet just above the raised board bind
 const FROST_HOVER_HEIGHT = 1.28; // Snowboard floats above actual snow/ramp surfaces.
 const FROST_HOVER_BOB = 0.12;
 const FROST_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-safe after Frost Shroom.
+// V33: powered snowboarding gets its own visible left/right slalom movement.
+// The old hover movement used the much weaker airborne steering limit (5).
+const FROST_CARVE_AMPLITUDE = 4.45;
+const FROST_CARVE_PERIOD = 2.95;
+const FROST_CARVE_MAX_LATERAL_SPEED = 14.5;
 // The original mushroom boost lasts 9 seconds (snow64Powerup.js).
 const FROST_AUTO_TRICKS = ["6", "2", "5", "9", "7", "0", "3", "f", "8", "4"];
 const clamp = THREE.MathUtils.clamp;
@@ -459,6 +464,7 @@ function initialState(cameraMode = 0) {
     mushroom:null, mushroomTime:0, mushroomCooldownTime:-200, mushroomCooldownDistance:-1000,
     mushroomCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
     frostHover:false, frostAutoIndex:0, frostPaidTricks:0, frostCollisionGrace:0,
+    frostCarveStart:0, frostCarveCenter:0, frostCarveDirection:1,
     scoreGainEvents:[],
     rockExplosions:[], rockShattered:0,
     consumedRamps:new Set(),consumedRocks:new Set(),hitRocks:new Set(),
@@ -665,6 +671,11 @@ function beginFrostHover(s, supportHeight) {
   s.armedTrick = null;
   s.frostAutoIndex = 0;
   s.frostPaidTricks = 0;
+  // Keep the first turn continuous with the rider's current course position.
+  // Outside edges begin by turning toward the center of the mountain.
+  s.frostCarveStart = s.t;
+  s.frostCarveCenter = clamp(s.x, -4, 4);
+  s.frostCarveDirection = s.x > 5 ? -1 : s.x < -5 ? 1 : (Math.random() < .5 ? -1 : 1);
   resetAirTrickChain(s);
 }
 
@@ -680,12 +691,61 @@ function finishFrostHover(s, supportHeight) {
   s.launchSource = "none";
   s.launchSuper = false;
   s.fakie = false;
+  // Hand control back gracefully instead of carrying a full-powered sideways
+  // slalom velocity into the 2-second normal-riding collision shield.
+  s.velX = clamp(s.velX, -4.0, 4.0);
+  s.steer = clamp(s.steer, -.42, .42);
   s.jumpCooldown = .48; // Prevent a landing-frame ramp hit.
   s.impact = .3;
   s.frostPaidTricks = 0;
   resetAirTrickChain(s);
   s.lastText = "FROST SHIELD • 2s SAFE LANDING";
   s.textUntil = s.t + 1.1;
+}
+
+/**
+ * Automatic Frost slalom. A time-based side-to-side target is backed by a
+ * velocity feed-forward term, so actual world-space X changes are visible even
+ * while the snowboard is hovering. Rock targeting is a *small nudge*; it must
+ * never replace the slalom with a nearly stationary target on the center line.
+ *
+ * Pure calculation: no allocations or scene changes on the animation frame.
+ */
+function frostAutoCarveVelocity(s, chunks) {
+  const age = Math.max(0, s.t - (s.frostCarveStart ?? s.t));
+  const omega = 2 * Math.PI / FROST_CARVE_PERIOD;
+  const phase = age * omega;
+  const direction = s.frostCarveDirection || 1;
+  const ramp = smoothstep(age / .70); // Start carving without a sudden sideways jerk.
+  const center = s.frostCarveCenter ?? clamp(s.x, -4, 4);
+  const waveX = center + direction * FROST_CARVE_AMPLITUDE * Math.sin(phase) * ramp;
+  const waveVelocity = direction * FROST_CARVE_AMPLITUDE * omega * Math.cos(phase) * ramp;
+
+  // Preserve rock-shattering path choices: gently bend the slalom toward a
+  // reachable nearby rock, but never let one rock cancel the entire turn.
+  let rockBias = 0;
+  let nearest = null;
+  let best = Infinity;
+  for (const chunk of chunks) for (const rock of chunk.rocks) {
+    if (s.consumedRocks.has(rock.id)) continue;
+    const ahead = s.z - rock.z;
+    const lateral = Math.abs(rock.x - s.x);
+    if (ahead < 10 || ahead > 38 || lateral > 6.7) continue;
+    const priority = ahead + lateral * 2.1;
+    if (priority < best) { best = priority; nearest = rock; }
+  }
+  if (nearest) {
+    const ahead = s.z - nearest.z;
+    const arrival = ahead / Math.max(s.speed, 18);
+    const crossingWave = center + direction * FROST_CARVE_AMPLITUDE *
+      Math.sin(phase + omega * arrival) * ramp;
+    const correction = clamp((nearest.x - crossingWave) * .46, -1.85, 1.85);
+    rockBias = correction * smoothstep((38 - ahead) / 25);
+  }
+
+  const targetX = clamp(waveX + rockBias, -9, 9);
+  return clamp((targetX - s.x) * 2.9 + waveVelocity * .95,
+    -FROST_CARVE_MAX_LATERAL_SPEED, FROST_CARVE_MAX_LATERAL_SPEED);
 }
 
 /** Pure horizontal swept test for magical impacts. Ignoring jump height ensures
@@ -756,14 +816,16 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const left=keyRef.current.left?1:0,right=keyRef.current.right?1:0;
     const tuck=(keyRef.current.tuck || keyRef.current.touchTuck) && playing;
     let steerWanted=playing?clamp(right-left+(keyRef.current.steerAnalog||0),-1,1):0;
-    if(playing && s.powerTime>0 && !s.recovery){
-      // Frost Shroom auto-rides toward nearby rocks to shatter them; manual steering still overrides.
-      const ahead=localChunks.flatMap(c=>c.rocks).find(r=>r.z<s.z && r.z>s.z-24 && Math.abs(r.x-s.x)<2.9);
-      const autoX=ahead ? clamp(ahead.x,-8.8,8.8) : Math.sin(s.t*1.18)*2.9;
-      const autoSteer=clamp((autoX-s.x)*.38,-1,1);
-      steerWanted=clamp(steerWanted*.85+autoSteer*(Math.abs(steerWanted)>.30?.20:.9),-1,1);
+    let frostDesiredVelX=null;
+    if(playing && s.frostHover && s.powerTime>0 && !s.recovery){
+      // Auto-slalom is actually MOVEMENT, not just a subtle animation tilt.
+      // A player steering deliberately can still override it at any time.
+      frostDesiredVelX=Math.abs(steerWanted)>.18
+        ? steerWanted * 13.2
+        : frostAutoCarveVelocity(s,localChunks);
+      steerWanted=clamp(frostDesiredVelX/13.2,-1,1);
     }
-    s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*6));
+    s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*(frostDesiredVelX!==null?9:6)));
     const queue=queueRef.current.splice(0);
     for (const command of queue) {
       if (command.type === "camera") s.cameraMode = (s.cameraMode + 1) % 3;
@@ -869,7 +931,14 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const targetSpeed = (s.powerTime>0 ? (mobile?57:60) : tuck ? (mobile ? 42 : 38) : 21.5) - Math.abs(s.steer) * 2.6;
         // Higher acceleration, same controllable carving range.
         s.speed = lerp(s.speed, targetSpeed, Math.min(1, dt * (s.powerTime>0?3.6:tuck ? (mobile ? 2.1 : 1.35) : .5)));
-        s.velX = lerp(s.velX, s.steer * (s.inAir ? 5.0 : 9.2), Math.min(1, dt * (s.inAir ? 2.8 : 5.5)));
+        // Frost Hover is flagged as inAir for tricks, but it should steer like
+        // a powerful snowboard, not inherit the weak normal airborne steering.
+        const poweredCarve=s.frostHover && s.powerTime>0;
+        const lateralTarget=poweredCarve
+          ? (frostDesiredVelX??s.steer*13.2)
+          : s.steer * (s.inAir ? 5.0 : 9.2);
+        s.velX=lerp(s.velX,lateralTarget,
+          Math.min(1,dt*(poweredCarve?8.5:s.inAir?2.8:5.5)));
         const previousX=s.x;
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
         const previousZ=s.z;
@@ -1165,7 +1234,10 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       const flip = (s.inAir ? s.airPitch : 0)
         + (trick ? (trick.flip || 0) * DEG * progress : 0);
       const roll = trick ? (trick.roll || 0) * grabEnvelope : 0;
-      stance.current.rotation.set(flip - s.velX * .013 * (s.inAir ? .3 : 1), airYaw,
+      // A small heading change makes the physical powered slalom read as a
+      // snowboard carve; spins and flips still use the existing airYaw.
+      const frostCarveYaw=s.frostHover ? clamp(s.velX/Math.max(22,s.speed),-.24,.24) : 0;
+      stance.current.rotation.set(flip - s.velX * .013 * (s.inAir ? .3 : 1), airYaw+frostCarveYaw,
         s.steer * -.22 + roll, "YXZ");
       const terrainPitch=clamp(Math.atan2(frontFloor-backFloor,2.16),-.16,.88);
       board.current.rotation.x = (trick?.pitch || 0) * grabEnvelope +
