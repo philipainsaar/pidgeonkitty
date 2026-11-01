@@ -3,7 +3,17 @@
  * No downloaded audio, copyrighted music, libraries, or per-frame node creation.
  * A single AudioContext plays continuous snow/speed/carve/wind noise, event cues,
  * and the original Frost Shroom arpeggio. Sound starts on a user gesture.
+ *
+ * SNOW 64 SOUND BALANCE UPDATE:
+ * Adjust just the two multipliers below to make footsteps and token pickups
+ * louder or quieter without changing music, other SFX, or the master volume.
+ * 1.0 = the original volume; 2.0 = twice the signal amplitude (~+6 dB).
  */
+export const SNOW64_EFFECT_LEVELS = {
+  footsteps: 2.4,    // Original 1.0; louder walking after a wipeout
+  tokenPickup: 1.9, // Original 1.0; clearer token collection chimes
+};
+
 let engine = null;
 let enabled = true;
 let volume = 0.72;
@@ -198,9 +208,12 @@ export function playSnow64Sound(kind) {
       [520,770,1040].forEach((hz,i)=>tone(e,n+i*.075,hz,.17,.064,'triangle',hz*1.08));break;
     case 'magicTrick':
       [700,920,1240].forEach((hz,i)=>tone(e,n+i*.050,hz,.24,.040,'sine',hz*1.06));break;
-    case 'pickup':
-      tone(e,n,910,.12,.075,'sine',1110);
-      tone(e,n+.075,1320,.21,.064,'sine',1710);break;
+    case 'pickup': {
+      const boost=clamp(SNOW64_EFFECT_LEVELS.tokenPickup,0,3);
+      tone(e,n,910,.12,.075*boost,'sine',1110);
+      tone(e,n+.075,1320,.21,.064*boost,'sine',1710);
+      break;
+    }
     case 'land':
       burst(e,n,.20,.13,500,'lowpass');
       tone(e,n,122,.10,.06,'sine',81);break;
@@ -220,8 +233,14 @@ export function playSnow64Sound(kind) {
     case 'remount':
       burst(e,n,.08,.055,1800,'highpass');
       tone(e,n,345,.13,.042,'triangle',570);break;
-    case 'step':
-      burst(e,n,.075,.038,720,'lowpass');break;
+    case 'step': {
+      const boost=clamp(SNOW64_EFFECT_LEVELS.footsteps,0,3);
+      // The original low snow crunch stays in place, only louder. Add a tiny
+      // short midrange grit layer so footsteps cut through background music.
+      burst(e,n,.085,.038*boost,720,'lowpass');
+      burst(e,n+.005,.045,.012*boost,1450,'bandpass');
+      break;
+    }
     case 'pause':
       tone(e,n,470,.11,.035,'sine',360);break;
     case 'resume':
