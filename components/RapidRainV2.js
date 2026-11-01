@@ -1,12 +1,13 @@
 /**
- * SNOW 64 - KAWAII SLOPE (V4)
- * A BRAND NEW, original, procedural downhill soundtrack.
- * Warm 1990s console-inspired synth-pop / breakbeat, written in D major.
- * No MP3, samples, audio files, external libraries, fetches or MIDI.
+ * SNOW 64 - KAWAII SLOPE V5 / LIVE POWDER
+ * An original, procedural downhill soundtrack with humanized acoustic-inspired instruments.
+ * Organic 1990s-inspired downhill groove: fingered bass, breathy flute, real-feeling drum kit.
+ * No MP3, prerecorded samples, audio files, external libraries, fetches or MIDI.
+ * Tiny instrument waveforms are physically modeled into AudioBuffers in-browser.
  *
  * Single-file, drop-in replacement for components/RapidRainV2.js.
  * Keeps the RapidRainV2 API used by snow64Music.js and Snow64ReactiveMusic.jsx.
- * The score and synthesizers are intentionally unrelated to the old Rapid Rain.
+ * A new physically-inspired sound engine with the original Kawaii Slope V4 melody.
  */
 export const BPM = 136;
 export const BAR = 240 / BPM;
@@ -91,8 +92,8 @@ export function buildRapidRainScore() {
     events.push({t:bar*BAR+step*STEP,type,note,
       duration:Math.min(len*STEP,(16-step)*STEP+.025),velocity,...extras});
   };
-  const KICKS=[[0,8],[0,7,10],[0,8,11],[0,6,8],
-               [0,8],[0,6,11],[0,8,14],[0,7,10]];
+  const KICKS=[[0,8],[0,7,10],[0,8],[0,6,8],
+               [0,8],[0,6,11],[0,8,14],[0,8]];
   const BASSES=[
     [[0,2.3,0],[3.3,2.4,7],[8.6,2.4,0],[12.3,2,12]],
     [[0,3.3,0],[5,2.2,12],[9,2.7,7],[13.3,1.8,0]],
@@ -120,7 +121,7 @@ export function buildRapidRainScore() {
           {gate:.86,pan:j?.08:-.08}));
       }
       if(fill) {
-        [13.5,15].forEach((st,j)=>add(bar,st,'snare',0,.35,j?.14:.11,{gate:.8}));
+        [13.75].forEach((st,j)=>add(bar,st,'snare',0,.35,.105,{gate:.90}));
       }
     } else if(outro) {
       add(bar,0,'kick',0,1.25,.51);
@@ -141,7 +142,7 @@ export function buildRapidRainScore() {
     if(bar>=2 && !outro) {
       for(const [i,[st,midi,dur]] of theme.entries()) {
         const change=(Math.floor(bar/16)%2===1 && i===theme.length-1)?-2:0;
-        add(bar,st,'lead',midi+change,dur,.30+(i===0?.045:0),
+        add(bar,st,'lead',midi+change,dur*.91,.34+(i===0?.045:0),
           {gate:intro?.7:(i>2?.38:0),pan:(i%3-1)*.08});
       }
     } else if(intro) {
@@ -151,20 +152,32 @@ export function buildRapidRainScore() {
     // Supporting synth chirps are sparse and mostly enter at snowboard speed.
     if(bar>=8 && !outro && bar%2===0) {
       add(bar,6.5,'pluck',ch.notes[2]+12,.7,.16,{gate:.68,pan:-.23});
-      add(bar,14,'pluck',ch.notes[1]+12,.75,.13,{gate:.9,pan:.22});
+      // Leave the last two beats free for the next melodic phrase.
     }
     if(bar>=16 && bar<124 && bar%4===2)
-      add(bar,10,'bubble',ch.notes[0]+12,.8,.12,{gate:.77,pan:.16});
+      add(bar,10,'bubble',ch.notes[0]+12,.7,.085,{gate:.99,pan:.16});
     // Soft chord wash, never busy keyboard chords. Only one chord every two bars.
     if(bar%2===0) {
-      add(bar,0,'pad',0,19,.085,{notes:ch.notes.map(n=>n-12),gate:0});
+      add(bar,0,'pad',0,19,.052,{notes:ch.notes.map(n=>n-12),gate:0});
     }
     // Two quiet chords in each 8-bar phrase provide a warm retro backdrop.
     if(bar>=16 && bar<124 && bar%4===0)
-      add(bar,8,'keys',0,4.8,.084,{notes:[ch.notes[0],ch.notes[2]],gate:.33});
+      add(bar,8,'keys',0,3.5,.065,{notes:[ch.notes[0],ch.notes[2]],gate:.45});
     if(bar%16===0 && bar!==0 && bar<124) add(bar,0,'crash',0,2,.085);
     if(quarter && bar<124) add(bar,14.3,'rise',0,1.55,.10,{gate:.55});
   }
+  // Pocket-playing: deterministic 5-12 ms timing drift and small variations in touch.
+  // Downbeat kick stays firmly locked; everything else breathes around it.
+  events.forEach((ev,i)=>{
+    const r=random(i*1.712+ev.note*.093+ev.t*.31);
+    if(ev.type==='hat')ev.t+=.002+(r-.5)*.011;
+    else if(ev.type==='snare')ev.t+=.004+(r-.5)*.008;
+    else if(ev.type==='lead')ev.t+=.007+(r-.5)*.014;
+    else if(ev.type==='pluck'||ev.type==='keys'||ev.type==='bubble')ev.t+=.004+(r-.5)*.009;
+    else if(ev.type==='bass')ev.t+=.001+(r-.5)*.006;
+    ev.velocity*=.92+r*.17;
+    ev.variant=Math.floor(random(i+80.321)*4);
+  });
   events.sort((a,b)=>a.t-b.t);
   // No bass voices overlap, even when patterns cross bar boundaries.
   const bass=events.filter(e=>e.type==='bass');
@@ -176,31 +189,170 @@ export const EVENT_COUNT = buildRapidRainScore().length;
 const SCORE = buildRapidRainScore();
 function lowerBound(es,time){let lo=0,hi=es.length;while(lo<hi){const m=(lo+hi)>>1;if(es[m].t<time)lo=m+1;else hi=m;}return lo;}
 
+/**
+ * Procedural sample-bank: buffers are generated from physical/noise models in RAM.
+ * There are no sample downloads, stored audio files, or music assets.
+ * Each instrument has four round-robins. This is not identical to recorded instruments,
+ * but is substantially more expressive than continuously identical sine oscillators.
+ */
+const MODEL_RATE = 24000;
+const TWO_PI = 2*Math.PI;
+function seeded(seed){let x=(seed|0)>>>0;return ()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296*2-1;};}
+function sampleModel(type,midi,variant,sr=MODEL_RATE){
+  const D={kick:.45,snare:.43,hat:.19,crash:1.1,rise:.43,
+    bass:1.0,lead:1.20,pluck:.88,bubble:.62,keys:1.25,pad:2.55,glitch:.18};
+  const length=D[type]||.7;
+  const out=new Float32Array(Math.ceil(sr*length));
+  const rand=seeded(1234567+Math.imul(Math.round(midi)+67,3737)+Math.imul(variant+7,11299)+type.length*3167);
+  const f=midiHz(midi||60);
+  let prev=0,hi=0,phase=0,phase2=0,drift=0;
+  if(type==='bass'||type==='pluck'||type==='keys'){
+    // Karplus-Strong damped-string model: a real resonating string-like decay.
+    const freq=type==='bass'?f:(type==='keys'?f:f*1.0);
+    const N=Math.max(11,Math.round(sr/freq-.6));
+    const string=new Float32Array(N);
+    const pick=(type==='bass'?.19:type==='keys'?.28:.24)+variant*.013;
+    let smooth=0;
+    for(let k=0;k<N;k++){
+      smooth=.50*smooth+.50*rand();
+      // The string excitation varies by pick position/velocity.
+      string[k]=smooth*.67+Math.sin(k/N*TWO_PI)*.30;
+    }
+    let lp=0,sub=0;
+    const feedback=type==='bass'?.992:type==='keys'?.9915:.987;
+    const damping=type==='bass'?.52:.41;
+    for(let i=0;i<out.length;i++){
+      const t=i/sr,k=i%N;
+      const current=string[k],neighbor=string[(k+1)%N];
+      lp+=damping*(current-lp);
+      string[k]=feedback*(lp*.87+neighbor*.13);
+      const envelope=Math.exp(-t*(type==='bass'?1.7:type==='keys'?2.15:2.7));
+      const pickTick=(rand()-prev)*Math.exp(-t*115)*(type==='bass'?.035:.075);
+      prev=rand()*.1;
+      // Rounded body and faint vibrating fundamental, rather than harsh saw waves.
+      sub=Math.sin(TWO_PI*f*t);
+      const bassBody=type==='bass'? .14*sub*Math.exp(-t*3.3):.065*sub*Math.exp(-t*5);
+      const stringBody=(current*.77+lp*.23)*(.66+pick*.26);
+      out[i]=(stringBody+bassBody+pickTick)*envelope;
+    }
+  }else if(type==='lead'||type==='bubble'){
+    // Breath-driven wooden flute/ocarina with soft tongue transient, delayed vibrato,
+    // natural air noise, and tiny non-periodic pitch drift.
+    let breath=0,air=0;
+    const airy=type==='lead';
+    for(let i=0;i<out.length;i++){
+      const t=i/sr;
+      const vibrato=Math.sin(TWO_PI*(5.2+variant*.13)*t+variant*.7)*(.0018*Math.min(1,Math.max(0,(t-.11)/.23)));
+      drift+=rand()*.000004;drift*=.996;
+      const pitch=f*(1+vibrato+drift+(.0017-variant*.0003)*Math.exp(-t*12));
+      phase+=TWO_PI*pitch/sr;
+      const tone=Math.sin(phase)+(airy?.17:.28)*Math.sin(2*phase+.37)+.046*Math.sin(3*phase+.8);
+      breath=breath*.963+rand()*.037;
+      air+=.34*(rand()-air);
+      const chiff=air*Math.exp(-t*53)*.13;
+      const attack=Math.min(1,Math.max(0,t/(airy?.059:.034)));
+      const natural=Math.exp(-Math.max(0,t-(airy?.9:.41))*(airy?2.2:6));
+      const flutter=1+.026*Math.sin(TWO_PI*3.7*t+variant*.8)+.011*Math.sin(TWO_PI*8.9*t);
+      out[i]=(tone*(airy?.74:.62)+breath*(airy?.30:.14)+chiff)*attack*natural*flutter;
+    }
+  }else if(type==='kick'){
+    // Acoustic-like kick: moving drumhead, quick soft beater, rounded room body.
+    let click=0;
+    for(let i=0;i<out.length;i++){
+      const t=i/sr;
+      const hz=51+78*Math.exp(-t*42)+7*Math.exp(-t*8);
+      phase+=TWO_PI*hz/sr;
+      click=click*.60+rand()*.40;
+      const body=Math.sin(phase)*Math.exp(-t*19);
+      const beater=click*Math.exp(-t*205)*.12;
+      const thud=Math.sin(TWO_PI*67*t+1.2)*Math.exp(-t*32)*.18;
+      out[i]=.85*body+beater+thud;
+    }
+  }else if(type==='snare'){
+    // Snare rattle + two pitched shell resonances, no harsh white-noise wall.
+    let noiseLP=0,noiseHi=0;
+    const shell=(182+variant*3.5);
+    for(let i=0;i<out.length;i++){
+      const t=i/sr,r=rand();
+      noiseLP+=.23*(r-noiseLP);
+      noiseHi+=.60*(r-noiseHi);
+      const wire=(noiseHi-noiseLP*.46)*Math.exp(-t*(30-variant*1.5));
+      const ring=(Math.sin(TWO_PI*shell*t+.14)*.29+
+        Math.sin(TWO_PI*(shell*1.66)*t+.6)*.15)*Math.exp(-t*23);
+      const brush=rand()*Math.exp(-t*125)*.027;
+      out[i]=wire*.59+ring+brush;
+    }
+  }else if(type==='hat'||type==='crash'||type==='rise'||type==='glitch'){
+    // Inharmonic metallic resonators + shaded filtered noise. Non-identical hits.
+    const metal=[1,1.317,1.633,2.035,2.311,2.824];
+    let low=0,sheen=0;
+    const base=type==='hat'?2350:type==='crash'?1040:920;
+    const tau=type==='hat'?48:type==='crash'?4.8:10;
+    for(let i=0;i<out.length;i++){
+      const t=i/sr,r=rand();
+      low+=.40*(r-low);
+      sheen+=.75*(r-sheen);
+      let m=0;
+      for(let j=0;j<metal.length;j++){
+        m+=Math.sin(TWO_PI*base*metal[j]*t*(1+(variant-1)*.0011)+j*1.2)/(j+2.3);
+      }
+      const decay=Math.exp(-t*(tau+(variant-1)*1.9));
+      const noise=(sheen-low*.8)*.39;
+      const edge=(m*.32+noise)*decay;
+      const fadeIn=type==='rise'? Math.pow(Math.min(1,t/.33),1.8):1;
+      out[i]=edge*fadeIn;
+    }
+  }else if(type==='pad'){
+    // Intentionally quiet airy string/woodwind ensemble, not an electronic key chord.
+    let air=0;
+    for(let i=0;i<out.length;i++){
+      const t=i/sr;
+      phase+=TWO_PI*f*(1+.0014*Math.sin(t*TWO_PI*3.9+variant))/sr;
+      phase2+=TWO_PI*f*1.003/sr;
+      air=air*.987+rand()*.013;
+      const bowed=.58*Math.sin(phase)+.24*Math.sin(phase2)+.075*Math.sin(2*phase);
+      out[i]=(bowed+air*.12)*Math.min(1,t/.29)*Math.exp(-t*.35);
+    }
+  }
+  // Anti-click window and stable normalization. Absolute levels still come from score velocity.
+  const fade=isDrum(type)?30:(type==='bass'||type==='pluck'||type==='keys'?65:160);
+  const fadeOut=Math.min(350,Math.floor(out.length/9));
+  let peak=0;
+  for(let i=0;i<out.length;i++){
+    if(i<fade)out[i]*=i/Math.max(1,fade);
+    if(i>=out.length-fadeOut)out[i]*=(out.length-i-1)/Math.max(1,fadeOut);
+    peak=Math.max(peak,Math.abs(out[i]));
+  }
+  const scale=peak>0?.71/peak:1;
+  for(let i=0;i<out.length;i++)out[i]*=scale;
+  return out;
+}
+
 export class ProceduralRapidRain {
-  constructor({volume=.72,onEnded=null}={}) {
+  constructor({volume=.72,onEnded=null}={}){
     this.volume=clamp(volume,0,1);this.onEnded=onEnded;
-    this.ctx=null;this.master=null;this.musicBus=null;this.drumBus=null;
-    this.bassBus=null;this.analyser=null;this.noiseBuffer=null;
+    this.ctx=null;this.master=null;this.mix=null;this.bassBus=null;this.analyser=null;
     this.layerGains={};this.layerVolumes=Object.fromEntries(RAPID_RAIN_LAYERS.map(t=>[t,1]));
     this.muted=new Set();this.soloed=new Set();this.listeners=new Map();
-    this.active=new Set();this.timer=null;this.score=SCORE;
+    this.active=new Set();this.cache=new Map();this.timer=null;this.score=SCORE;
     this.position=0;this.startPosition=0;this.startCtx=0;this.cursor=0;
-    this.isPlaying=false;this.tempo=BPM;this.intensity=.55;
-    this.arrangement='auto';this.warmth=.72;this.loop=true;
-    this._lastBeat=-1;this._lastSection='';this._lastGameUpdate=0;
-    this._eventAt=new Map();this._game={speed:21.5,powered:false};
+    this.isPlaying=false;this.tempo=BPM;this.intensity=.55;this.arrangement='auto';
+    this.warmth=.66;this.loop=true;this._lastBeat=-1;this._lastSection='';
+    this._lastGameUpdate=0;this._eventAt=new Map();this._game={speed:21.5,powered:false};
+    this._layerBase={lead:.87,pluck:.22,bubble:.13,keys:.16,pad:.23,bass:.61,
+      kick:.72,snare:.59,hat:.34,glitch:.10,rise:.10,crash:.16};
   }
   getDuration(){return DURATION;}
   getTime(){
     if(!this.isPlaying||!this.ctx)return this.position;
     const elapsed=this.startPosition+Math.max(0,this.ctx.currentTime-this.startCtx)*this.tempo/BPM;
-    return this.loop ? (elapsed%DURATION+DURATION)%DURATION : clamp(elapsed,0,DURATION);
+    return this.loop?(elapsed%DURATION+DURATION)%DURATION:clamp(elapsed,0,DURATION);
   }
   getProgress(){return this.getTime()/DURATION;}
   getSection(){return section(Math.min(127,Math.floor(this.getTime()/BAR))).name;}
   getTempo(){return this.tempo;}
   getBeat(){return this.getTime()*BPM/60;}
-  getBeatPhase(){const beat=this.getBeat();return beat-Math.floor(beat);}
+  getBeatPhase(){return this.getBeat()%1;}
   getEnergy(){
     if(!this.analyser)return 0;
     if(!this._energyBins)this._energyBins=new Uint8Array(this.analyser.frequencyBinCount);
@@ -208,237 +360,185 @@ export class ProceduralRapidRain {
     let sum=0;for(const v of this._energyBins)sum+=v;
     return sum/(this._energyBins.length*255);
   }
-  on(event,callback){
-    if(typeof callback!=='function')return()=>{};
-    let handlers=this.listeners.get(event);
-    if(!handlers){handlers=new Set();this.listeners.set(event,handlers);}handlers.add(callback);
-    return ()=>this.off(event,callback);
+  on(name,callback){if(typeof callback!=='function')return()=>{};
+    let handlers=this.listeners.get(name);if(!handlers){handlers=new Set();this.listeners.set(name,handlers);}
+    handlers.add(callback);return()=>this.off(name,callback);
   }
-  off(event,callback){this.listeners.get(event)?.delete(callback);}
-  _emit(type,detail){for(const fn of this.listeners.get(type)||[])try{fn(detail);}catch(e){console.warn('SNOW 64 music callback:',e);}}
+  off(name,callback){this.listeners.get(name)?.delete(callback);}
+  _emit(name,detail){for(const fn of this.listeners.get(name)||[])try{fn(detail);}catch(e){console.warn('SNOW 64 music callback:',e);}}
   setTempo(value){
     const bpm=clamp(Number(value)||BPM,85,190);
     if(Math.abs(bpm-this.tempo)<.12)return;
     if(this.isPlaying&&this.ctx){this.startPosition=this.getTime();this.startCtx=this.ctx.currentTime;}
     this.tempo=bpm;this._emit('tempo',{bpm});
   }
-  setVolume(v){this.volume=clamp(Number(v)||0,0,1);if(this.master&&this.ctx)this.master.gain.setTargetAtTime(this.volume,this.ctx.currentTime,.028);}
-  setWarmth(v=.72){
-    this.warmth=clamp(Number(v)||0,0,1);
-    if(this.outputFilter&&this.ctx)this.outputFilter.frequency.setTargetAtTime(9800-3800*this.warmth,this.ctx.currentTime,.12);
+  setVolume(v){this.volume=clamp(Number(v)||0,0,1);
+    if(this.master&&this.ctx)this.master.gain.setTargetAtTime(this.volume,this.ctx.currentTime,.035);
   }
-  setInstrumentVolume(type,level){if(!(type in this.layerVolumes))return false;this.layerVolumes[type]=clamp(Number(level)||0,0,1.5);this._refreshLayers();return true;}
-  muteInstrument(type,muted=true){if(!(type in this.layerVolumes))return false;muted?this.muted.add(type):this.muted.delete(type);this._refreshLayers();return true;}
-  soloInstrument(type,solo=true){if(!(type in this.layerVolumes))return false;solo?this.soloed.add(type):this.soloed.delete(type);this._refreshLayers();return true;}
+  setWarmth(v=.67){this.warmth=clamp(Number(v)||0,0,1);
+    if(this.outputFilter&&this.ctx)this.outputFilter.frequency.setTargetAtTime(10000-this.warmth*4600,this.ctx.currentTime,.13);
+  }
+  setInstrumentVolume(type,level){if(!(type in this.layerVolumes))return false;
+    this.layerVolumes[type]=clamp(Number(level)||0,0,1.5);this._refreshLayers();return true;
+  }
+  muteInstrument(type,muted=true){if(!(type in this.layerVolumes))return false;
+    muted?this.muted.add(type):this.muted.delete(type);this._refreshLayers();return true;
+  }
+  soloInstrument(type,solo=true){if(!(type in this.layerVolumes))return false;
+    solo?this.soloed.add(type):this.soloed.delete(type);this._refreshLayers();return true;
+  }
   setIntensity(value){this.intensity=clamp(Number(value)||0,0,1.35);this._refreshLayers();}
   transitionTo(name,{bars=2}={}){
     if(!['auto','calm','groove','peak'].includes(name))return false;
     this.arrangement=name;
     if(name!=='auto'){
-      const amt={calm:.27,groove:.66,peak:1.23}[name];
-      this.intensity=amt;this._refreshLayers(Math.max(.08,bars*2*60/this.tempo));
+      this.intensity={calm:.24,groove:.65,peak:1.24}[name];
+      this._refreshLayers(Math.max(.09,bars*2*60/this.tempo));
     }
     this._emit('arrangement',{name,bars});return true;
   }
-  _refreshLayers(smoothing=.12){
+  _refreshLayers(smoothing=.13){
     if(!this.ctx)return;const now=this.ctx.currentTime;
-    const levels={lead:.65,pluck:.35,bubble:.31,keys:.32,pad:.33,bass:.82,
-      kick:.98,snare:.70,hat:.64,glitch:.15,rise:.20,crash:.27};
     for(const type of RAPID_RAIN_LAYERS){
       const bus=this.layerGains[type];if(!bus)continue;
-      const audible=!this.muted.has(type)&&(this.soloed.size===0||this.soloed.has(type));
-      const expression=isDrum(type)?(.76+.16*this.intensity):type==='pad'?.86:(.68+.26*this.intensity);
-      bus.gain.setTargetAtTime(audible?levels[type]*this.layerVolumes[type]*expression:0,now,smoothing);
+      const active=!this.muted.has(type)&&(this.soloed.size===0||this.soloed.has(type));
+      const strength=isDrum(type)?.83+.15*this.intensity:type==='pad'?.70:.72+.24*this.intensity;
+      bus.gain.setTargetAtTime(active?this._layerBase[type]*this.layerVolumes[type]*strength:0,now,smoothing);
     }
   }
   updateFromGame({playing=true,speed=21.5,powered=false,inAir=false,recovery=false,tuck=false,airHeight=0,steer=0}={}){
     if(!this.isPlaying||!playing||!this.ctx)return;
-    const now=this.ctx.currentTime;if(now-this._lastGameUpdate<.16)return;
+    const now=this.ctx.currentTime;if(now-this._lastGameUpdate<.17)return;
     this._lastGameUpdate=now;this._game={speed,powered,inAir,recovery};
-    // Score tempo and drum subdivisions accelerate together; pitches do NOT change.
-    const goal=clamp(114+Math.max(0,speed)*.95+(powered?7:0),116,184);
-    this.setTempo(this.tempo+(goal-this.tempo)*.19);
+    const goal=clamp(113+Math.max(0,speed)*.98+(powered?8:0),115,182);
+    this.setTempo(this.tempo+(goal-this.tempo)*.16);
     if(this.arrangement==='auto'){
-      const target=recovery?.2:clamp(.29+speed/75+(powered?.34:0)+(tuck?.08:0)+(inAir?.1:0),.32,1.32);
-      this.setIntensity(this.intensity+(target-this.intensity)*.2);
+      const target=recovery?.22:clamp(.32+speed/78+(powered?.31:0)+(tuck?.08:0)+(inAir?.08:0),.33,1.31);
+      this.setIntensity(this.intensity+(target-this.intensity)*.18);
     }
     this._emit('motion',{speed,powered,inAir,recovery,tuck,steer,airHeight,bpm:this.tempo,intensity:this.intensity});
   }
   reactToGameEvent(kind){
     if(!this.isPlaying||!this.ctx)return;
     const now=this.ctx.currentTime;
-    if(now-(this._eventAt.get(kind)??-99)<.15)return;
+    if(now-(this._eventAt.get(kind)??-99)<.16)return;
     this._eventAt.set(kind,now);
     if(kind==='power')this._emit('power',{time:this.getTime()});
     if(['power','combo','land','shatter','magicTrick','superRamp'].includes(kind))
       this._emit('accent',{kind,time:this.getTime(),beat:this.getBeat()});
-    // Tiny consonant flourishes, never a full extra drum kit over the score.
+    // Only small melodic accents. Existing game SFX stay audible and unchanged.
     if(['pickup','magicTrick','combo','power'].includes(kind)){
       const note={pickup:81,magicTrick:78,combo:76,power:86}[kind];
-      this._playEvent({type:'bubble',note,duration:.10,velocity:.12,pan:.14},now+.02);
+      this._playEvent({type:'bubble',note,duration:.10,velocity:.09,pan:.13,variant:2},now+.025);
     }
-    if(['crash','rockHit','rampHit','shatter'].includes(kind) && this.ctx){
-      const p=this.ctx.currentTime;
-      if(this.musicBus){
-        const g=this.musicBus.gain;g.cancelScheduledValues(p);g.setValueAtTime(g.value,p);
-        g.linearRampToValueAtTime(kind==='shatter'?.68:.48,p+.025);
-        g.setTargetAtTime(1,p+.16,.19);
-      }
+    if(['crash','rockHit','rampHit','shatter'].includes(kind)&&this.mix){
+      const g=this.mix.gain,t=now;
+      g.cancelScheduledValues(t);g.setValueAtTime(g.value,t);
+      g.linearRampToValueAtTime(kind==='shatter'?.73:.61,t+.018);
+      g.setTargetAtTime(1,t+.15,.17);
     }
   }
   async _ensureAudio(){
     if(this.ctx){if(this.ctx.state==='suspended')await this.ctx.resume();return;}
     const C=globalThis.AudioContext||globalThis.webkitAudioContext;
-    if(!C)throw new Error('Web Audio is not available in this browser.');
-    const ctx=this.ctx=new C({latencyHint:'interactive'});
-    const master=this.master=ctx.createGain();master.gain.value=this.volume;
-    const comp=ctx.createDynamicsCompressor();comp.threshold.value=-13;comp.knee.value=9;
-    comp.ratio.value=2.25;comp.attack.value=.008;comp.release.value=.16;
-    const low=ctx.createBiquadFilter();low.type='highpass';low.frequency.value=32;
-    const out=this.outputFilter=ctx.createBiquadFilter();out.type='lowpass';out.frequency.value=9800-3800*this.warmth;
-    const analyser=this.analyser=ctx.createAnalyser();analyser.fftSize=512;
-    const mix=this.musicBus=ctx.createGain();mix.gain.value=1;
-    mix.connect(low);low.connect(out);out.connect(comp);comp.connect(analyser);analyser.connect(master);master.connect(ctx.destination);
-    this.drumBus=ctx.createGain();this.drumBus.gain.value=1;
-    this.drumBus.connect(mix);
-    this.bassBus=ctx.createGain();this.bassBus.gain.value=1;
-    this.bassBus.connect(mix);
-    // Tiny synthesized stereo ambience, only for melodies/pads. The drum kit stays DRY.
-    const reverb=ctx.createConvolver();
-    const ir=ctx.createBuffer(2,Math.floor(ctx.sampleRate*.72),ctx.sampleRate);
-    let seed=38719;
-    const rnd=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296*2-1;};
-    for(let ch=0;ch<2;ch++){const d=ir.getChannelData(ch);
-      for(let i=0;i<d.length;i++)d[i]=rnd()*Math.pow(1-i/d.length,3.2)*.25;}
-    reverb.buffer=ir;const wet=ctx.createGain();wet.gain.value=.085;
-    reverb.connect(wet);wet.connect(mix);this.reverb=reverb;
-    // Noise is procedurally synthesized once, not downloaded or stored as a file.
-    const buffer=this.noiseBuffer=ctx.createBuffer(1,Math.floor(ctx.sampleRate*1.0),ctx.sampleRate);
-    const data=buffer.getChannelData(0);
-    for(let i=0;i<data.length;i++)data[i]=rnd()*.88;
+    if(!C)throw new Error('Web Audio is not supported in this browser.');
+    const c=this.ctx=new C({latencyHint:'interactive'});
+    const master=this.master=c.createGain();master.gain.value=this.volume;
+    const mix=this.mix=c.createGain();mix.gain.value=1;
+    const highpass=c.createBiquadFilter();highpass.type='highpass';highpass.frequency.value=29;
+    const lowpass=this.outputFilter=c.createBiquadFilter();lowpass.type='lowpass';lowpass.frequency.value=10000-this.warmth*4600;
+    const comp=c.createDynamicsCompressor();comp.threshold.value=-13;comp.knee.value=8;
+    comp.ratio.value=2.0;comp.attack.value=.012;comp.release.value=.18;
+    const analyser=this.analyser=c.createAnalyser();analyser.fftSize=512;
+    mix.connect(highpass);highpass.connect(lowpass);lowpass.connect(comp);
+    comp.connect(analyser);analyser.connect(master);master.connect(c.destination);
+    this.bassBus=c.createGain();this.bassBus.gain.value=1;
+    // A little electric-bass amp filtering keeps bass out of the kick's sub range.
+    const bassHighpass=c.createBiquadFilter();bassHighpass.type='highpass';bassHighpass.frequency.value=51;
+    const bassShelf=c.createBiquadFilter();bassShelf.type='lowshelf';bassShelf.frequency.value=130;bassShelf.gain.value=-1.7;
+    this.bassBus.connect(bassHighpass);bassHighpass.connect(bassShelf);bassShelf.connect(mix);
+    const reverb=c.createConvolver(),len=Math.ceil(.55*c.sampleRate);
+    const impulse=c.createBuffer(2,len,c.sampleRate);
+    let rr=seeded(423172);
+    for(let ch=0;ch<2;ch++){
+      const d=impulse.getChannelData(ch);
+      let filtered=0;
+      for(let i=0;i<len;i++){
+        filtered=.66*filtered+.34*rr();
+        d[i]=filtered*Math.exp(-i/c.sampleRate*8)*.13;
+      }
+    }
+    reverb.buffer=impulse;
+    const reverbWet=c.createGain();reverbWet.gain.value=.055;
+    reverb.connect(reverbWet);reverbWet.connect(mix);
+    this.reverb=reverb;
     for(const type of RAPID_RAIN_LAYERS){
-      const gain=ctx.createGain();this.layerGains[type]=gain;
-      gain.connect(type==='bass'?this.bassBus:isDrum(type)?this.drumBus:mix);
-      if(['pad','lead','keys','bubble','pluck'].includes(type))gain.connect(reverb);
+      const g=c.createGain();g.gain.value=0;this.layerGains[type]=g;
+      g.connect(type==='bass'?this.bassBus:mix);
+      if(['lead','pad','pluck','bubble','keys'].includes(type))g.connect(reverb);
     }
     this._refreshLayers(.01);
   }
-  _osc(type,freq,when,stop,dest,gain=.5,detune=0){
-    const c=this.ctx,o=c.createOscillator(),g=c.createGain();
-    o.type=type;o.frequency.setValueAtTime(Math.max(1,freq),when);o.detune.value=detune;
-    g.gain.value=gain;o.connect(g);g.connect(dest);
-    o.start(when);o.stop(stop);this.active.add(o);
-    o.onended=()=>{this.active.delete(o);o.disconnect();g.disconnect();};return o;
+  _buffer(type,note=60,variant=0){
+    const key=`${type}:${note}:${variant}`;
+    const old=this.cache.get(key);if(old)return old;
+    const wave=sampleModel(type,note,variant,MODEL_RATE);
+    const b=this.ctx.createBuffer(1,wave.length,MODEL_RATE);
+    b.copyToChannel(wave,0);
+    this.cache.set(key,b);
+    return b;
   }
-  _env(when,attack,peak,release,dest){
-    const g=this.ctx.createGain();
-    g.gain.setValueAtTime(EPS,when);
-    g.gain.linearRampToValueAtTime(Math.max(EPS,peak),when+Math.max(.003,attack));
-    g.gain.exponentialRampToValueAtTime(EPS,Math.max(when+attack+.025,when+release));
-    g.connect(dest);return g;
-  }
-  _noise(when,stop,dest){
-    const c=this.ctx,src=c.createBufferSource();src.buffer=this.noiseBuffer;
-    src.start(when,random(when*433)%Math.max(.01,src.buffer.duration-(stop-when)-.01));
-    src.stop(stop);src.connect(dest);this.active.add(src);
-    src.onended=()=>{this.active.delete(src);src.disconnect();};return src;
-  }
-  _pan(gain,pan=0){
-    if(Math.abs(pan)<.01)return gain;
-    const p=this.ctx.createStereoPanner();p.pan.value=clamp(pan,-.65,.65);
-    gain.connect(p);return p;
+  _sampleVoice(type,note,when,duration,velocity,pan,variant){
+    const ctx=this.ctx,buffer=this._buffer(type,note,variant);
+    const src=ctx.createBufferSource();src.buffer=buffer;
+    const env=ctx.createGain();env.gain.setValueAtTime(EPS,when);
+    const drums=isDrum(type)||type==='crash'||type==='rise'||type==='glitch';
+    const attack=type==='lead'?.035:type==='pad'?.23:drums?.002:.008;
+    const sustainTime=drums?Math.min(duration+(.11),buffer.duration-.015)
+      :Math.min(duration,buffer.duration-.09);
+    const peak=Math.max(.0001,velocity*(type==='kick'?1.0:type==='snare'?.83:type==='hat'?.73:1));
+    const a=when+Math.max(.002,attack);
+    const e=when+Math.max(attack+.028,sustainTime);
+    const release=drums?.029:type==='pad'?.27:type==='lead'?.10:.052;
+    env.gain.linearRampToValueAtTime(peak,a);
+    env.gain.setValueAtTime(peak,Math.max(a+.001,e-release));
+    env.gain.linearRampToValueAtTime(EPS,e);
+    let dest=this.layerGains[type];
+    if(Math.abs(pan)>.001){const p=ctx.createStereoPanner();p.pan.value=clamp(pan,-.5,.5);p.connect(dest);dest=p;}
+    src.connect(env);env.connect(dest);
+    src.start(when);src.stop(Math.min(when+buffer.duration,e+.01));
+    this.active.add(src);
+    src.onended=()=>{this.active.delete(src);try{src.disconnect();env.disconnect();}catch{}};
+    return src;
   }
   _playEvent(ev,when){
-    const c=this.ctx;if(!c)return;
-    const {type,note=0,duration=.15,velocity=.5,pan=0}=ev;
-    const target=this.layerGains[type];if(!target)return;
-    const v=velocity, f=midiHz(note),t=Math.max(.06,duration),end=when+t+.03;
-    if(type==='kick'){
-      const g=this._env(when,.006,v*.86,Math.min(.24,t*.95),target);
-      const o=this._osc('sine',165,when,when+.25,g,.85);
-      o.frequency.exponentialRampToValueAtTime(51,when+.12);
-      o.frequency.setTargetAtTime(44,when+.13,.04);
-      // Bass ducked ONLY on the kick, not side-chained to every snare/hat.
-      if(this.bassBus){const bg=this.bassBus.gain;
-        bg.setValueAtTime(1,when);bg.linearRampToValueAtTime(.52,when+.012);
-        bg.linearRampToValueAtTime(1,when+.16);}
-      return;
-    }
-    if(type==='snare'){
-      const b=c.createBiquadFilter();b.type='bandpass';b.frequency.value=1750;b.Q.value=.75;b.connect(target);
-      const g=this._env(when,.004,v*.48,.115,b);
-      this._noise(when,when+.14,g);
-      const bo=this._env(when,.002,v*.22,.075,target);
-      const o=this._osc('triangle',175,when,when+.09,bo,.65);
-      o.frequency.exponentialRampToValueAtTime(110,when+.08);return;
-    }
-    if(type==='hat'){
-      const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=5100;
-      const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=8900;
-      hp.connect(lp);lp.connect(target);
-      const g=this._env(when,.002,v*.29,Math.min(.073,t),hp);
-      this._noise(when,when+Math.min(.082,t+.01),g);return;
-    }
-    if(type==='bass'){
-      const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=440;lp.Q.value=.66;
-      lp.connect(target);
-      const g=this._env(when,.008,v*.47,Math.min(.40,t+.032),lp);
-      this._osc('triangle',f,when,when+t+.04,g,.76);
-      this._osc('sine',f,when,when+t+.04,g,.30,2);
-      return;
-    }
-    if(type==='lead'){
-      // Smooth, rubbery toy-synth flute, NOT keyboard or marimba.
-      const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2450;lp.Q.value=.52;
-      lp.connect(target);
-      const g=this._env(when,.025,v*.31,Math.min(.50,t+.08),lp);
-      const o=this._osc('triangle',f,when,when+t+.10,g,.78);
-      o.frequency.setValueAtTime(f*1.012,when);
-      o.frequency.setTargetAtTime(f,when+.014,.045);
-      this._osc('sine',f,when,when+t+.10,g,.22,3);
-      return;
-    }
-    if(type==='pluck'||type==='bubble'){
-      const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=type==='bubble'?1700:2600;
-      lp.connect(target);
-      const g=this._env(when,.005,v*.30,Math.min(.16,t+.04),lp);
-      const o=this._osc('sine',f,when,when+t+.045,g,1);
-      if(type==='bubble'){
-        o.frequency.setValueAtTime(f*.88,when);
-        o.frequency.exponentialRampToValueAtTime(f,when+.054);
-      }
-      return;
-    }
+    if(!this.ctx)return;
+    const {type,note=0,duration=.12,velocity=.5,pan=0,variant=0}=ev;
+    if(!(type in this.layerGains))return;
     if(type==='pad'||type==='keys'){
-      const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=type==='pad'?1150:1650;
-      lp.connect(target);
-      const release=Math.min(type==='pad'?1.9:.55,t+.35);
-      const g=this._env(when,type==='pad'?.30:.04,v*.18,release,lp);
-      for(const [i,n] of (ev.notes||[note]).entries()){
-        this._osc('triangle',midiHz(n),when,when+Math.max(.2,release)+.05,g,.28,(i-1)*3);
-      }
-      return;
-    }
-    if(type==='rise'||type==='crash'||type==='glitch'){
-      const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=type==='crash'?3200:1900;
-      bp.Q.value=.8;bp.connect(target);
-      const g=this._env(when,.012,v*.16,Math.min(t,.25),bp);
-      this._noise(when,when+Math.min(.33,t+.015),g);
+      const voices=ev.notes||[note];
+      voices.forEach((n,i)=>this._sampleVoice(type==='keys'?'keys':'pad',n,
+        when+i*(type==='keys'?.017:0),Math.min(duration,2.2),velocity/Math.sqrt(voices.length),
+        (i-(voices.length-1)/2)*.14,variant));
+    }else this._sampleVoice(type,note,when,duration,velocity,pan,variant);
+    if(type==='kick'&&this.bassBus){
+      const bg=this.bassBus.gain;
+      // Keep kick and finger-bass distinctly separate without abrupt retrigger clicks.
+      bg.cancelScheduledValues(when);bg.setValueAtTime(bg.value,when);
+      bg.linearRampToValueAtTime(.65,when+.014);
+      bg.setTargetAtTime(1,when+.077,.075);
     }
   }
   _shouldPlayEvent(ev){
     if(this.muted.has(ev.type))return false;
     if(this.soloed.size&&!this.soloed.has(ev.type))return false;
-    // Gate only embellishments: melody, bass and backbeat stay intact at slow speeds.
-    if((ev.gate||0)>this.intensity)return false;
-    return true;
+    return (ev.gate||0)<=this.intensity;
   }
   _tick(){
     if(!this.isPlaying||!this.ctx)return;
-    const now=this.ctx.currentTime,horizon=now+.095,rate=this.tempo/BPM;
+    const now=this.ctx.currentTime,horizon=now+.105,rate=this.tempo/BPM;
     while(this.cursor<this.score.length){
-      const ev=this.score[this.cursor];
-      const at=this.startCtx+(ev.t-this.startPosition)/rate;
+      const ev=this.score[this.cursor],at=this.startCtx+(ev.t-this.startPosition)/rate;
       if(at>horizon)break;
       this.cursor++;
       if(at<now-.045||!this._shouldPlayEvent(ev))continue;
@@ -446,43 +546,36 @@ export class ProceduralRapidRain {
     }
     const elapsed=this.startPosition+Math.max(0,now-this.startCtx)*rate;
     const beatIndex=Math.floor(elapsed*BPM/60);
-    if(beatIndex!==this._lastBeat){
-      this._lastBeat=beatIndex;
+    if(beatIndex!==this._lastBeat){this._lastBeat=beatIndex;
       this._emit('beat',{beat:((beatIndex%4)+4)%4,bar:Math.floor(beatIndex/4),bpm:this.tempo,
-        time:this.getTime(),phase:this.getBeatPhase()});
-    }
+        time:this.getTime(),phase:this.getBeatPhase()});}
     const name=this.getSection();
     if(name!==this._lastSection){this._lastSection=name;this._emit('section',{name,time:this.getTime()});}
     const endAt=this.startCtx+(DURATION-this.startPosition)/rate;
-    if(this.loop && this.cursor>=this.score.length && horizon>=endAt){
+    if(this.loop&&this.cursor>=this.score.length&&horizon>=endAt){
       this.startCtx=endAt;this.startPosition=0;this.cursor=0;this._lastBeat=-1;
       this._emit('loop',{time:0});
-    }else if(!this.loop&&elapsed>=DURATION){
-      this.pause();this.position=DURATION;this._emit('ended',{});this.onEnded?.();
-    }
+    }else if(!this.loop&&elapsed>=DURATION){this.pause();this.position=DURATION;
+      this._emit('ended',{});this.onEnded?.();}
   }
   _killVoices(){if(!this.ctx)return;for(const x of [...this.active])try{x.stop(this.ctx.currentTime);}catch{}this.active.clear();}
   async play(){
     if(this.isPlaying)return;
-    await this._ensureAudio();
-    if(this.position>=DURATION-.01)this.position=0;
-    this.master.gain.setTargetAtTime(this.volume,this.ctx.currentTime,.012);
-    this.startPosition=this.position;this.startCtx=this.ctx.currentTime+.055;
+    await this._ensureAudio();if(this.position>=DURATION-.01)this.position=0;
+    this.master.gain.setTargetAtTime(this.volume,this.ctx.currentTime,.018);
+    this.startPosition=this.position;this.startCtx=this.ctx.currentTime+.06;
     this.cursor=lowerBound(this.score,this.startPosition);
     this._lastBeat=-1;this._lastSection='';this.isPlaying=true;
     this._tick();this.timer=setInterval(()=>this._tick(),25);
   }
   async resume(){return this.play();}
-  pause(){
-    if(!this.isPlaying)return;
-    this.position=this.getTime();this.isPlaying=false;
-    clearInterval(this.timer);this.timer=null;
-    this._killVoices();if(this.ctx)this.master.gain.setTargetAtTime(EPS,this.ctx.currentTime,.012);
+  pause(){if(!this.isPlaying)return;
+    this.position=this.getTime();this.isPlaying=false;clearInterval(this.timer);this.timer=null;
+    this._killVoices();if(this.ctx)this.master.gain.setTargetAtTime(EPS,this.ctx.currentTime,.018);
   }
   stop(){this.pause();this.position=0;this._lastBeat=-1;}
-  seek(seconds){const was=this.isPlaying;this.pause();this.position=clamp(Number(seconds)||0,0,DURATION);if(was)this.play();}
-  async dispose(){
-    this.stop();this.listeners.clear();
+  seek(seconds){const playing=this.isPlaying;this.pause();this.position=clamp(Number(seconds)||0,0,DURATION);if(playing)this.play();}
+  async dispose(){this.stop();this.listeners.clear();this.cache.clear();
     if(this.ctx){try{await this.ctx.close();}catch{}this.ctx=null;}
   }
 }
