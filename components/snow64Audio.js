@@ -4,13 +4,13 @@
  * A single AudioContext plays continuous snow/speed/carve/wind noise, event cues,
  * and the original Frost Shroom arpeggio. Sound starts on a user gesture.
  *
- * SNOW 64 SOUND BALANCE UPDATE:
- * Adjust just the two multipliers below to make footsteps and token pickups
- * louder or quieter without changing music, other SFX, or the master volume.
- * 1.0 = the original volume; 2.0 = twice the signal amplitude (~+6 dB).
+ * SNOW 64 V2 AUDIBLE SNOW FOOTSTEPS:
+ * Prominent, procedurally synthesized snow-crunch footsteps replace the old
+ * near-inaudible filtered hiss. Token pickups and all other sound cues remain.
+ * Adjust these independent levels without changing the game music volume.
  */
 export const SNOW64_EFFECT_LEVELS = {
-  footsteps: 2.4,    // Original 1.0; louder walking after a wipeout
+  footsteps: 2.4,   // Footstep output; new synthesized crunch is substantially more audible
   tokenPickup: 1.9, // Original 1.0; clearer token collection chimes
 };
 
@@ -177,6 +177,62 @@ function burst(e,when,length,level=.095,frequency=850,type='lowpass') {
   source.onended=()=>{source.disconnect();filter.disconnect();env.disconnect();};
 }
 
+/**
+ * A boot stepping into powder snow should have a distinct heel impact followed
+ * by granular grit. The previous 720 Hz low-passed burst was extremely quiet
+ * on laptop/mobile speakers even with its gain multiplied.
+ *
+ * These two tiny buffers are generated ONCE from math, not fetched audio files.
+ * Each step uses one short Web Audio buffer voice, with alternating timbre and
+ * slight pitch variation. No per-frame noise or extra render-loop work.
+ */
+function createSnowFootstepBuffer(ctx, alternate=false) {
+  const seconds=.23;
+  const buffer=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*seconds),ctx.sampleRate);
+  const data=buffer.getChannelData(0);
+  let seed=alternate?910683:617341,mid=0,low=0;
+  const tau=2*Math.PI;
+  for(let i=0;i<data.length;i++) {
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    const white=(seed/2147483648)-1;
+    mid=mid*.55+white*.45;
+    low=low*.93+white*.07;
+    const t=i/ctx.sampleRate;
+    const attack=Math.min(1,t/.006);
+    // First ~100 ms: crunchy snow grains, followed by a short settling tail.
+    const gritty=(white*.31+mid*.56+low*.13)*Math.exp(-t*(alternate?17:19))*attack;
+    const settling=(white*.11+low*.09)*Math.exp(-Math.max(0,t-.060)*34)
+      *Math.min(1,Math.max(0,t-.055)*80);
+    // Low-mid impact helps the footstep remain audible on phone speakers.
+    const thud=Math.sin(tau*((alternate?156:138)*t-95*t*t))
+      *Math.exp(-t*34)*Math.min(1,t/.005);
+    data[i]=clamp(gritty*.93+settling*.36+thud*.37,-.94,.94);
+  }
+  return buffer;
+}
+function playSnowFootstep(e,when) {
+  const boost=clamp(SNOW64_EFFECT_LEVELS.footsteps,0,3);
+  if(boost===0)return;
+  if(!e.stepBuffers) {
+    e.stepBuffers=[createSnowFootstepBuffer(e.ctx,false),createSnowFootstepBuffer(e.ctx,true)];
+    e.stepIndex=0;
+  }
+  const alternate=(e.stepIndex++%2)===1;
+  const {ctx,master}=e;
+  const source=ctx.createBufferSource();
+  source.buffer=e.stepBuffers[alternate?1:0];
+  source.playbackRate.value=alternate?.965:1.025;
+  const filter=ctx.createBiquadFilter();
+  filter.type='lowpass';filter.frequency.value=alternate?2600:2350;filter.Q.value=.63;
+  const gain=ctx.createGain();
+  // The synthetic buffer already has an envelope: this controls its level.
+  // 2.4 (the default) is about 0.48 output gain before the game SFX master.
+  gain.gain.setValueAtTime(clamp(.20*boost,0,.60),when);
+  source.connect(filter);filter.connect(gain);gain.connect(master);
+  source.start(when);source.stop(when+.235);
+  source.onended=()=>{source.disconnect();filter.disconnect();gain.disconnect();};
+}
+
 /** Gameplay sound cues are material-specific, not generic UI beeps. */
 export function playSnow64Sound(kind) {
   if(!enabled)return;
@@ -233,14 +289,8 @@ export function playSnow64Sound(kind) {
     case 'remount':
       burst(e,n,.08,.055,1800,'highpass');
       tone(e,n,345,.13,.042,'triangle',570);break;
-    case 'step': {
-      const boost=clamp(SNOW64_EFFECT_LEVELS.footsteps,0,3);
-      // The original low snow crunch stays in place, only louder. Add a tiny
-      // short midrange grit layer so footsteps cut through background music.
-      burst(e,n,.085,.038*boost,720,'lowpass');
-      burst(e,n+.005,.045,.012*boost,1450,'bandpass');
-      break;
-    }
+    case 'step':
+      playSnowFootstep(e,n);break;
     case 'pause':
       tone(e,n,470,.11,.035,'sine',360);break;
     case 'resume':
