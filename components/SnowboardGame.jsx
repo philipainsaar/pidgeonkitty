@@ -28,6 +28,7 @@ const TOKEN_POINTS = 360;
 const RIDER_BINDING_HEIGHT = 0.33; // Keep feet just above the raised board bindings.
 const FROST_HOVER_HEIGHT = 1.28; // Snowboard floats above actual snow/ramp surfaces.
 const FROST_HOVER_BOB = 0.12;
+const FROST_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-safe after Frost Shroom.
 // The original mushroom boost lasts 9 seconds (snow64Powerup.js).
 const FROST_AUTO_TRICKS = ["6", "2", "5", "9", "7", "0", "3", "f", "8", "4"];
 const clamp = THREE.MathUtils.clamp;
@@ -457,7 +458,7 @@ function initialState(cameraMode = 0) {
     launchSuper:false,
     mushroom:null, mushroomTime:0, mushroomCooldownTime:-200, mushroomCooldownDistance:-1000,
     mushroomCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
-    frostHover:false, frostAutoIndex:0, frostPaidTricks:0,
+    frostHover:false, frostAutoIndex:0, frostPaidTricks:0, frostCollisionGrace:0,
     scoreGainEvents:[],
     rockExplosions:[], rockShattered:0,
     consumedRamps:new Set(),consumedRocks:new Set(),hitRocks:new Set(),
@@ -468,7 +469,7 @@ function safeHud(s) {
     speed:Math.round(s.speed*3.6),
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.max(0,Math.floor(-s.z)), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
-    powerRemaining:s.powerTime, mushroomReady:!!s.mushroom, rockShattered:s.rockShattered,
+    powerRemaining:s.powerTime, shieldRemaining:s.frostCollisionGrace, mushroomReady:!!s.mushroom, rockShattered:s.rockShattered,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
     recovery:recoveryStage(s.recovery),
     trick:s.recovery ? (s.textUntil>s.t ? s.lastText : (recoveryStage(s.recovery)==="chasing" ? "RUN FOR YOUR BOARD!" : "GETTING UP..."))
@@ -523,36 +524,84 @@ function snowRemountMotion(rec, rider, board, returnTo) {
 }
 
 /**
- * V30: quick editorial CUTS between front / side views of the board.
- * +Z is behind the rider; every yaw stays in the front hemisphere.
- * The low angles aim at the deck, not the rider's face. Each camera pose is
- * stationary relative to the snowboard's world position, even during flips.
- * The FIRST shot and LAST 3 seconds are blended separately, never cut.
+ * V32: randomized Frost Shroom camera cuts between cinematic categories.
+ * +Z is BEHIND the rider; -Z is the downhill travel direction. We retain low
+ * front/side snowboard angles for tricks, but intentionally include rear chase
+ * angles to show forward speed and rear-quarter views for shattering rocks.
+ * Every preset follows the snowboard's WORLD position, never its spinning yaw.
+ * Only the first 1.15s and last 3s blend. Mid-boost changes are REAL cuts.
  */
 const FROST_CAMERA_INTRO_SECONDS = 1.15;
 const FROST_CAMERA_RETURN_SECONDS = 3;
 const FROST_CAMERA_SHOTS = [
-  { yaw: 2.10, elevation: .15, radius: 4.65, lookHeight: .38 }, // low front-right binding detail
-  { yaw: 4.17, elevation: .16, radius: 4.80, lookHeight: .38 }, // low front-left board edge
-  { yaw: 1.85, elevation: .12, radius: 4.90, lookHeight: .35 }, // very low right profile
-  { yaw: 4.43, elevation: .14, radius: 4.90, lookHeight: .37 }, // very low left profile
-  { yaw: 2.76, elevation: .23, radius: 4.70, lookHeight: .48 }, // front-right grab and flip
-  { yaw: 3.20, elevation: .18, radius: 4.60, lookHeight: .44 }, // low straight-on board
-  { yaw: 3.68, elevation: .22, radius: 4.75, lookHeight: .48 }, // low front-left spin
+  // Trick details: low front/side angles with both bindings visible.
+  {kind:"trick",yaw:2.10,elevation:.15,radius:4.65,lookHeight:.38},
+  {kind:"trick",yaw:4.17,elevation:.16,radius:4.80,lookHeight:.38},
+  {kind:"trick",yaw:1.85,elevation:.12,radius:4.90,lookHeight:.35},
+  {kind:"trick",yaw:4.43,elevation:.14,radius:4.90,lookHeight:.37},
+  {kind:"trick",yaw:2.76,elevation:.23,radius:4.70,lookHeight:.48},
+  {kind:"trick",yaw:3.20,elevation:.18,radius:4.60,lookHeight:.44},
+  {kind:"trick",yaw:3.68,elevation:.22,radius:4.75,lookHeight:.48},
+  // Speed: chase from behind the board and look DOWNHILL to show the course.
+  {kind:"speed",yaw:-.24,elevation:.20,radius:7.30,lookHeight:.63},
+  {kind:"speed",yaw:.32,elevation:.17,radius:7.55,lookHeight:.61},
+  {kind:"speed",yaw:0,elevation:.26,radius:8.05,lookHeight:.72},
+  // Impacts: rear-quarter side shots reveal rock explosions and ice debris.
+  {kind:"shatter",yaw:.91,elevation:.17,radius:6.50,lookHeight:.57},
+  {kind:"shatter",yaw:5.38,elevation:.19,radius:6.55,lookHeight:.60},
+  {kind:"shatter",yaw:1.30,elevation:.15,radius:6.25,lookHeight:.54},
+  {kind:"shatter",yaw:4.96,elevation:.16,radius:6.35,lookHeight:.56},
 ];
 
-/** C2 smooth easing for the entry and the final three-second exit. */
+/** Smooth C2 easing for the first shot and the 3-second return only. */
 function frostCameraEase(t){
   const x=clamp(t,0,1);
   return x*x*x*(x*(x*6-15)+10);
 }
 
-/** Choose a different angle, without repeating the exact same shot twice. */
-function nextFrostCameraShot(previousIndex, random = Math.random) {
-  const count=FROST_CAMERA_SHOTS.length;
-  const step=1+Math.floor(Math.min(.999999,Math.max(0,random()))*(count-1));
-  const index=(previousIndex<0?Math.floor(random()*count):(previousIndex+step)%count);
-  return {index,shot:FROST_CAMERA_SHOTS[index]};
+/**
+ * Weighted, nonrepeating shot selection. An actual rock shatter wins priority;
+ * otherwise pick speed or trick angles, with occasional impact previews when
+ * a rock is ahead. Avoid two shots of the same kind when alternatives exist.
+ */
+function nextFrostCameraShot(previousIndex, random=Math.random, options={}){
+  const prev=FROST_CAMERA_SHOTS[previousIndex];
+  const r=()=>clamp(random(),0,.999999);
+  let kind;
+  if(options.impact) kind="shatter";
+  else if(options.forceSpeed) kind="speed";
+  else {
+    const roll=r();
+    if(options.rockAhead && roll<.22)kind="shatter";
+    else kind=roll<(options.rockAhead?.58:.42)?"speed":"trick";
+    if(prev?.kind===kind && r()<.64){
+      // Variety without forced round-robin: consecutive shots can still match.
+      kind=kind==="speed"?"trick":"speed";
+    }
+  }
+  let candidates=FROST_CAMERA_SHOTS.map((shot,index)=>({shot,index}))
+    .filter(item=>item.shot.kind===kind && item.index!==previousIndex);
+  if(!candidates.length)candidates=FROST_CAMERA_SHOTS.map((shot,index)=>({shot,index}))
+    .filter(item=>item.index!==previousIndex);
+  return candidates[Math.floor(r()*candidates.length)];
+}
+
+/** Check only nearby geometry, not the entire procedural endless course. */
+function frostRockCameraTarget(s,localChunks){
+  const last=s.rockExplosions?.[s.rockExplosions.length-1];
+  if(last && s.t-last.at<.34 && Math.hypot(last.x-s.x,last.z-s.z)<15)
+    return {x:last.x,z:last.z,age:s.t-last.at,explosion:true};
+  let closest=null,dist=Infinity;
+  for(const chunk of localChunks){
+    for(const rock of chunk.rocks){
+      if(s.consumedRocks.has(rock.id))continue;
+      const ahead=s.z-rock.z;
+      if(ahead>2 && ahead<20 && Math.abs(rock.x-s.x)<4.2 && ahead<dist){
+        closest={x:rock.x,z:rock.z,age:0,explosion:false};dist=ahead;
+      }
+    }
+  }
+  return closest;
 }
 
 /** Shortest angular path prevents an orbit from doing an unwanted extra spin. */
@@ -561,8 +610,10 @@ function approachAngle(a,b,weight) {
 }
 
 function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
-  // Total invulnerability lasts only for the actual Frost Shroom boost.
-  if (s.recovery || s.powerTime > 0 || s.frostHover) return;
+  // During the 2-second post-Frost shield, block environmental crashes only.
+  // A genuinely failed normal trick still follows the standard landing rules.
+  const environmental = reason.startsWith("ROCK") || reason.startsWith("RAMP");
+  if (s.recovery || s.powerTime > 0 || s.frostHover || (environmental && s.frostCollisionGrace > 0)) return;
   const penalty = (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
   s.score = Math.max(0,s.score - penalty);
   s.combo = 0;
@@ -598,6 +649,7 @@ function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
 function beginFrostHover(s, supportHeight) {
   if (s.frostHover) return;
   s.frostHover = true;
+  s.frostCollisionGrace = 0;
   s.recovery = null;
   s.inAir = true;
   s.worldY = Math.max(s.worldY, supportHeight + FROST_HOVER_HEIGHT);
@@ -619,6 +671,7 @@ function beginFrostHover(s, supportHeight) {
 function finishFrostHover(s, supportHeight) {
   if (!s.frostHover) return;
   s.frostHover = false;
+  s.frostCollisionGrace = FROST_POST_SHIELD_SECONDS;
   s.inAir = false;
   s.worldY = supportHeight;
   s.air = 0;
@@ -631,7 +684,7 @@ function finishFrostHover(s, supportHeight) {
   s.impact = .3;
   s.frostPaidTricks = 0;
   resetAirTrickChain(s);
-  s.lastText = "FROST MAGIC FADED • BACK ON SNOW";
+  s.lastText = "FROST SHIELD • 2s SAFE LANDING";
   s.textUntil = s.t + 1.1;
 }
 
@@ -671,7 +724,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
   const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), kickSnow=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
-  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null});
+  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null});
   const frostBoardAnchor=useMemo(()=>new THREE.Vector3(),[]);
   const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
@@ -679,7 +732,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   useEffect(()=>{
     stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;crashCameraBlend.current=0;
-    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null};
+    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null};
     nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
@@ -755,6 +808,9 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       if(s.score>0 && s.score<s.drainRate*5 && (!s.lastDangerAt||s.t-s.lastDangerAt>2.7)){
         s.lastDangerAt=s.t;onSound("danger");
       }
+      // Only counts down while actually playing. Boost expiry refreshes the
+      // shield to the full two seconds on its first normal-riding frame.
+      s.frostCollisionGrace=Math.max(0,s.frostCollisionGrace-dt);
       s.powerTime=Math.max(0,s.powerTime-dt);
       if (s.powerTime <= 0 && s.frostHover) {
         finishFrostHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
@@ -833,14 +889,20 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             if (s.inAir && !s.consumedRamps.has(ramp.id)) {
               const hit=sweptAirRampContact(from,to,ramp,groundY);
               if (hit) {
-                if (hit.kind === "deck") {
-                  // A descending jump catches the top of the ramp rather
-                  // than phasing through it. Finish the landing this frame.
+                if (hit.kind === "deck" || s.frostCollisionGrace > 0) {
+                  // Genuine deck landings remain unchanged. If a rider is
+                  // shielded after Frost, safely lift onto the solid deck
+                  // instead of crashing or tunnelling through the ramp.
                   s.x=hit.x;
                   s.z=hit.z;
-                  s.worldY=hit.y+.003;
-                  s.vy=Math.min(-1,s.vy);
                   surface=snowSurfaceAt(s.x,s.z,localChunks,groundY);
+                  s.worldY=Math.max(hit.y+.003,surface.height+(s.frostCollisionGrace>0?.08:0));
+                  if(s.frostCollisionGrace>0){
+                    s.inAir=false;s.vy=0;s.air=0;
+                    s.jumpCooldown=Math.max(s.jumpCooldown,.2);
+                    resetAirTrickChain(s);
+                    s.consumedRamps.add(ramp.id);
+                  } else s.vy=Math.min(-1,s.vy);
                   break;
                 }
                 s.x=previousX;s.z=previousZ;
@@ -849,6 +911,16 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
               }
             }
             if (sweptRampSideHit(from,to,ramp,groundY)) {
+              if(s.frostCollisionGrace>0){
+                // Protected ramp side entry: settle on the support surface.
+                // Keep the board above the snow instead of rewinding each
+                // frame and getting stuck against the ramp edge.
+                surface=snowSurfaceAt(s.x,s.z,localChunks,groundY);
+                s.worldY=Math.max(s.worldY,surface.height+.08);
+                if(s.inAir){s.inAir=false;s.vy=0;s.air=0;resetAirTrickChain(s);}
+                s.consumedRamps.add(ramp.id);
+                break;
+              }
               s.x=previousX;s.z=previousZ;
               beginSnowRecovery(s,"wipeout","RAMP SIDE COLLISION!",onSound,{x:ramp.x,z:ramp.z});
               break;
@@ -864,6 +936,11 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             if(s.consumedRamps.has(ramp.id)) continue;
             if(crossedRampLip(ramp,previousZ,s.z,s.x,previousX)){
               if(s.jumpCooldown>0){
+                if(s.frostCollisionGrace>0){
+                  // Don't wipe out immediately after the magical boost ends.
+                  s.consumedRamps.add(ramp.id);
+                  continue;
+                }
                 beginSnowRecovery(s,"wipeout","RAMP LIP COLLISION!",onSound,{x:ramp.x,z:ramp.z});
                 break;
               }
@@ -973,6 +1050,14 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
                 s.lastText=`✦ SHATTER! ROCK ${s.rockShattered} • +110 ✦`;
                 s.textUntil=s.t+.9;
                 onSound("shatter");
+                continue;
+              }
+              // During the two normal-riding shield seconds, rocks stay
+              // visible and intact; the rider simply passes safely by.
+              // Remember contact so the same rock cannot crash the rider on
+              // the exact frame the shield expires.
+              if(s.frostCollisionGrace>0){
+                s.hitRocks.add(rock.id);
                 continue;
               }
               // Normal collisions never destroy or hide a rock.
@@ -1261,8 +1346,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       look.lerp(aim,crashBlend);
     }
 
-    // V30: board-locked cinematic shots. Hold one view, then CUT directly to
-    // another low front/side angle. Only intro and exit use eased movement.
+    // V32: board-locked cinematic CUTS. Randomly alternate between low trick
+    // close-ups, rear high-speed chase, and rock-shatter action shots.
     const director=frostCamera.current;
     const frostActive=playing && s.frostHover && s.powerTime>0 && !s.recovery;
     let frostMix=0;
@@ -1285,15 +1370,36 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         director.exitYaw=null;
         director.exitTarget=null;
         director.lastBoard=null;
+        director.lastShatterCount=s.rockShattered;
+        director.lastCutAt=-99;
+        director.speedShots=0;
+        director.focusRock=null;
       }
-      if(s.powerTime>FROST_CAMERA_RETURN_SECONDS && s.t>=director.nextAt){
+      // A fresh shatter may trigger a special shot between regular timed cuts.
+      // Do not cut on every particle or during the smooth entrance/exit.
+      const newImpact=s.rockShattered>director.lastShatterCount;
+      director.lastShatterCount=s.rockShattered;
+      const rockFocus=frostRockCameraTarget(s,localChunks);
+      const cinematicPhase=s.t-director.startAt>=FROST_CAMERA_INTRO_SECONDS &&
+        s.powerTime>FROST_CAMERA_RETURN_SECONDS;
+      const impactCut=cinematicPhase && newImpact && s.t-director.lastCutAt>.34;
+      if(s.powerTime>FROST_CAMERA_RETURN_SECONDS && (s.t>=director.nextAt || impactCut)){
         const firstShot=director.index<0;
-        const next=nextFrostCameraShot(director.index);
+        // Guarantee at least one rear-speed shot by the first few cuts, then
+        // leave the order randomized. Shatters still take priority over it.
+        const forceSpeed=!firstShot && director.speedShots===0 &&
+          s.t-director.startAt>2.15 && !impactCut;
+        const next=nextFrostCameraShot(director.index,Math.random,{
+          impact:impactCut,forceSpeed,rockAhead:!!rockFocus,
+        });
         director.index=next.index;
         director.shot=next.shot;
-        // The initial shot EASES IN; subsequent shots use actual camera cuts.
-        frostCut=!firstShot && s.t-director.startAt>=FROST_CAMERA_INTRO_SECONDS;
-        director.nextAt=s.t+(firstShot?1.34:.58+Math.random()*.26);
+        director.focusRock=next.shot.kind==="shatter"?rockFocus:null;
+        if(next.shot.kind==="speed")director.speedShots++;
+        // First shot eases in. Every subsequent mid-boost change is a cut.
+        frostCut=!firstShot && cinematicPhase;
+        director.lastCutAt=s.t;
+        director.nextAt=s.t+(firstShot?1.34:next.shot.kind==="shatter"?.67:.57+Math.random()*.26);
       }
       if(director.shot){
         // Keep the view fixed between cuts. No smooth orbital travel between
@@ -1324,7 +1430,11 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       }
       elevation=lerp(baseElevation,director.elevation,frostMix);
       radius=lerp(baseRadius,director.radius,frostMix);
-      desiredFov=lerp(baseFov,mobile?43:42,frostMix);
+      // Rear chase shots widen the view to emphasize rushing snow and
+      // approaching obstacles. Close trick shots stay cinematic and tighter.
+      const shotFov=director.shot?.kind==="speed"?(mobile?52:50)
+        :director.shot?.kind==="shatter"?(mobile?47:46):(mobile?43:42);
+      desiredFov=lerp(baseFov,shotFov,frostMix);
       // getWorldPosition includes animated stance yaw/pitch and board offset.
       // The focus remains glued to the deck itself, not s.z or a spot behind.
       if(root.current && board.current){
@@ -1336,6 +1446,22 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           frostBoardAnchor.y+director.lookHeight,
           frostBoardAnchor.z,
         );
+        if(director.shot?.kind==="speed"){
+          // Camera behind, aimed slightly down-course: speed is visible, but
+          // the board still occupies the foreground instead of disappearing.
+          frostLook.z-=1.45;
+        }else if(director.shot?.kind==="shatter"){
+          // Briefly favor debris or a nearby rock without ever losing the board.
+          // Do not chase a fixed old explosion at 60 world units per second.
+          const impact=rockFocus?.explosion?rockFocus:director.focusRock;
+          if(impact){
+            const dx=impact.x-frostBoardAnchor.x,dz=impact.z-frostBoardAnchor.z;
+            if(Math.hypot(dx,dz)<10){
+              frostLook.x+=clamp(dx*.26,-1.6,1.6);
+              frostLook.z+=clamp(dz*.26,-1.6,1.6);
+            }
+          }
+        }
         look.lerp(frostLook,frostMix);
       }
     }else if(director.active){
@@ -1921,6 +2047,7 @@ export default function SnowboardGame(){
     </div>
     {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?192:145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none"}}>
       {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".07em"}}>✦ FROST SHROOM {hud.powerRemaining.toFixed(1)}s • {hud.rockShattered||0} ROCKS ✦</div>}
+      {hud.powerRemaining<=0 && hud.shieldRemaining>0 && <div style={{font:"900 12px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".08em"}}>❄ FROST SHIELD {hud.shieldRemaining.toFixed(1)}s ❄</div>}
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
       {hud.air && <div style={{fontWeight:900,color:"#d7f8ff",textShadow:"2px 2px #285467",fontSize:12}}>AIR {hud.airHeight.toFixed(1)}m · PEAK {hud.peakAir.toFixed(1)}m</div>}
       {hud.recovery!=="riding" && <div style={{fontWeight:900,color:"#ffd89a",textShadow:"2px 2px #285467",fontSize:12}}> {hud.recovery==="chasing" ? "RUNNING BACK TO THE BOARD" : hud.recovery==="remounting" ? "REMOUNTING" : "RIDER DOWN"}</div>}
