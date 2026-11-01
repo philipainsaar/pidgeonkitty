@@ -523,23 +523,29 @@ function snowRemountMotion(rec, rider, board, returnTo) {
 }
 
 /**
- * V28 Frost Trick Cam: angles are ABSOLUTE world-space azimuths, not offsets
- * from the rear-facing chase camera. +Z is uphill/behind the rider, so every
- * shot is in the front or side hemisphere (cos(yaw) < 0). This keeps the
- * snowboard and automatic tricks visible instead of filming the rider's back.
- * lookHeight is above the actual board's WORLD-SPACE center, not the terrain.
- * Keep the orbit independent of spinning board yaw to avoid nausea-inducing
- * camera spins during 720 / 1080 tricks. No new render targets or effects.
+ * V30: quick editorial CUTS between front / side views of the board.
+ * +Z is behind the rider; every yaw stays in the front hemisphere.
+ * The low angles aim at the deck, not the rider's face. Each camera pose is
+ * stationary relative to the snowboard's world position, even during flips.
+ * The FIRST shot and LAST 3 seconds are blended separately, never cut.
  */
+const FROST_CAMERA_INTRO_SECONDS = 1.15;
+const FROST_CAMERA_RETURN_SECONDS = 3;
 const FROST_CAMERA_SHOTS = [
-  { yaw:  2.16, elevation: .27, radius: 3.85, lookHeight: .59 }, // front right / binding closeup
-  { yaw:  3.96, elevation: .30, radius: 4.05, lookHeight: .54 }, // front left / carving edge
-  { yaw:  1.82, elevation: .20, radius: 4.30, lookHeight: .48 }, // low right side / board underside
-  { yaw:  4.40, elevation: .23, radius: 4.40, lookHeight: .51 }, // low left side / grab
-  { yaw:  2.78, elevation: .44, radius: 4.30, lookHeight: .66 }, // elevated front-right / flip
-  { yaw:  3.35, elevation: .33, radius: 3.95, lookHeight: .60 }, // front-on board closeup
-  { yaw:  3.74, elevation: .41, radius: 4.20, lookHeight: .62 }, // elevated front-left / spin
+  { yaw: 2.10, elevation: .15, radius: 4.65, lookHeight: .38 }, // low front-right binding detail
+  { yaw: 4.17, elevation: .16, radius: 4.80, lookHeight: .38 }, // low front-left board edge
+  { yaw: 1.85, elevation: .12, radius: 4.90, lookHeight: .35 }, // very low right profile
+  { yaw: 4.43, elevation: .14, radius: 4.90, lookHeight: .37 }, // very low left profile
+  { yaw: 2.76, elevation: .23, radius: 4.70, lookHeight: .48 }, // front-right grab and flip
+  { yaw: 3.20, elevation: .18, radius: 4.60, lookHeight: .44 }, // low straight-on board
+  { yaw: 3.68, elevation: .22, radius: 4.75, lookHeight: .48 }, // low front-left spin
 ];
+
+/** C2 smooth easing for the entry and the final three-second exit. */
+function frostCameraEase(t){
+  const x=clamp(t,0,1);
+  return x*x*x*(x*(x*6-15)+10);
+}
 
 /** Choose a different angle, without repeating the exact same shot twice. */
 function nextFrostCameraShot(previousIndex, random = Math.random) {
@@ -1255,13 +1261,12 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       look.lerp(aim,crashBlend);
     }
 
-    // V28: FROST BOARD CAM. Follow the snowboard's actual transformed world
-    // position during aerial spins/flips, and orbit only in front/side angles.
-    // The camera does NOT inherit the board's spinning yaw: the BOARD spins
-    // on-screen, not the viewer. Start returning one second before boost ends.
+    // V30: board-locked cinematic shots. Hold one view, then CUT directly to
+    // another low front/side angle. Only intro and exit use eased movement.
     const director=frostCamera.current;
     const frostActive=playing && s.frostHover && s.powerTime>0 && !s.recovery;
     let frostMix=0;
+    let frostCut=false;
     let frostAnchorValid=false;
     let azimuth=baseAzimuth;
     let elevation=baseElevation;
@@ -1281,28 +1286,30 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         director.exitTarget=null;
         director.lastBoard=null;
       }
-      if(s.powerTime>3 && s.t>=director.nextAt){
+      if(s.powerTime>FROST_CAMERA_RETURN_SECONDS && s.t>=director.nextAt){
+        const firstShot=director.index<0;
         const next=nextFrostCameraShot(director.index);
         director.index=next.index;
         director.shot=next.shot;
-        director.nextAt=s.t+1.0+Math.random()*.58;
+        // The initial shot EASES IN; subsequent shots use actual camera cuts.
+        frostCut=!firstShot && s.t-director.startAt>=FROST_CAMERA_INTRO_SECONDS;
+        director.nextAt=s.t+(firstShot?1.34:.58+Math.random()*.26);
       }
-      if(director.shot && s.powerTime>3){
-        const step=Math.min(1,dt*3.9);
-        director.yaw=approachAngle(director.yaw,director.shot.yaw,step);
-        director.elevation=lerp(director.elevation,director.shot.elevation,step);
-        // Portrait screens get a little more room for the board and feet.
-        const shotRadius=director.shot.radius*(mobile?1.26:1.12);
-        director.radius=lerp(director.radius,shotRadius,Math.min(1,dt*5.5));
-        director.lookHeight=lerp(director.lookHeight,director.shot.lookHeight,step);
+      if(director.shot){
+        // Keep the view fixed between cuts. No smooth orbital travel between
+        // different trick shots, and no dependence on the board's spin yaw.
+        director.yaw=director.shot.yaw;
+        director.elevation=director.shot.elevation;
+        director.radius=director.shot.radius*(mobile?1.26:1.12);
+        director.lookHeight=director.shot.lookHeight;
       }
-      const intro=smoothstep((s.t-director.startAt)/.43);
-      const exit=smoothstep(s.powerTime/3); // Last 3 seconds return to usual view.
+      const intro=frostCameraEase((s.t-director.startAt)/FROST_CAMERA_INTRO_SECONDS);
+      const exit=frostCameraEase(s.powerTime/FROST_CAMERA_RETURN_SECONDS);
       frostMix=intro*exit;
-      // Keep one continuous angle path during the final 3 seconds. Otherwise
+      // Keep one continuous angle path during the smooth 3-second exit. Otherwise
       // blending angles at the +/-PI seam can make the camera suddenly whip
       // to the opposite side midway through the return animation.
-      if(s.powerTime<=3){
+      if(s.powerTime<=FROST_CAMERA_RETURN_SECONDS){
         if(director.exitYaw===null){
           director.exitYaw=director.yaw;
         }
@@ -1368,8 +1375,13 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       director.lastBoard=null;
     }
     if(!cameraReady.current){camera.position.copy(dest);cameraReady.current=true;}
-    else camera.position.lerp(dest,Math.min(1,dt*(frostMix>.01?9:s.recovery?10:orbit.dragging?11:4.8)));
-    targetLook.lerp(look,Math.min(1,dt*(frostMix>.01?12:s.recovery?12:7)));
+    else if(frostCut && frostMix>.98){
+      // A REAL EDIT CUT: set both lens AND aim instantly on the same frame.
+      // Moving one without the other would temporarily hide the snowboard.
+      camera.position.copy(dest);
+      targetLook.copy(look);
+    }else camera.position.lerp(dest,Math.min(1,dt*(frostMix>.01?9:s.recovery?10:orbit.dragging?11:4.8)));
+    if(!(frostCut && frostMix>.98))targetLook.lerp(look,Math.min(1,dt*(frostMix>.01?12:s.recovery?12:7)));
     camera.lookAt(targetLook);
     // Fallback for mobile frame drops or sudden camera state changes: never
     // allow the lens to stay several metres away from the current board.
