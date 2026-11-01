@@ -523,18 +523,22 @@ function snowRemountMotion(rec, rider, board, returnTo) {
 }
 
 /**
- * V26 Frost Trick Cam shot presets, in radians relative to the chosen follow view.
- * Close enough to see the animation, but wider on narrow mobile screens so the
- * board and head remain in view. No extra cameras, render targets or effects.
+ * V27 Frost Trick Cam: angles are ABSOLUTE world-space azimuths, not offsets
+ * from the rear-facing chase camera. +Z is uphill/behind the rider, so every
+ * shot is in the front or side hemisphere (cos(yaw) < 0). This keeps the
+ * snowboard and automatic tricks visible instead of filming the rider's back.
+ * lookHeight is above the actual board's WORLD-SPACE center, not the terrain.
+ * Keep the orbit independent of spinning board yaw to avoid nausea-inducing
+ * camera spins during 720 / 1080 tricks. No new render targets or effects.
  */
 const FROST_CAMERA_SHOTS = [
-  { yaw:  1.10, elevation: .34, radius: 3.85, lookHeight: 1.35 }, // front-side grab
-  { yaw: -1.25, elevation: .27, radius: 4.25, lookHeight: 1.12 }, // opposite edge
-  { yaw:  2.35, elevation: .48, radius: 4.10, lookHeight: 1.30 }, // front three-quarter
-  { yaw: -2.30, elevation: .38, radius: 4.35, lookHeight: 1.52 }, // board and rider spin
-  { yaw:   .24, elevation: .63, radius: 3.90, lookHeight: 1.05 }, // top-down trick detail
-  { yaw:  3.00, elevation: .26, radius: 4.55, lookHeight: 1.40 }, // reverse chase close-up
-  { yaw:  -.58, elevation: .56, radius: 3.95, lookHeight: 1.18 }, // over-shoulder close-up
+  { yaw:  2.16, elevation: .27, radius: 3.85, lookHeight: .59 }, // front right / binding closeup
+  { yaw:  3.96, elevation: .30, radius: 4.05, lookHeight: .54 }, // front left / carving edge
+  { yaw:  1.82, elevation: .20, radius: 4.30, lookHeight: .48 }, // low right side / board underside
+  { yaw:  4.40, elevation: .23, radius: 4.40, lookHeight: .51 }, // low left side / grab
+  { yaw:  2.78, elevation: .44, radius: 4.30, lookHeight: .66 }, // elevated front-right / flip
+  { yaw:  3.35, elevation: .33, radius: 3.95, lookHeight: .60 }, // front-on board closeup
+  { yaw:  3.74, elevation: .41, radius: 4.20, lookHeight: .62 }, // elevated front-left / spin
 ];
 
 /** Choose a different angle, without repeating the exact same shot twice. */
@@ -661,14 +665,15 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
   const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), kickSnow=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
   const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
-  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:1.2,shot:null});
+  const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null});
+  const frostBoardAnchor=useMemo(()=>new THREE.Vector3(),[]);
   const nearby=useRef({index:-1,chunks:[]});
   const {camera}=useThree();
   useEffect(()=>{phaseRef.current=phase;},[phase]);
   useEffect(()=>{
     stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;crashCameraBlend.current=0;
-    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:1.2,shot:null};
+    frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null};
     nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
     mixer.stopAllAction();active.current=null;
@@ -1250,9 +1255,10 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       look.lerp(aim,crashBlend);
     }
 
-    // V26: FROST TRICK CAM. While Frost Shroom powers the automatic tricks,
-    // rotate between random cinematic closeups. Begin returning exactly one
-    // second BEFORE the boost ends, using the full last second to blend out.
+    // V27: FROST BOARD CAM. Follow the snowboard's actual transformed world
+    // position during aerial spins/flips, and orbit only in front/side angles.
+    // The camera does NOT inherit the board's spinning yaw: the BOARD spins
+    // on-screen, not the viewer. Start returning one second before boost ends.
     const director=frostCamera.current;
     const frostActive=playing && s.frostHover && s.powerTime>0 && !s.recovery;
     let frostMix=0;
@@ -1266,10 +1272,12 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         director.startAt=s.t;
         director.nextAt=s.t;
         director.index=-1;
-        director.yaw=0;
+        director.yaw=baseAzimuth; // travel naturally from the current view
         director.elevation=baseElevation;
         director.radius=baseRadius;
-        director.lookHeight=1.2;
+        director.lookHeight=.55;
+        director.exitYaw=null;
+        director.exitTarget=null;
       }
       if(s.powerTime>1 && s.t>=director.nextAt){
         const next=nextFrostCameraShot(director.index);
@@ -1277,24 +1285,49 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         director.shot=next.shot;
         director.nextAt=s.t+.95+Math.random()*.53;
       }
-      if(director.shot){
-        const step=Math.min(1,dt*3.6);
+      if(director.shot && s.powerTime>1){
+        const step=Math.min(1,dt*3.9);
         director.yaw=approachAngle(director.yaw,director.shot.yaw,step);
         director.elevation=lerp(director.elevation,director.shot.elevation,step);
-        // A little more room on portrait phones avoids clipping the feet.
-        const shotRadius=director.shot.radius*(mobile?1.26:1);
-        director.radius=lerp(director.radius,shotRadius,Math.min(1,dt*5.0));
+        // Portrait screens get a little more room for the board and feet.
+        const shotRadius=director.shot.radius*(mobile?1.17:1);
+        director.radius=lerp(director.radius,shotRadius,Math.min(1,dt*5.5));
         director.lookHeight=lerp(director.lookHeight,director.shot.lookHeight,step);
       }
-      const intro=smoothstep((s.t-director.startAt)/.48);
-      const exit=smoothstep(s.powerTime/1.0); // 1s left: ease to usual camera
+      const intro=smoothstep((s.t-director.startAt)/.43);
+      const exit=smoothstep(s.powerTime); // Last 1 second returns to usual view.
       frostMix=intro*exit;
-      azimuth=baseAzimuth+director.yaw*frostMix;
+      // Keep one continuous angle path during the final second. Otherwise
+      // blending angles at the +/-PI seam can make the camera suddenly whip
+      // to the opposite side midway through the return animation.
+      if(s.powerTime<=1){
+        if(director.exitYaw===null){
+          director.exitYaw=director.yaw;
+        }
+        director.exitTarget=director.exitYaw+Math.atan2(
+          Math.sin(baseAzimuth-director.exitYaw),
+          Math.cos(baseAzimuth-director.exitYaw),
+        );
+        azimuth=lerp(director.exitTarget,director.exitYaw,exit);
+      }else{
+        // ABSOLUTE cinematic azimuth, NOT added to the old follow azimuth.
+        azimuth=approachAngle(baseAzimuth,director.yaw,intro);
+      }
       elevation=lerp(baseElevation,director.elevation,frostMix);
       radius=lerp(baseRadius,director.radius,frostMix);
-      desiredFov=lerp(baseFov,mobile?42:39,frostMix);
-      const frostLook=new THREE.Vector3(s.x,visualY+director.lookHeight,s.z);
-      look.lerp(frostLook,frostMix);
+      desiredFov=lerp(baseFov,mobile?43:42,frostMix);
+      // getWorldPosition includes animated stance yaw/pitch and board offset.
+      // The focus remains glued to the deck itself, not s.z or a spot behind.
+      if(root.current && board.current){
+        root.current.updateMatrixWorld(true);
+        board.current.getWorldPosition(frostBoardAnchor);
+        const frostLook=new THREE.Vector3(
+          frostBoardAnchor.x,
+          frostBoardAnchor.y+director.lookHeight,
+          frostBoardAnchor.z,
+        );
+        look.lerp(frostLook,frostMix);
+      }
     }else if(director.active){
       director.active=false;
       director.shot=null;
