@@ -1990,7 +1990,7 @@ function FollowCameraDragArea({ cameraOrbitRef, mobile }) {
     onPointerDown={down} onPointerMove={move} onPointerUp={release}
     onPointerCancel={release} onLostPointerCapture={release} onDoubleClick={reset}
     style={{position:"absolute",zIndex:5,left:"50%",transform:"translateX(-50%)",
-      top:mobile?82:9,height:mobile?108:119,width:mobile?"min(56vw,260px)":"min(36vw,420px)",
+      top:mobile?191:9,height:mobile?74:119,width:mobile?"min(52vw,230px)":"min(36vw,420px)",
       touchAction:"none",userSelect:"none",WebkitUserSelect:"none",cursor:"grab",
       display:"flex",alignItems:"flex-start",justifyContent:"center"}}>
     <span aria-hidden="true" style={{font:"800 10px system-ui, sans-serif",letterSpacing:1.2,
@@ -2100,17 +2100,22 @@ function Snow360Logo({ startScreen = false, mobile = false }) {
   const maxH=startScreen ? 370 : mobile ? 94 : 132;
   const width=Math.min(maxW,maxH*aspect);
   const frame = {
-    width:startScreen ? `min(100%, ${width.toFixed(2)}px)` : width,
+    // On phones, leave the top-right corner free for a compact vertical HUD.
+    width:startScreen ? `min(100%, ${width.toFixed(2)}px)`
+      : mobile ? `min(calc(100vw - 145px), ${width.toFixed(2)}px)` : width,
     aspectRatio:String(aspect),
     margin:startScreen ? "3px auto 3px" : 0,
     position:"relative", flexShrink:0,
   };
   const imgStyle = {
     position:"absolute",inset:0,width:"100%",height:"100%",
-    objectFit:"fill",pointerEvents:"none",userSelect:"none",WebkitUserSelect:"none",
+    // Never stretch a PNG to a guessed aspect ratio during async alpha trimming.
+    objectFit:"contain",pointerEvents:"none",userSelect:"none",WebkitUserSelect:"none",
   };
-  return <div style={frame}>
-    {images?.missing ? <div style={{width:"100%",height:"100%",display:"flex",
+  return <div style={frame} aria-busy={!images}>
+    {/* Keep the frame reserved, but do not render an untrimmed PNG with an
+        incorrect temporary aspect ratio. Show both layers only after trimming. */}
+    {!images ? null : images.missing ? <div style={{width:"100%",height:"100%",display:"flex",
       justifyContent:startScreen?"center":"flex-start",alignItems:"center",
       fontSize:startScreen?"clamp(34px, 8vw, 64px)":mobile?25:42,
       fontStyle:"italic",fontWeight:1000,letterSpacing:"-.04em",lineHeight:1,
@@ -2258,17 +2263,40 @@ export default function SnowboardGame(){
     {phase==="playing" && <FrostMagicOverlay remaining={hud.powerRemaining||0} mobile={mobile===true}/>}
     {/* Original retro filter, enabled only by the optional title-screen setting. */}
     {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
-    <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",flexDirection:mobile?"column":"row",justifyContent:"space-between",alignItems:"flex-start",gap:mobile?9:10,pointerEvents:"none"}}>
-      <div style={{display:"flex",flexDirection:"column",gap:SNOW360_LOGO_HUD_GAP,filter:"drop-shadow(2px 3px #103348)"}}>
-        <div style={{fontSize:10,fontWeight:900,letterSpacing:".24em",color:"#eefffc"}}>PIDGEONKITTY PRESENTS</div>
+    {/* The mobile HUD is a real two-column overlay. The large logo occupies
+        the left; SPEED / TIME / SCORE form a narrow vertical rail at top right.
+        Distance lives inside that rail, so nothing overlaps when PNG trim
+        finishes or the screen rotates. Desktop retains the horizontal HUD. */}
+    <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,
+      padding:mobile?"max(8px, env(safe-area-inset-top)) 9px 0":"clamp(9px,2vw,22px)",
+      display:"flex",flexDirection:"row",justifyContent:"space-between",alignItems:"flex-start",
+      gap:mobile?6:10,pointerEvents:"none"}}>
+      <div style={{display:"flex",flexDirection:"column",gap:SNOW360_LOGO_HUD_GAP,
+        minWidth:0,maxWidth:mobile?"calc(100vw - 145px)":undefined,
+        filter:"drop-shadow(2px 3px #103348)"}}>
+        <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".12em":".24em",color:"#eefffc",whiteSpace:"nowrap"}}>PIDGEONKITTY PRESENTS</div>
         <Snow360Logo mobile={mobile===true} />
-        <div style={{fontSize:10,fontWeight:900,letterSpacing:".16em",color:"#cdfaff"}}>DOWNHILL FREESTYLE</div>
+        <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".095em":".16em",color:"#cdfaff",whiteSpace:"nowrap"}}>DOWNHILL FREESTYLE</div>
       </div>
-      <div className="snow64-hud" style={{display:"flex",gap:8,alignItems:"stretch",alignSelf:mobile?"stretch":"auto",justifyContent:mobile?"space-between":"flex-start"}}>
-        {[{label:"SPEED",value:hud.speed,unit:"KM/H"},{label:"TIME",value:formatTime(hud.time)},{label:"SCORE",value:hud.score.toLocaleString()}].map(v=><div key={v.label} className="snow64-panel" style={{minWidth:mobile?65:100,textAlign:"center"}}><div className="snow64-label">{v.label}</div><div className="snow64-number">{v.value}<span style={{fontSize:9,marginLeft:2}}>{v.unit}</span></div></div>)}
+      <div className="snow64-hud" style={{display:"flex",flexDirection:mobile?"column":"row",gap:mobile?5:8,
+        alignItems:"stretch",alignSelf:"flex-start",justifyContent:"flex-start",
+        flexShrink:0,width:mobile?112:undefined}}>
+        {[{label:"SPEED",value:hud.speed,unit:"KM/H"},{label:"TIME",value:formatTime(hud.time)},{label:"SCORE",value:hud.score.toLocaleString()}].map(v=><div
+          key={v.label} className="snow64-panel" style={{minWidth:mobile?0:100,width:mobile?"100%":undefined,
+            boxSizing:"border-box",textAlign:"center",padding:mobile?"4px 5px":"8px 13px",
+            borderRadius:mobile?8:9}}>
+          <div className="snow64-label" style={mobile?{fontSize:8,letterSpacing:".12em",lineHeight:1.15}:undefined}>{v.label}</div>
+          <div className="snow64-number" style={mobile?{fontSize:17,lineHeight:1.15,whiteSpace:"nowrap"}:undefined}>{v.value}<span
+            style={{fontSize:mobile?7:9,marginLeft:2}}>{v.unit}</span></div>
+        </div>)}
+        {mobile && <div style={{textAlign:"right",padding:"3px 1px 0",lineHeight:1.2}}>
+          <div style={{color:"#22546c",fontSize:8,fontWeight:900,letterSpacing:".08em",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
+          <div style={{fontSize:15,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
+          <div style={{fontSize:9,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
+        </div>}
       </div>
     </div>
-    {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?192:145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none"}}>
+    {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?277:145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none",maxWidth:mobile?"94vw":undefined}}>
       {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".07em"}}>✦ FROST SHROOM {hud.powerRemaining.toFixed(1)}s • {hud.rockShattered||0} ROCKS ✦</div>}
       {hud.powerRemaining<=0 && hud.shieldRemaining>0 && <div style={{font:"900 12px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".08em"}}>❄ FROST SHIELD {hud.shieldRemaining.toFixed(1)}s ❄</div>}
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
@@ -2276,11 +2304,11 @@ export default function SnowboardGame(){
       {hud.recovery!=="riding" && <div style={{fontWeight:900,color:"#ffd89a",textShadow:"2px 2px #285467",fontSize:12}}> {hud.recovery==="chasing" ? "RUNNING BACK TO THE BOARD" : hud.recovery==="remounting" ? "REMOUNTING" : "RIDER DOWN"}</div>}
       {hud.combo>1&&<div style={{fontWeight:900,letterSpacing:".15em",color:"#f8ffff",textShadow:"2px 2px #285467"}}>COMBO ×{hud.combo}</div>}
     </div>}
-    <div style={{position:"absolute",right:mobile?10:20,top:mobile?100:121,zIndex:3,pointerEvents:"none",textAlign:"right"}}>
+    {!mobile && <div style={{position:"absolute",right:20,top:121,zIndex:3,pointerEvents:"none",textAlign:"right"}}>
       <div className="snow64-label" style={{color:"#22546c",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
-      <div style={{fontSize:mobile?15:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
-      <div style={{fontSize:mobile?10:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
-    </div>
+      <div style={{fontSize:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
+      <div style={{fontSize:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
+    </div>}
     {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onClick={e=>{if(e.target?.closest?.("button"))return;phase==="paused"?pause():start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
       <div style={{maxWidth:mobile?560:1060,width:"min(100%,1060px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
