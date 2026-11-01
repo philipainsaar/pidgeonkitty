@@ -1233,7 +1233,7 @@ function formatTime(s){const m=Math.floor(s/60);const sec=(s%60).toFixed(2).padS
 
 /** Two independent touch zones allow true two-thumb multi-touch: steering with the
  * left finger while drawing tricks on the right. No WebGL raycasting required. */
-function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckChange }) {
+function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckChange, trickMode }) {
   const steering = useRef(null);
   const drawing = useRef(null);
   const strokePath = useRef(null);
@@ -1324,7 +1324,13 @@ function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckCha
       );
       const travelled = d.points.reduce((sum,p,i) => i ? sum + Math.hypot(p.x-d.points[i-1].x,p.y-d.points[i-1].y) : 0,0);
       const tap = travelled < 26 && span < 22;
-      if (tap) {
+      if (trickMode === "buttons") {
+        // In buttons mode the right touch area remains an Ollie pad. Swipe
+        // recognition is disabled: only the visible trick icons perform tricks.
+        if (tap && !stateRef.current.inAir && !stateRef.current.recovery) {
+          act({type:"jump",boost:clamp((elapsed-120)/750,0,1)});
+        }
+      } else if (tap) {
         if (stateRef.current.inAir && !stateRef.current.recovery) {
           // Easy mode without buttons: tap mid-air to cycle four real grab clips.
           // Taps queue immediately even during another grab animation.
@@ -1361,18 +1367,113 @@ function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckCha
       style={{...zone,left:0,width:"50%"}} onPointerDown={startSteer}
       onPointerMove={moveSteer} onPointerUp={endSteer}
       onPointerCancel={endSteer} onLostPointerCapture={endSteer} />
-    <div aria-label="Jump and trick touchpad: tap to jump or draw a trick pattern"
+    <div aria-label={trickMode==="buttons"?"Tap to Ollie, or use the trick icons":"Jump and trick touchpad: tap to jump or draw a trick pattern"}
       style={{...zone,right:0,width:"50%"}} onPointerDown={startDrawing}
       onPointerMove={moveDrawing} onPointerUp={endDrawing}
       onPointerCancel={e=>endDrawing(e,true)}
       onLostPointerCapture={e=>endDrawing(e,true)}>
-      <svg aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",overflow:"visible"}}>
+      {trickMode==="draw" && <svg aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",overflow:"visible"}}>
         <path ref={strokePath} fill="none" stroke="#ffe284" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"
           style={{filter:"drop-shadow(0 0 5px #ff9ca8)"}}/>
-      </svg>
+      </svg>}
     </div>
   </>;
 }
+
+/** Optional arcade-button alternative to drawing. Renders only in BUTTONS mode.
+ * Kept separate from the Three.js scene: no raycasting, no additional WebGL draws.
+ * All 11 actions go through the same trick queue and landing checks as gestures.
+ */
+const SNOW64_BUTTON_TRICKS = [
+  {key:"1",label:"180",icon:"spin",full:"180 degree spin"},
+  {key:"2",label:"360",icon:"spin",full:"360 degree spin"},
+  {key:"3",label:"720",icon:"spin",full:"720 degree spin"},
+  {key:"4",label:"1080",icon:"spin",full:"1080 degree spin"},
+  {key:"5",label:"METHOD",icon:"method",full:"Method grab"},
+  {key:"6",label:"INDY",icon:"indy",full:"Indy grab"},
+  {key:"7",label:"BACK",icon:"backflip",full:"Backflip"},
+  {key:"8",label:"CORK",icon:"cork",full:"Cork 720"},
+  {key:"9",label:"TAIL",icon:"tail",full:"Tail grab"},
+  {key:"0",label:"NOSE",icon:"nose",full:"Nose grab"},
+  {key:"f",label:"FRONT",icon:"frontflip",full:"Frontflip"},
+];
+
+function Snow64TrickGlyph({kind,level}) {
+  const props={width:23,height:23,viewBox:"0 0 32 32",fill:"none",stroke:"currentColor",strokeWidth:2.4,strokeLinecap:"round",strokeLinejoin:"round","aria-hidden":"true"};
+  if(kind==="spin" || kind==="cork")return <svg {...props}>
+    {level==="1" ? <path d="M 6 16 A 10 10 0 0 1 26 16"/> : <path d="M 8 11 A 11 11 0 1 1 7 23"/>}
+    <path d={level==="1" ? "M 21 12 L 26 16 L 28 10" : "M 7 16 L 8 10 L 14 12"}/>
+    {level==="3" && <path d="M 11 15 A 5.5 5.5 0 1 1 15 21"/>}
+    {level==="4" && <><path d="M 11 15 A 5.5 5.5 0 1 1 15 21"/><circle cx="16" cy="16" r="2.2"/></>}
+    {kind==="cork" ? <path d="M 12 19 C 9 12 22 10 22 18 C 22 22 16 24 13 20"/> : level==="2"?<path d="M 12 22 L 20 22"/>:null}
+  </svg>;
+  if(kind==="backflip" || kind==="frontflip")return <svg {...props}>
+    <path d={kind==="backflip"?"M 11 6 C 2 10 2 23 14 26 C 23 28 28 21 27 14":"M 21 6 C 30 10 30 23 18 26 C 9 28 4 21 5 14"}/>
+    <path d={kind==="backflip"?"M 23 16 L 27 12 L 30 18":"M 9 16 L 5 12 L 2 18"}/>
+    <path d="M 11 18 L 22 14 M 13 21 L 20 10"/>
+  </svg>;
+  return <svg {...props}>
+    <path d="M 5 22 Q 16 26 27 22" strokeWidth="3.3"/>
+    <circle cx="12" cy="14" r="2.3"/><circle cx="21" cy="14" r="2.3"/>
+    {kind==="method" ? <path d="M 15 4 L 16 9 L 21 10 L 16 12 L 15 17 L 13 12 L 8 10 L 13 9 Z"/> : null}
+    {kind==="indy" ? <path d="M 16 5 L 16 17 M 13 10 L 16 14 L 20 10"/> : null}
+    {kind==="tail" ? <path d="M 13 7 L 6 18 M 6 18 L 6 12 M 6 18 L 12 18"/> : null}
+    {kind==="nose" ? <path d="M 20 7 L 27 18 M 27 18 L 21 18 M 27 18 L 27 12"/> : null}
+  </svg>;
+}
+
+const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
+  const jumpHeld=useRef(null);
+  const sendTrick=useCallback(key=>act({type:"trick",key}),[act]);
+  const sendJump=useCallback(boost=>act({type:"jump",boost}),[act]);
+  const jumpDown=e=>{
+    e.stopPropagation();
+    if(e.pointerType==="mouse" && e.button!==0)return;
+    jumpHeld.current={id:e.pointerId,start:performance.now()};
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const jumpUp=e=>{
+    e.stopPropagation();
+    const held=jumpHeld.current;
+    if(!held || held.id!==e.pointerId)return;
+    jumpHeld.current=null;
+    sendJump(clamp((performance.now()-held.start-120)/750,0,1));
+  };
+  return <div role="group" aria-label="Snowboard trick buttons" className="snow64-button-pad"
+    onPointerDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
+    style={{position:"absolute",right:mobile?"max(8px, env(safe-area-inset-right))":18,
+      bottom:mobile?"max(40px, env(safe-area-inset-bottom))":26,zIndex:7,
+      width:mobile?"clamp(144px, 45vw, 190px)":238,
+      padding:mobile?5:8,borderRadius:13,border:"1px solid #e1faffb8",
+      background:"linear-gradient(160deg,#113e56de,#0e2749e6)",
+      boxShadow:"0 5px 16px #03273a80",touchAction:"manipulation",userSelect:"none",WebkitUserSelect:"none"}}>
+    <div style={{fontSize:mobile?8:10,fontWeight:950,color:"#b3efff",letterSpacing:".1em",textAlign:"center",marginBottom:5}}>✦ TRICK BUTTONS ✦</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:mobile?3:5}}>
+      {SNOW64_BUTTON_TRICKS.map(t=><button key={t.key} type="button"
+        aria-label={`Perform ${t.full}`} title={`${t.full} · ${t.key.toUpperCase()}`}
+        className="snow64-iconbtn" onPointerDown={e=>e.stopPropagation()}
+        onClick={e=>{e.stopPropagation();sendTrick(t.key);}}
+        style={{minWidth:0,minHeight:mobile?44:53,padding:"3px 0 2px",color:"#f9f3d9",
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
+          background:"linear-gradient(#2d657d,#194860)",border:"1px solid #9ce5f5a8",borderRadius:8,
+          boxShadow:"inset 0 1px #ffffff50,0 2px #09283d",cursor:"pointer",touchAction:"manipulation"}}>
+        <Snow64TrickGlyph kind={t.icon} level={t.key}/>
+        <span style={{fontSize:mobile?7.5:9,fontWeight:950,lineHeight:1.05,letterSpacing:"-.015em"}}>{t.label}</span>
+      </button>)}
+      <button type="button" className="snow64-iconbtn" aria-label="Ollie jump; hold to charge" title="OLLIE · Hold to charge"
+        onPointerDown={jumpDown} onPointerUp={jumpUp} onPointerCancel={()=>{jumpHeld.current=null;}}
+        onLostPointerCapture={()=>{jumpHeld.current=null;}}
+        onClick={e=>{e.stopPropagation();if(e.detail===0)sendJump(0);}}
+        style={{minWidth:0,minHeight:mobile?44:53,padding:"3px 0 2px",color:"#293e5b",
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
+          background:"linear-gradient(#ffeb9c,#f6ad79)",border:"1px solid #fff6c1",borderRadius:8,
+          boxShadow:"inset 0 1px #ffffffa8,0 2px #75384c",cursor:"pointer",touchAction:"manipulation"}}>
+        <span aria-hidden="true" style={{fontSize:25,fontWeight:1000,lineHeight:"23px"}}>↑</span>
+        <span style={{fontSize:mobile?7.5:9,fontWeight:950,lineHeight:1.05}}>OLLIE</span>
+      </button>
+    </div>
+  </div>;
+});
 
 /** Single compositor-friendly speed layer. No animated per-ray SVG or fullscreen blur. */
 function SpeedRush({active,speed,mobile}){
@@ -1448,6 +1549,8 @@ export default function SnowboardGame(){
   const [mobile,setMobile]=useState(null);
   // Default to clean HD. The retro filter is opt-in on the title screen only.
   const [retro,setRetro]=useState(false);
+  // Default to classic drawing; selectable on the start / new-run screen.
+  const [trickMode,setTrickMode]=useState("draw");
   const soundRef=useRef(true);
   const [best,setBest]=useState(0);
   const [hud,setHud]=useState({speed:57,score:SNOW_INITIAL_SCORE,peakScore:SNOW_INITIAL_SCORE,drainRate:snowDrainPerSecond(0),distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
@@ -1535,6 +1638,9 @@ export default function SnowboardGame(){
       @keyframes snow64RushLayer{from{transform:scale(.94);opacity:.4}to{transform:scale(1.13);opacity:1}}
       .snow64-rush-layer{animation:snow64RushLayer .35s linear infinite;transform-origin:50% 50%;}
       @media (prefers-reduced-motion: reduce){.snow64-speedfx{display:none!important}}
+      .snow64-iconbtn{transition:background .10s ease,transform .10s ease}
+      .snow64-iconbtn:active{transform:scale(.92);filter:brightness(1.3)}
+      .snow64-iconbtn:focus-visible{outline:3px solid #fff1a3;outline-offset:1px}
       .snow64-panel{background:linear-gradient(130deg,#153b55ee,#0f2d46db);border:2px solid #c5eff4;border-radius:9px;box-shadow:3px 5px 0 #0e2a39bb;padding:8px 13px}
       .snow64-label{font-size:10px;font-weight:900;letter-spacing:.17em;color:#8feaf1}
       .snow64-number{font-weight:1000;font-style:italic;font-size:clamp(17px,2.6vw,30px);letter-spacing:.025em;text-shadow:2px 2px #193447}
@@ -1572,29 +1678,47 @@ export default function SnowboardGame(){
       <div style={{fontSize:mobile?15:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
       <div style={{fontSize:mobile?10:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
     </div>
-    {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onPointerDown={()=>{phase==="paused"?setPhase("playing"):start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
-      <div style={{maxWidth:560,width:"min(100%,560px)",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(20px,5vw,39px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
+    {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onClick={e=>{if(e.target?.closest?.("button"))return;phase==="paused"?setPhase("playing"):start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
+      <div style={{maxWidth:560,width:"min(100%,560px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
         <h1 style={{fontSize:"clamp(34px,7vw,70px)",fontStyle:"italic",fontWeight:1000,color:"#ffedb6",textShadow:"4px 5px #28586e",margin:"14px 0 8px",lineHeight:.94}}>PIDGEON KITTY<br/><span style={{color:"#f6a0bc"}}>SNOW 64</span></h1>
-        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 20px"}}>{phase==="ready"?"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`SCORE DEPLETED! Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
+        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`SCORE DEPLETED! Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST PEAK: {currentBest.toLocaleString()} PTS</div>}
-        {phase==="ready" && <button type="button" aria-pressed={retro}
-          onPointerDown={e=>e.stopPropagation()}
-          onClick={e=>{e.stopPropagation();setRetro(v=>!v);}}
-          style={{display:"inline-block",margin:"0 0 22px",padding:"11px 18px",border:"2px solid #d7f4ff",borderRadius:10,
-            background:retro?"#f7cc8d":"#163d59",color:retro?"#223448":"#f3fbff",
-            font:"900 13px system-ui, sans-serif",letterSpacing:".055em",cursor:"pointer",touchAction:"manipulation"}}>
-          N64 FILTER: {retro?"ON":"OFF"}
-        </button>}
+        {(phase==="ready"||phase==="finished") && <div data-snow64-settings="true"
+          onPointerDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
+          style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10,margin:"0 0 16px"}}>
+          <div role="group" aria-label="Trick input style" style={{width:"100%",maxWidth:370}}>
+            <div style={{font:"900 11px system-ui,sans-serif",letterSpacing:".1em",color:"#a8e7ed",marginBottom:7}}>CHOOSE TRICK CONTROLS</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {[["draw","✎ DRAW TRICKS"],["buttons","▦ TRICK BUTTONS"]].map(([mode,label])=><button
+                key={mode} type="button" aria-pressed={trickMode===mode} onClick={e=>{e.stopPropagation();setTrickMode(mode);}}
+                style={{padding:"11px 7px",border:"2px solid",borderColor:trickMode===mode?"#ffe998":"#7caec4",
+                  borderRadius:9,background:trickMode===mode?"#f7cc8d":"#153c56",
+                  color:trickMode===mode?"#20394d":"#f0faff",font:"900 12px system-ui,sans-serif",
+                  letterSpacing:".025em",cursor:"pointer",touchAction:"manipulation"}}>{label}</button>)}
+            </div>
+            <div style={{fontSize:10,color:"#c8e7f2",marginTop:6}}>{trickMode==="draw"
+              ? "Draw glowing gestures on mobile; airborne taps still perform grabs."
+              : "All 11 tricks + an Ollie button appear in a compact corner pad."}</div>
+          </div>
+          <button type="button" aria-pressed={retro}
+            onClick={e=>{e.stopPropagation();setRetro(v=>!v);}}
+            style={{padding:"8px 14px",border:"2px solid #d7f4ff",borderRadius:9,
+              background:retro?"#f7cc8d":"#163d59",color:retro?"#223448":"#f3fbff",
+              font:"900 11px system-ui,sans-serif",letterSpacing:".055em",cursor:"pointer",touchAction:"manipulation"}}>
+            N64 FILTER: {retro?"ON":"OFF"}
+          </button>
+        </div>}
         <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RIDE AGAIN"}</div>
-        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS<br/>TOP CENTER: DRAG TO ROTATE FOLLOW CAMERA (CAMERA 2 DEFAULT)</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>1–0 / F = TRICKS (F = FRONTFLIP) &nbsp; • &nbsp; TOP CENTER DRAG = ORBIT &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
+        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>{trickMode==="draw"?"RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS":"RIGHT HALF: TAP TO JUMP · USE THE ICONS FOR ALL TRICKS"}<br/>TOP CENTER: DRAG TO ROTATE FOLLOW CAMERA (CAMERA 2 DEFAULT)</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>{trickMode==="draw"?"1–0 / F = TRICKS":"TAP ICON BUTTONS OR USE 1–0 / F FOR TRICKS"} &nbsp; • &nbsp; TOP CENTER DRAG = ORBIT &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
     {phase==="playing" && <FollowCameraDragArea cameraOrbitRef={cameraOrbit} mobile={mobile} />}
-    {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} stateRef={state} act={act} phase={phase} runKey={runKey} onTuckChange={setTouchTuckFx} /> : null}
+    {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} stateRef={state} act={act} phase={phase} runKey={runKey} trickMode={trickMode} onTuckChange={setTouchTuckFx} /> : null}
+    {phase==="playing" && trickMode==="buttons" && <Snow64TrickButtonPad act={act} mobile={mobile===true}/>}
     {phase==="playing" && <>
       <div style={{position:"absolute",bottom:mobile?14:18,left:mobile?10:24,zIndex:3,pointerEvents:"none",color:"#1a5268",fontSize:mobile?9:12,fontWeight:900,textShadow:"1px 1px #e9f8ff"}}>BEST {currentBest.toLocaleString()} &nbsp; ✦ {hud.coins} TOKENS</div>
-      {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · TOP CENTER DRAG ORBIT · P PAUSE · C CAMERA</div>}
+      {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>{trickMode==="buttons"?"A / D CARVE · W TUCK · TAP TRICK ICONS OR 1–0 / F · TOP CENTER DRAG ORBIT · P PAUSE · C CAMERA":"A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · TOP CENTER DRAG ORBIT · P PAUSE · C CAMERA"}</div>}
     </>}
   </main>;
 }
