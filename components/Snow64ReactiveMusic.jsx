@@ -168,7 +168,7 @@ export default function Snow64ReactiveMusic() {
   // game's original first window (and again on the new-run settings screen).
   return menuNode ? createPortal(
     <div data-snow64-reactive-music="true" style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-      <button type="button" aria-pressed={enabled} aria-label="Include reactive procedural music"
+      <button type="button" aria-pressed={enabled} aria-label="Include recorded reactive soundtrack"
         onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();toggle();}}
         style={{padding:"9px 15px",border:"2px solid #d7f4ff",borderRadius:9,
           background:enabled?"#f7cc8d":"#163d59",color:enabled?"#20394d":"#f3fbff",
@@ -176,7 +176,7 @@ export default function Snow64ReactiveMusic() {
         {enabled ? "♫ REACTIVE MUSIC: ON" : "♫ REACTIVE MUSIC: OFF"}
       </button>
       <div style={{font:"700 10px system-ui,sans-serif",color:"#b3dbe9"}}>
-        Live synth soundtrack · follows speed, tricks & Frost Shroom
+        Recorded soundtrack · reacts to speed, tricks & Frost Shroom
       </div>
     </div>, menuNode
   ) : null;

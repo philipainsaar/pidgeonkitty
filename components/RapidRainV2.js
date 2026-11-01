@@ -1,361 +1,314 @@
 /**
- * SNOW 64 • SOFT SID V6
- * Original minimal C64-inspired music for the PidgeonKitty snowboarding game.
- * Single-file GitHub replacement for components/RapidRainV2.js.
- * No fetched audio, samples, MIDI, MP3s, libraries, or external music player.
- * Warm 3-voice concept: rounded bass, subdued pulse melody, quiet percussion.
- * Randomized but *harmonically constrained* patterns: a new variation per run/loop.
+ * SNOW 64 • Recorded Music V7
+ * A polished recorded soundtrack, with reactive Web Audio EQ and volume.
+ * Replaces the V2–V6 procedural synth using the SAME public game adapter API.
  *
- * Public API deliberately matches snow64Music.js / Snow64ReactiveMusic.jsx.
- * Inspired by the SID chip's simple waveforms, not an exact hardware emulation.
+ * Place this file at components/RapidRainV2.js and audio at:
+ *   public/audio/snow64-theme.webm  (Opus, compact)
+ *   public/audio/snow64-theme.mp3   (MP3 compatibility fallback)
+ *
+ * No separate player or external dependency. Audio starts on the game's
+ * existing user-initiated Start action. Existing snow64Audio.js SFX remain.
  */
 
-export const BPM = 136;
+export const BPM = 136; // Estimated original tempo. Change if your music is different.
+export const DURATION = 244.824;
 export const BAR = 240 / BPM;
-export const DURATION = BAR * 64;
-export const RAPID_RAIN_LAYERS = Object.freeze([
-  'pluck', 'bubble', 'lead', 'keys', 'pad', 'bass', 'glitch',
-  'kick', 'snare', 'hat', 'rise', 'crash',
-]);
-const EPS = 0.0001;
-const TAU = Math.PI * 2;
-const STEP = BAR / 16;
-const clamp = (x, a, b) => Math.max(a, Math.min(b, Number(x) || 0));
-const hz = (midi) => 440 * 2 ** ((midi - 69) / 12);
+export const RAPID_RAIN_LAYERS = Object.freeze(['music']);
+export const EVENT_COUNT = 0;
+export function buildRapidRainScore() { return []; } // Legacy compatibility only: audio is now recorded.
 
-function generator(seed) {
-  let x = (seed >>> 0) || 36064;
-  return () => {
-    x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
-    return (x >>> 0) / 4294967296;
-  };
-}
+const clamp = (v, min, max) => Math.max(min, Math.min(max, Number(v) || 0));
+const OPUS_URL = '/audio/snow64-theme.webm';
+const MP3_URL = '/audio/snow64-theme.mp3';
+const TICK_MS = 40;
 
-const PROGRESSIONS = [
-  [0, 1, 2, 3], [0, 2, 1, 3], [0, 1, 3, 2], [0, 2, 3, 3],
-];
-// Original key of D major. Chord degrees are curated to prevent random clashes.
-const HARMONY = [
-  { name:'D',  bass:38, notes:[62,66,69,73] },  // D major
-  { name:'Bm', bass:35, notes:[59,62,66,69] },  // B minor
-  { name:'G',  bass:43, notes:[59,62,67,71] },  // G major
-  { name:'A',  bass:45, notes:[61,64,69,73] },  // A major
-];
-const MOTIFS = [
-  [{s:0,n:0,l:2.5},{s:5,n:1,l:1.7},{s:10,n:2,l:2.7}],
-  [{s:2,n:1,l:2.2},{s:7,n:2,l:2.2},{s:12,n:1,l:2.4}],
-  [{s:0,n:2,l:2},{s:6,n:1,l:2.8},{s:12,n:0,l:2.1}],
-  [{s:2,n:0,l:3},{s:9,n:2,l:2.1}],
-  [{s:0,n:1,l:2.5},{s:7,n:0,l:2.4},{s:13,n:1,l:1.5}],
-  [{s:4,n:2,l:2},{s:9,n:1,l:2.1},{s:13,n:0,l:1.8}],
-];
-
-/** Whole song is regenerated between runs, yet always stays in key and rhythm. */
-export function buildRapidRainScore(seed = 36064) {
-  const r = generator(seed);
-  const events = [];
-  const add = (bar, step, type, note=0, steps=1, velocity=1, extra={}) => {
-    const t = (bar * 16 + step) * STEP;
-    if(t < DURATION - .01) {
-      events.push({t,type,note,duration:STEP * steps,velocity,...extra});
-    }
-  };
-  let motif = MOTIFS[0];
-  let direction = 0;
-  for (let bar=0; bar<64; bar++) {
-    const phrase = Math.floor(bar / 4);
-    if(bar % 4 === 0) {
-      motif = MOTIFS[Math.floor(r() * MOTIFS.length)];
-      direction = r() < .27 ? -1 : r() > .74 ? 1 : 0;
-    }
-    const progression = PROGRESSIONS[(Math.floor(bar/16) + (seed%3))%PROGRESSIONS.length];
-    const chord = HARMONY[progression[bar%4]];
-    const intro = bar < 4;
-    const breakdown = (bar>=28 && bar<36) || (bar>=56 && bar<60);
-    const finale = bar>=60;
-    const dense = !intro && !breakdown && (bar>=12 && bar<28 || bar>=40 && bar<56);
-
-    // C64-style simple bass: 2-3 short offbeat notes, separated from the kick.
-    // No chord stacking, bass overlaps, or resonant sub layers.
-    add(bar,2,'bass',chord.bass,2.75,.65);
-    if(!intro || bar%2===0) add(bar,7,'bass',chord.bass+7,1.75,.36);
-    if(!breakdown && !finale) add(bar,11.25,'bass',chord.bass,2.35,.55);
-
-    // One soft pulse melody voice. 2-3 notes per bar, never higher than D5.
-    // Phrases are deliberately sparse, with rests and recognizable shape.
-    if(!breakdown || bar%2===0) {
-      const rotated = MOTIFS[(MOTIFS.indexOf(motif) + (bar%4===3?1:0))%MOTIFS.length];
-      const allowed = intro ? 2 : 3;
-      for(const [i,m] of rotated.entries()) {
-        if(i>=allowed || (bar%8===7 && i===1) || (r()<.12 && i===2)) continue;
-        const note = chord.notes[Math.max(0, Math.min(3, m.n + direction))] - (bar%8>=4?0:0);
-        add(bar,m.s,'lead',note,m.l,(intro?.22:.31) * (i===0?1:.83) * (.9+r()*.16));
-      }
-    }
-
-    // One percussion lane. Very little high-end information.
-    // Kick at beat 1/3; a quiet snare on 2/4; hats on selected offbeats only.
-    add(bar,0,'kick',0,1.35,.65);
-    if(!intro && !breakdown) add(bar,8,'kick',0,1.25,.54);
-    if(!intro || bar%2===1) add(bar,4,'snare',0,.8,.27);
-    if(!intro && !breakdown) add(bar,12,'snare',0,.8,.25);
-    const hats = intro ? [6] : breakdown ? [6,14] : dense ? [2,6,10,14] : [6,14];
-    for (const step of hats) {
-      if(r()<.11) continue;
-      // Velocity variation is bounded and does not brighten the hats.
-      add(bar,step,'hat',0,.32,.16 + r()*.07,{ghost:true});
-    }
-    // One occasional soft percussive turnaround, never a dense drum roll.
-    if(dense && bar%8===7 && r()>.55) add(bar,15,'hat',0,.22,.12,{ghost:true});
-  }
-  events.sort((a,b) => a.t-b.t || a.type.localeCompare(b.type));
-  for(const type of ['lead','bass']) {
-    const notes = events.filter(ev=>ev.type===type);
-    for(let i=0;i<notes.length-1;i++) {
-      notes[i].duration=Math.max(.05,Math.min(notes[i].duration,notes[i+1].t-notes[i].t-.035));
-    }
-  }
-  return events;
-}
-export const EVENT_COUNT = buildRapidRainScore(36064).length;
-function binarySearch(events,time) {
-  let low=0,high=events.length;
-  while(low<high) {const mid=(low+high)>>1;if(events[mid].t<time)low=mid+1;else high=mid;}
-  return low;
-}
-
+/** Uses HTMLAudioElement.playbackRate with pitch preservation where available.
+ * This is gentler on real music than changing pitch with a buffer oscillator.
+ * Avoid extreme rates: real-time time stretching can sound warbly past +/- 15%.
+ */
 export class ProceduralRapidRain {
-  constructor({volume=.58,onEnded=null,seed=null}={}) {
-    this.volume=clamp(volume,0,1); this.onEnded=onEnded;
-    this.seed=seed; this.run=0; this.score=buildRapidRainScore(seed ?? 36064);
-    this.ctx=null; this.master=null; this.analyser=null;this.melodyWave=null;
-    this.layerGains={}; this.active=new Set(); this.timer=null;
-    this.position=0;this.startPosition=0;this.startCtx=0;this.cursor=0;this.isPlaying=false;
-    this.loop=true;this.tempo=BPM;this.intensity=.53;this.arrangement='auto';
-    this.layerVolumes=Object.fromEntries(RAPID_RAIN_LAYERS.map(k=>[k,1]));
-    this.muted=new Set();this.soloed=new Set();this.listeners=new Map();
-    this._lastBeat=-1;this._lastSection='';this._lastGameUpdate=0;this._lastEvent=new Map();
-    this._levelData=null;this._lastPowered=false;this._lowpass=null;this._shelf=null;
+  constructor({volume=.43, onEnded=null, sourceOpus=OPUS_URL, sourceMP3=MP3_URL}={}) {
+    this.volume=clamp(volume,0,1);
+    this.onEnded=onEnded;
+    this.sourceOpus=sourceOpus;
+    this.sourceMP3=sourceMP3;
+    this.loop=true;
+    this.tempo=BPM;
+    this.intensity=.53;
+    this.arrangement='auto';
+    this.isPlaying=false;
+    this.position=0;
+    this.audio=null;
+    this.ctx=null;
+    this.master=null;
+    this.analyser=null;
+    this.warmth=.4;
+    this._desiredRate=1;
+    this._currentRate=1;
+    this._duration=DURATION;
+    this._timer=null;
+    this._lastBeat=-1;
+    this._lastSection='';
+    this._lastPosition=0;
+    this._lastGameUpdate=0;
+    this._lastEvent=new Map();
+    this._listeners=new Map();
+    this._bins=null;
+    this._mixDuck=1;
+    this._frost=false;
+    this._air=false;
+    this._recovery=false;
+    this._rateSupportsPitch=true;
+    this._usedFallback=false;
   }
-  getDuration(){return DURATION;}
-  getTime() {
-    if(!this.isPlaying||!this.ctx)return this.position;
-    const time=this.startPosition+Math.max(0,this.ctx.currentTime-this.startCtx)*this.tempo/BPM;
-    return this.loop?time%DURATION:Math.min(DURATION,time);
+
+  getDuration() { return this._duration; }
+  getTime() { return this.audio ? (Number.isFinite(this.audio.currentTime) ? this.audio.currentTime : this.position) : this.position; }
+  getProgress() { return this.getTime()/this.getDuration(); }
+  getTempo() { return this.tempo; }
+  getBeat() { return this.getTime()*BPM/60; }
+  getBeatPhase() { const b=this.getBeat(); return b-Math.floor(b); }
+  getSection() {
+    const t=this.getTime();
+    return t<25?'intro':t<68?'cruise':t<118?'downhill':t<171?'high-speed':t<212?'final-run':'outro';
   }
-  getTempo(){return this.tempo;}
-  getProgress(){return this.getTime()/DURATION;}
-  getSection(){const bar=Math.floor(this.getTime()/BAR);return bar<4?'powder intro':bar<28?'snow path':bar<36?'quiet ridge':bar<56?'snow glide':bar<60?'cloud break':'soft landing';}
-  getBeat(){return this.getTime()*BPM/60;}
-  getBeatPhase(){const beat=this.getBeat();return beat-Math.floor(beat);}
-  getEnergy(){
+  getEnergy() {
     if(!this.analyser)return 0;
-    this._levelData ||= new Uint8Array(this.analyser.frequencyBinCount);
-    this.analyser.getByteFrequencyData(this._levelData);
-    let sum=0;const count=Math.min(this._levelData.length,160);
-    for(let i=0;i<count;i++)sum+=this._levelData[i];
-    return count?sum/(255*count):0;
+    this._bins ||= new Uint8Array(this.analyser.frequencyBinCount);
+    this.analyser.getByteFrequencyData(this._bins);
+    let sum=0;
+    const max=Math.min(this._bins.length,120);
+    for(let i=0;i<max;i++)sum+=this._bins[i];
+    return max?sum/(max*255):0;
   }
-  on(name,callback){if(typeof callback!=='function')return()=>{};let s=this.listeners.get(name);if(!s){s=new Set();this.listeners.set(name,s);}s.add(callback);return()=>this.off(name,callback);}
-  off(name,callback){this.listeners.get(name)?.delete(callback);}
-  _emit(name,data){for(const cb of this.listeners.get(name)||[]){try{cb(data);}catch(err){console.warn('Soft SID listener error',err);}}}
-  setVolume(x){this.volume=clamp(x,0,1);if(this.ctx&&this.master)this.master.gain.setTargetAtTime(this.volume,this.ctx.currentTime,.035);}
-  setTempo(x){
-    const next=clamp(x,85,190);if(Math.abs(next-this.tempo)<.15)return;
-    if(this.isPlaying&&this.ctx){this.startPosition=this.getTime();this.startCtx=this.ctx.currentTime;}
-    this.tempo=next;this._emit('tempo',{bpm:next});
+  on(type,fn) {
+    if(typeof fn!=='function')return ()=>{};
+    let group=this._listeners.get(type);
+    if(!group){group=new Set();this._listeners.set(type,group);}
+    group.add(fn);return ()=>this.off(type,fn);
   }
-  setIntensity(x){this.intensity=clamp(x,0,1.35);this._updateMix();}
-  setInstrumentVolume(type,level){if(!RAPID_RAIN_LAYERS.includes(type))return false;this.layerVolumes[type]=clamp(level,0,1.5);this._updateMix();return true;}
-  muteInstrument(type,value=true){if(!RAPID_RAIN_LAYERS.includes(type))return false;value?this.muted.add(type):this.muted.delete(type);this._updateMix();return true;}
-  soloInstrument(type,value=true){if(!RAPID_RAIN_LAYERS.includes(type))return false;value?this.soloed.add(type):this.soloed.delete(type);this._updateMix();return true;}
+  off(type,fn){this._listeners.get(type)?.delete(fn);}
+  _emit(type,payload){
+    for(const fn of this._listeners.get(type)||[]){try{fn(payload);}catch(e){console.warn('[SNOW64 music event]',e);}}
+  }
+
+  _init() {
+    if(this.audio||typeof window==='undefined')return;
+    const a=this.audio=new Audio();
+    a.preload='auto';
+    a.loop=this.loop;
+    a.playsInline=true;
+    a.volume=1;
+    // Playback-rate pitch correction is broadly available in modern browsers.
+    // For older WebKit, use the legacy names when exposed.
+    if('preservesPitch' in a)a.preservesPitch=true;
+    else if('webkitPreservesPitch' in a)a.webkitPreservesPitch=true;
+    else if('mozPreservesPitch' in a)a.mozPreservesPitch=true;
+    else this._rateSupportsPitch=false;
+
+    const canOpus=!!a.canPlayType?.('audio/webm; codecs="opus"');
+    a.src=canOpus ? this.sourceOpus : this.sourceMP3;
+    a.addEventListener('loadedmetadata',()=>{
+      if(Number.isFinite(a.duration)&&a.duration>2)this._duration=a.duration;
+    });
+    a.addEventListener('ended',()=>{
+      if(this.loop)return;
+      this.pause();this._emit('ended',{});this.onEnded?.();
+    });
+    a.addEventListener('error',()=>{
+      // Fallback if WebM is announced as supported but decoding fails.
+      if(!this._usedFallback && a.src.includes('snow64-theme.webm')) {
+        const time=this.getTime();
+        this._usedFallback=true;
+        a.src=this.sourceMP3;
+        a.load();
+        a.addEventListener('loadedmetadata',()=>{
+          if(Number.isFinite(time)&&time>0)a.currentTime=Math.min(time,Math.max(0,a.duration-.1));
+          if(this.isPlaying)a.play().catch(err=>this._emit('error',{message:String(err)}));
+        },{once:true});
+      } else this._emit('error',{message:'Cannot load game music. Check public/audio/snow64-theme.mp3 and .webm.'});
+    });
+
+    const Context=window.AudioContext||window.webkitAudioContext;
+    if(Context){
+      try {
+        const c=this.ctx=new Context({latencyHint:'playback'});
+        const source=c.createMediaElementSource(a);
+        this.warmEQ=c.createBiquadFilter();
+        this.warmEQ.type='highshelf';this.warmEQ.frequency.value=3700;this.warmEQ.gain.value=-2.6;
+        this.lowpass=c.createBiquadFilter();
+        this.lowpass.type='lowpass';this.lowpass.frequency.value=10000;this.lowpass.Q.value=.55;
+        this.bassEQ=c.createBiquadFilter();
+        this.bassEQ.type='lowshelf';this.bassEQ.frequency.value=115;this.bassEQ.gain.value=.2;
+        this.duck=c.createGain();this.duck.gain.value=1;
+        const comp=c.createDynamicsCompressor();
+        comp.threshold.value=-7;comp.ratio.value=2.0;comp.knee.value=9;
+        comp.attack.value=.01;comp.release.value=.19;
+        this.master=c.createGain();this.master.gain.value=this.volume;
+        this.analyser=c.createAnalyser();this.analyser.fftSize=512;
+        source.connect(this.warmEQ);
+        this.warmEQ.connect(this.lowpass);
+        this.lowpass.connect(this.bassEQ);
+        this.bassEQ.connect(this.duck);
+        this.duck.connect(comp);
+        comp.connect(this.master);
+        this.master.connect(this.analyser);
+        this.analyser.connect(c.destination);
+      }catch(error){
+        // Audio playback is still possible without effects if the API fails.
+        // If MediaElementSource was created, routing may be broken. Surface it.
+        console.warn('[SNOW64] Audio effects unavailable',error);
+      }
+    }else a.volume=this.volume;
+    this._updateColor();
+  }
+
+  _updateColor(){
+    if(!this.ctx)return;
+    const t=this.ctx.currentTime;
+    const brightness=this._frost?1:0;
+    // Maintain the song's studio mix; only soften excessively sharp content.
+    this.warmEQ?.gain.setTargetAtTime(-2.2-3.6*this.warmth+brightness*.7,t,.25);
+    this.lowpass?.frequency.setTargetAtTime(
+      (this._recovery?5900:this._air?8200:this._frost?11200:9900)-this.warmth*1100,t,.30);
+    this.bassEQ?.gain.setTargetAtTime(this._frost?1.3:.3,t,.35);
+    this._updateGain();
+  }
+  _updateGain(){
+    if(!this.ctx){if(this.audio)this.audio.volume=clamp(this.volume*this._mixDuck,0,1);return;}
+    const t=this.ctx.currentTime;
+    this.master?.gain.setTargetAtTime(this.volume,t,.06);
+    this.duck?.gain.setTargetAtTime(this._mixDuck,t,.06);
+  }
+  setVolume(value){this.volume=clamp(value,0,1);this._updateGain();}
+  setWarmth(value=.45){this.warmth=clamp(value,0,1);this._updateColor();}
+  setTempo(value){
+    // Pitch-preserved changes in the *recording* tempo, not resynthesized notes.
+    const next=clamp(value,116,161);
+    if(Math.abs(this.tempo-next)<.06)return;
+    this.tempo=next;
+    this._desiredRate=clamp(next/BPM,.85,1.185);
+    this._emit('tempo',{bpm:next});
+  }
+  setIntensity(value){this.intensity=clamp(value,0,1.35);}
   transitionTo(name,{bars=2}={}){
     if(!['auto','calm','groove','peak'].includes(name))return false;
     this.arrangement=name;
-    if(name!=='auto')this.setIntensity({calm:.18,groove:.6,peak:1.2}[name]);
+    if(name!=='auto')this.intensity={calm:.18,groove:.6,peak:1.2}[name];
     this._emit('arrangement',{name,bars});return true;
   }
-  setWarmth(amount=.9){
-    const warm=clamp(amount,0,1);this.warmth=warm;
-    if(this.ctx){const t=this.ctx.currentTime;this._lowpass?.frequency.setTargetAtTime(3300-1500*warm,t,.06);this._shelf?.gain.setTargetAtTime(-5-6*warm,t,.06);}
-  }
+  // One mixed recording has no separate instrument stems to mute or remix.
+  // Keep the old method names, but explicitly refuse imaginary stem control.
+  setInstrumentVolume(name,level){return name==='music'?(this.setVolume(level),true):false;}
+  muteInstrument(name,muted=true){return name==='music'?(this.setVolume(muted?0:.43),true):false;}
+  soloInstrument(name){return name==='music';}
+
   reactToGameEvent(kind){
-    if(!this.isPlaying||!this.ctx)return;
-    const now=this.ctx.currentTime;const last=this._lastEvent.get(kind)??-10;
-    if(now-last<.24)return;this._lastEvent.set(kind,now);
+    if(!this.isPlaying)return;
+    const at=this.ctx?.currentTime ?? performance.now()/1000;
+    if(at-(this._lastEvent.get(kind)??-100)<.14)return;
+    this._lastEvent.set(kind,at);
     if(kind==='power')this._emit('power',{time:this.getTime()});
-    if(['pickup','combo','magicTrick','power','shatter','land','superRamp'].includes(kind)) {
+    if(['pickup','combo','magicTrick','power','shatter','land','superRamp'].includes(kind))
       this._emit('accent',{kind,time:this.getTime(),beat:this.getBeat()});
+    // Original game sound effects provide the cues. Avoid piling beeps/drums
+    // on top of a finished recording, which previously sounded overcrowded.
+    if(['crash','rockHit','rampHit','shatter'].includes(kind)) {
+      this._mixDuck=kind==='shatter'?.76:.59;
+      this._updateGain();
+      // Release duck gradually in the regular playback tick.
     }
-    // Game's existing sound effects are the accents. No additional beeps,
-    // explosions, or extra overlapping percussion are added to the music.
   }
+
   updateFromGame({playing=true,speed=21.5,powered=false,inAir=false,recovery=false,tuck=false,steer=0,airHeight=0}={}){
-    if(!this.isPlaying||!playing||!this.ctx)return;
-    const now=this.ctx.currentTime;if(now-this._lastGameUpdate<.18)return;this._lastGameUpdate=now;
-    const target=clamp(117+speed*.74+(powered?8:0),112,174);
-    this.setTempo(this.tempo+(target-this.tempo)*.20);
-    if(this.arrangement==='auto'){
-      const energy=recovery?.24:clamp(.40+speed*.010+(powered?.18:0)+(tuck?.06:0),.34,1.18);
-      this.setIntensity(this.intensity+(energy-this.intensity)*.13);
+    if(!playing||!this.isPlaying)return;
+    const t=this.ctx?.currentTime??performance.now()/1000;
+    if(t-this._lastGameUpdate<.16)return;
+    this._lastGameUpdate=t;
+    // Input speed comes from the game as meters/second, NOT km/h.
+    // 15 m/s = leisurely, 38 = fast tuck, 60 = Frost Shroom speed.
+    const desired=clamp(124+(speed-15)*.53+(powered?8:0),119,160);
+    this.setTempo(this.tempo+(desired-this.tempo)*.20);
+    if(this.arrangement==='auto')this.setIntensity(
+      this.intensity+(clamp(.40+speed*.010+(powered?.25:0)+(tuck?.05:0),.3,1.25)-this.intensity)*.16
+    );
+    if(powered!==this._frost||inAir!==this._air||recovery!==this._recovery){
+      this._frost=powered;this._air=inAir;this._recovery=recovery;this._updateColor();
     }
-    if(powered!==this._lastPowered){this._lastPowered=powered;this._emit('power',{powered,time:this.getTime()});}
     this._emit('motion',{speed,powered,inAir,recovery,tuck,steer,airHeight,bpm:this.tempo,intensity:this.intensity});
   }
-  _updateMix(){
-    if(!this.ctx)return;const now=this.ctx.currentTime;
-    const weights={bass:.80,kick:.65,lead:.38,snare:.23,hat:.16};
-    for(const type of ['bass','kick','lead','snare','hat']) {
-      const active=!this.muted.has(type) && (!this.soloed.size||this.soloed.has(type));
-      const volume=active?weights[type]*(this.layerVolumes[type]??1):0;
-      this.layerGains[type]?.gain.setTargetAtTime(volume,now,.04);
-    }
-  }
-  _newSeed(){
-    // Each *new run* or complete loop chooses a related, not atonal, variation.
-    this.run++;
-    const fresh = this.seed===null ? (Math.floor(Math.random()*0xffffffff)>>>0) : (this.seed + this.run*7919)>>>0;
-    this.score=buildRapidRainScore(fresh);
-    this.cursor=binarySearch(this.score,this.position);
-    this._emit('variation',{run:this.run,seed:fresh});
-  }
-  async _ensureAudio(){
-    if(this.ctx){if(this.ctx.state==='suspended')await this.ctx.resume();return;}
-    const AudioContextClass=globalThis.AudioContext||globalThis.webkitAudioContext;
-    if(!AudioContextClass)throw new Error('Web Audio unavailable');
-    const c=this.ctx=new AudioContextClass({latencyHint:'interactive'});
-    const master=this.master=c.createGain();master.gain.value=this.volume;
-    const comp=c.createDynamicsCompressor();comp.threshold.value=-17;comp.knee.value=14;comp.ratio.value=2;
-    comp.attack.value=.012;comp.release.value=.2;
-    this._shelf=c.createBiquadFilter();this._shelf.type='highshelf';this._shelf.frequency.value=1350;this._shelf.gain.value=-10;
-    this._lowpass=c.createBiquadFilter();this._lowpass.type='lowpass';this._lowpass.frequency.value=2000;this._lowpass.Q.value=.55;
-    this.analyser=c.createAnalyser();this.analyser.fftSize=512;
-    master.connect(this._shelf);this._shelf.connect(this._lowpass);this._lowpass.connect(comp);comp.connect(this.analyser);this.analyser.connect(c.destination);
-    // All sound sources route through one low-volume mono-compatible console mix.
-    for(const type of ['bass','lead','kick','snare','hat']) {
-      const gain=this.layerGains[type]=c.createGain();gain.gain.value=0;
-      if(type==='bass'){this.bassDucker=c.createGain();this.bassDucker.gain.value=1;gain.connect(this.bassDucker);this.bassDucker.connect(master);}
-      else gain.connect(master);
-    }
-    // Narrow pulse with its high harmonics deliberately attenuated.
-    const real=new Float32Array(13),imag=new Float32Array(13);const duty=.32;
-    for(let i=1;i<real.length;i++) {
-      const damp=1/(1+(i/4)**2);
-      real[i]=Math.sin(TAU*i*duty)*damp/(Math.PI*i);
-      imag[i]=(1-Math.cos(TAU*i*duty))*damp/(Math.PI*i);
-    }
-    this.melodyWave=c.createPeriodicWave(real,imag,{disableNormalization:false});
-    // 100 ms buffer for *synthesized* filtered noise. It is never downloaded.
-    const buffer=this.noiseBuffer=c.createBuffer(1,Math.ceil(c.sampleRate*.13),c.sampleRate);
-    const data=buffer.getChannelData(0);let seed=136016,lp=0;
-    for(let i=0;i<data.length;i++){
-      seed=(Math.imul(seed,1664525)+1013904223)>>>0;
-      const white=(seed/2147483648)-1;lp=.64*lp+.36*white;data[i]=lp;
-    }
-    this._updateMix();
-  }
-  _track(nodes,end){
-    for(const n of nodes){if(typeof n.stop==='function')this.active.add(n);}
-    const source=nodes.find(n=>typeof n.stop==='function');
-    if(source)source.onended=()=>{for(const n of nodes){this.active.delete(n);try{n.disconnect();}catch{}}};
-  }
-  _melody(ev,t,duration){
-    const c=this.ctx;const volume=ev.velocity;
-    const osc=c.createOscillator();osc.setPeriodicWave(this.melodyWave);
-    osc.frequency.setValueAtTime(hz(ev.note),t);
-    // A tiny vibrato bloom; never a sharp wobbling digital beep.
-    const env=c.createGain();env.gain.setValueAtTime(EPS,t);
-    env.gain.linearRampToValueAtTime(volume*.25,t+.018);
-    env.gain.setTargetAtTime(volume*.19,t+.034,.060);
-    const off=t+Math.max(.11,duration*.85);
-    env.gain.setTargetAtTime(EPS,off,.033);
-    const filter=c.createBiquadFilter();filter.type='lowpass';filter.frequency.value=1150;filter.Q.value=.65;
-    osc.connect(filter);filter.connect(env);env.connect(this.layerGains.lead);
-    const stop=off+.20;osc.start(t);osc.stop(stop);this._track([osc,filter,env],stop);
-  }
-  _bass(ev,t,duration){
-    const c=this.ctx,osc=c.createOscillator();osc.type='triangle';
-    const freq=hz(ev.note);osc.frequency.setValueAtTime(freq,t);
-    const env=c.createGain();env.gain.setValueAtTime(EPS,t);
-    env.gain.linearRampToValueAtTime(ev.velocity*.36,t+.014);
-    const off=t+Math.max(.08,duration*.92);
-    env.gain.setTargetAtTime(EPS,off,.025);
-    const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=520;lp.Q.value=.5;
-    osc.connect(lp);lp.connect(env);env.connect(this.layerGains.bass);
-    osc.start(t);osc.stop(off+.16);this._track([osc,lp,env],off+.16);
-  }
-  _kick(ev,t){
-    const c=this.ctx,osc=c.createOscillator(),env=c.createGain();osc.type='sine';
-    osc.frequency.setValueAtTime(115,t);osc.frequency.exponentialRampToValueAtTime(52,t+.065);
-    env.gain.setValueAtTime(EPS,t);env.gain.linearRampToValueAtTime(ev.velocity*.24,t+.009);
-    env.gain.exponentialRampToValueAtTime(EPS,t+.14);
-    osc.connect(env);env.connect(this.layerGains.kick);osc.start(t);osc.stop(t+.17);this._track([osc,env],t+.17);
-    // Dedicated sidechain duck protects the kick transient from bass masking.
-    const bass=this.bassDucker;
-    if(bass){bass.gain.setValueAtTime(1,t-.002);bass.gain.linearRampToValueAtTime(.62,t+.006);bass.gain.linearRampToValueAtTime(1,t+.13);}
-  }
-  _noise(ev,t,type){
-    const c=this.ctx,src=c.createBufferSource(),f=c.createBiquadFilter(),env=c.createGain();
-    src.buffer=this.noiseBuffer;
-    const dur=type==='hat'?.038:.10;
-    f.type='bandpass';f.frequency.value=type==='hat'?970:630;f.Q.value=type==='hat'?.72:.52;
-    env.gain.setValueAtTime(EPS,t);env.gain.linearRampToValueAtTime(ev.velocity*.13,t+.004);
-    env.gain.exponentialRampToValueAtTime(EPS,t+dur);
-    src.connect(f);f.connect(env);env.connect(this.layerGains[type]);src.start(t);src.stop(t+dur+.008);
-    this._track([src,f,env],t+dur+.008);
-  }
-  _playEvent(ev,t,rate){
-    if(ev.type==='bass')this._bass(ev,t,ev.duration/rate);
-    else if(ev.type==='lead')this._melody(ev,t,ev.duration/rate);
-    else if(ev.type==='kick')this._kick(ev,t);
-    else if(ev.type==='snare'||ev.type==='hat')this._noise(ev,t,ev.type);
-  }
+
   _tick(){
-    if(!this.isPlaying||!this.ctx)return;
-    const now=this.ctx.currentTime,rate=this.tempo/BPM,horizon=now+.09;
-    while(this.cursor<this.score.length){
-      const ev=this.score[this.cursor];
-      const t=this.startCtx+(ev.t-this.startPosition)/rate;
-      if(t>horizon)break;
-      this.cursor++;
-      if(t<now-.025)continue;
-      // Optional density follows pace without generating extra crowded voices.
-      if(ev.type==='hat'&&this.intensity<.48 && ev.t%BAR>STEP*10)continue;
-      if(ev.type==='lead'&&this.intensity<.34 && ev.velocity<.28)continue;
-      this._playEvent(ev,Math.max(t,now+.003),rate);
+    if(!this.isPlaying||!this.audio)return;
+    // Rate slews gently (no sudden tempo lurch when collecting Frost Shroom).
+    const difference=this._desiredRate-this._currentRate;
+    this._currentRate+=clamp(difference,-.0035,.0035);
+    if(Math.abs(this.audio.playbackRate-this._currentRate)>.0004)this.audio.playbackRate=this._currentRate;
+    if(this._mixDuck<.999){this._mixDuck=Math.min(1,this._mixDuck+.014);this._updateGain();}
+
+    const pos=this.getTime();
+    const beat=Math.floor(pos*BPM/60);
+    if(this._lastPosition-pos>1.2){
+      this._lastBeat=-1;
+      this._emit('loop',{time:pos});
     }
-    const elapsed=this.startPosition+Math.max(0,now-this.startCtx)*rate;
-    const beatIndex=Math.floor(elapsed*BPM/60);
-    if(beatIndex!==this._lastBeat){this._lastBeat=beatIndex;this._emit('beat',{beat:((beatIndex%4)+4)%4,bar:Math.floor(beatIndex/4),bpm:this.tempo,time:this.getTime(),phase:this.getBeatPhase()});}
-    const sect=this.getSection();if(sect!==this._lastSection){this._lastSection=sect;this._emit('section',{name:sect,time:this.getTime()});}
-    const ending=this.startCtx+(DURATION-this.startPosition)/rate;
-    if(this.loop && this.cursor>=this.score.length && horizon>=ending){
-      this.startCtx=ending;this.startPosition=0;this.cursor=0;this._lastBeat=-1;
-      this._newSeed();this._emit('loop',{time:0});
-    }else if(!this.loop&&elapsed>=DURATION){
-      this.pause();this.position=DURATION;this._emit('ended',{});if(this.onEnded)this.onEnded();
+    if(beat!==this._lastBeat){
+      this._lastBeat=beat;
+      this._emit('beat',{beat:beat%4,bar:Math.floor(beat/4),bpm:this.tempo,time:pos,phase:this.getBeatPhase()});
     }
+    const section=this.getSection();
+    if(section!==this._lastSection){this._lastSection=section;this._emit('section',{name:section,time:pos});}
+    this._lastPosition=pos;
   }
-  _killVoices(){
-    if(!this.ctx)return;
-    for(const src of this.active){try{src.stop(this.ctx.currentTime);}catch{}}
-    this.active.clear();
-  }
+
   async play(){
     if(this.isPlaying)return;
-    await this._ensureAudio();
-    if(this.position>=DURATION-.01)this.position=0;
-    if(this.position===0)this._newSeed();
-    this.master.gain.setTargetAtTime(this.volume,this.ctx.currentTime,.012);
-    this.startPosition=this.position;this.startCtx=this.ctx.currentTime+.065;
-    this.cursor=binarySearch(this.score,this.startPosition);this._lastBeat=-1;this._lastSection='';
-    this.isPlaying=true;this._tick();this.timer=setInterval(()=>this._tick(),25);
+    this._init();
+    if(!this.audio)throw new Error('Recorded music requires a browser.');
+    this.audio.loop=this.loop;
+    if(this.position>=this.getDuration()-.1)this.position=0;
+    if(Math.abs(this.audio.currentTime-this.position)>.1){
+      try{this.audio.currentTime=this.position;}catch{}
+    }
+    if(this.ctx?.state==='suspended')void this.ctx.resume().catch(()=>{});
+    this.audio.playbackRate=this._currentRate;
+    // IMPORTANT: call play() synchronously on the game click to satisfy autoplay.
+    const pending=this.audio.play();
+    this.isPlaying=true;
+    this._timer=setInterval(()=>this._tick(),TICK_MS);
+    try{await pending;this._tick();}
+    catch(error){
+      this.isPlaying=false;clearInterval(this._timer);this._timer=null;
+      this._emit('error',{message:String(error)});
+      throw error;
+    }
   }
   async resume(){return this.play();}
-  pause(){if(!this.isPlaying)return;this.position=this.getTime();this.isPlaying=false;clearInterval(this.timer);this.timer=null;this._killVoices();if(this.ctx)this.master.gain.setTargetAtTime(EPS,this.ctx.currentTime,.015);}
-  stop(){this.pause();this.position=0;this._lastBeat=-1;this._lastPowered=false;}
-  seek(seconds){const playing=this.isPlaying;this.pause();this.position=clamp(seconds,0,DURATION);if(playing)this.play();}
-  async dispose(){this.stop();this.listeners.clear();if(this.ctx){try{await this.ctx.close();}catch{}this.ctx=null;}}
+  pause(){
+    if(!this.audio||!this.isPlaying)return;
+    this.position=this.getTime();
+    this.isPlaying=false;
+    clearInterval(this._timer);this._timer=null;
+    this.audio.pause();
+  }
+  stop(){
+    this.pause();this.position=0;this._lastBeat=-1;this._lastSection='';this._lastPosition=0;
+    if(this.audio){try{this.audio.currentTime=0;}catch{}}
+    this._currentRate=1;this._desiredRate=clamp(this.tempo/BPM,.85,1.185);
+  }
+  seek(seconds){
+    const t=clamp(seconds,0,this.getDuration());this.position=t;
+    if(this.audio){try{this.audio.currentTime=t;}catch{}}
+    this._lastPosition=t;this._lastBeat=-1;
+  }
+  async dispose(){
+    this.stop();this._listeners.clear();
+    if(this.audio){this.audio.removeAttribute('src');this.audio.load();this.audio=null;}
+    if(this.ctx){try{await this.ctx.close();}catch{}}
+    this.ctx=null;this.analyser=null;this.master=null;
+  }
 }
+
 export default ProceduralRapidRain;
 export class RapidRainV2 extends ProceduralRapidRain {}
