@@ -4,13 +4,14 @@
  * A single AudioContext plays continuous snow/speed/carve/wind noise, event cues,
  * and the original Frost Shroom arpeggio. Sound starts on a user gesture.
  *
- * SNOW 64 V2 AUDIBLE SNOW FOOTSTEPS:
- * Prominent, procedurally synthesized snow-crunch footsteps replace the old
- * near-inaudible filtered hiss. Token pickups and all other sound cues remain.
+ * SNOW 64 V3 CUTE SNOW-FISH FOOTSTEPS:
+ * Gentle squishy blup + pillowy powder puff for the little rider chasing the
+ * board after a wipeout. No metallic thump, harsh grit or high-pitched hiss.
+ * Token pickups and all other game sounds remain untouched.
  * Adjust these independent levels without changing the game music volume.
  */
 export const SNOW64_EFFECT_LEVELS = {
-  footsteps: 2.4,   // Footstep output; new synthesized crunch is substantially more audible
+  footsteps: 2.4,   // Cute snow-fish steps (0 = silent, 1 = subtle, 2.4 = clear)
   tokenPickup: 1.9, // Original 1.0; clearer token collection chimes
 };
 
@@ -178,35 +179,44 @@ function burst(e,when,length,level=.095,frequency=850,type='lowpass') {
 }
 
 /**
- * A boot stepping into powder snow should have a distinct heel impact followed
- * by granular grit. The previous 720 Hz low-passed burst was extremely quiet
- * on laptop/mobile speakers even with its gain multiplied.
+ * SOFT SNOW-FISH STEPS: little "pwip ... pwip" squishes on powdered snow.
  *
- * These two tiny buffers are generated ONCE from math, not fetched audio files.
- * Each step uses one short Web Audio buffer voice, with alternating timbre and
- * slight pitch variation. No per-frame noise or extra render-loop work.
+ * Each step is a warm, low rounded bubble + a pillow-soft puff. All sounds
+ * are generated mathematically into TWO tiny buffers, created on the first
+ * step and reused. No samples, files, libraries or per-frame audio work.
+ *
+ * Deliberately NO hard kick transient, metallic resonance, gritty white-noise
+ * crackle, or bright upper harmonics.  This is a cute creature touching snow,
+ * not a heavy boot stamping on gravel.
  */
 function createSnowFootstepBuffer(ctx, alternate=false) {
-  const seconds=.23;
+  const seconds=.235;
   const buffer=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*seconds),ctx.sampleRate);
   const data=buffer.getChannelData(0);
-  let seed=alternate?910683:617341,mid=0,low=0;
-  const tau=2*Math.PI;
+  const rate=ctx.sampleRate, tau=2*Math.PI;
+  let seed=alternate?910683:617341;
+  let snow=0,powder=0;
+  const f0=alternate?260:238;
   for(let i=0;i<data.length;i++) {
+    const t=i/rate;
     seed=(Math.imul(seed,1664525)+1013904223)>>>0;
     const white=(seed/2147483648)-1;
-    mid=mid*.55+white*.45;
-    low=low*.93+white*.07;
-    const t=i/ctx.sampleRate;
-    const attack=Math.min(1,t/.006);
-    // First ~100 ms: crunchy snow grains, followed by a short settling tail.
-    const gritty=(white*.31+mid*.56+low*.13)*Math.exp(-t*(alternate?17:19))*attack;
-    const settling=(white*.11+low*.09)*Math.exp(-Math.max(0,t-.060)*34)
-      *Math.min(1,Math.max(0,t-.055)*80);
-    // Low-mid impact helps the footstep remain audible on phone speakers.
-    const thud=Math.sin(tau*((alternate?156:138)*t-95*t*t))
-      *Math.exp(-t*34)*Math.min(1,t/.005);
-    data[i]=clamp(gritty*.93+settling*.36+thud*.37,-.94,.94);
+    // Heavily smoothed noise, like soft powder compressing, not crackling.
+    snow=snow*.86+white*.14;
+    powder=powder*.971+white*.029;
+    const easeIn=1-Math.exp(-t*175); // no clicking at attack
+    const puff=(snow*.74+powder*.26)*easeIn*Math.exp(-t*17.5)*.62;
+    // Rubber-soft, descending "blup": short, round, low and harmless.
+    const bubblePhase=tau*(f0*t-(alternate?260:245)*t*t);
+    const bubble=Math.sin(bubblePhase)*easeIn*Math.exp(-t*23)*.48;
+    // A tiny upward squash-release at the end, NOT a metallic bell.
+    const u=Math.max(0,t-.072);
+    const releaseEnv=(1-Math.exp(-u*130))*Math.exp(-u*44);
+    const release=Math.sin(tau*((alternate?345:360)*u-165*u*u))*.17*releaseEnv;
+    // Very soft second snow puff on lift, as if a small fin comes unstuck.
+    const liftPuff=(snow*.64+powder*.36)*releaseEnv*.16;
+    const fade=Math.min(1,Math.max(0,(seconds-t)/.030));
+    data[i]=Math.max(-.85,Math.min(.85,(puff+bubble+release+liftPuff)*fade));
   }
   return buffer;
 }
@@ -221,16 +231,13 @@ function playSnowFootstep(e,when) {
   const {ctx,master}=e;
   const source=ctx.createBufferSource();
   source.buffer=e.stepBuffers[alternate?1:0];
-  source.playbackRate.value=alternate?.965:1.025;
-  const filter=ctx.createBiquadFilter();
-  filter.type='lowpass';filter.frequency.value=alternate?2600:2350;filter.Q.value=.63;
+  source.playbackRate.value=alternate?.98:1.02;
+  // A modest gain makes this gentle sound audible under the game soundtrack.
   const gain=ctx.createGain();
-  // The synthetic buffer already has an envelope: this controls its level.
-  // 2.4 (the default) is about 0.48 output gain before the game SFX master.
-  gain.gain.setValueAtTime(clamp(.20*boost,0,.60),when);
-  source.connect(filter);filter.connect(gain);gain.connect(master);
-  source.start(when);source.stop(when+.235);
-  source.onended=()=>{source.disconnect();filter.disconnect();gain.disconnect();};
+  gain.gain.setValueAtTime(clamp(.22*boost,0,.60),when);
+  source.connect(gain);gain.connect(master);
+  source.start(when);source.stop(when+.245);
+  source.onended=()=>{source.disconnect();gain.disconnect();};
 }
 
 /** Gameplay sound cues are material-specific, not generic UI beeps. */
