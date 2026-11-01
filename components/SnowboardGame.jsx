@@ -2000,43 +2000,130 @@ function FollowCameraDragArea({ cameraOrbitRef, mobile }) {
 }
 
 /**
- * PNG branding: layered logo + background on the title screen, logo only in HUD.
- * Transparent PNGs work best. Missing assets fall back to readable text,
- * so the game remains usable before the image files are uploaded.
+ * One-time PNG alpha trim. The V37 logo had a fixed-height box and may also
+ * include transparent empty pixels above/below the actual artwork. Measure the
+ * visible alpha bounds once and crop both title-screen layers using the SAME
+ * normalized rect, so the foreground and decorative background stay aligned.
+ * Cached across HUD/title mounts; never runs in the game animation loop.
+ * If pixel access isn't possible, the original PNGs still render normally.
  */
+const SNOW360_LOGO_ALPHA_THRESHOLD = 12;
+const SNOW360_LOGO_TRIM_MARGIN = 0.015; // Keep 1.5% breathing room around artwork.
+const SNOW360_LOGO_HUD_GAP = 2; // Distance to the HUD text above and below.
+const snow360LogoCropCache = new Map();
+
+function loadSnow360Image(src) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+function snow360VisibleBounds(img) {
+  const preview = document.createElement("canvas");
+  const scale = Math.min(1, 512 / Math.max(img.naturalWidth, img.naturalHeight));
+  preview.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  preview.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = preview.getContext("2d", {willReadFrequently:true});
+  if (!ctx) return {left:0, top:0, right:1, bottom:1};
+  ctx.drawImage(img, 0, 0, preview.width, preview.height);
+  const pixels = ctx.getImageData(0, 0, preview.width, preview.height).data;
+  let left = preview.width, top = preview.height, right = -1, bottom = -1;
+  for (let y=0; y<preview.height; y++) {
+    for (let x=0; x<preview.width; x++) {
+      if (pixels[(y*preview.width+x)*4+3] <= SNOW360_LOGO_ALPHA_THRESHOLD) continue;
+      left=Math.min(left,x); top=Math.min(top,y);
+      right=Math.max(right,x); bottom=Math.max(bottom,y);
+    }
+  }
+  if (right < left || bottom < top) return {left:0, top:0, right:1, bottom:1};
+  return {left:left/preview.width, top:top/preview.height,
+    right:(right+1)/preview.width, bottom:(bottom+1)/preview.height};
+}
+function getSnow360TrimmedLogos(startScreen) {
+  const key = startScreen ? "layered" : "hud";
+  if (snow360LogoCropCache.has(key)) return snow360LogoCropCache.get(key);
+  const task = Promise.all([
+    loadSnow360Image(SNOW360_LOGO),
+    startScreen ? loadSnow360Image(SNOW360_LOGO_BACKGROUND) : Promise.resolve(null),
+  ]).then(([logo,background]) => {
+    if (!logo) return {missing:true};
+    try {
+      const boxes = [logo,background].filter(Boolean).map(snow360VisibleBounds);
+      const pad = SNOW360_LOGO_TRIM_MARGIN;
+      const left=Math.max(0,Math.min(...boxes.map(b=>b.left))-pad);
+      const top=Math.max(0,Math.min(...boxes.map(b=>b.top))-pad);
+      const right=Math.min(1,Math.max(...boxes.map(b=>b.right))+pad);
+      const bottom=Math.min(1,Math.max(...boxes.map(b=>b.bottom))+pad);
+      const sourceWidth=Math.max(1,(right-left)*logo.naturalWidth);
+      const sourceHeight=Math.max(1,(bottom-top)*logo.naturalHeight);
+      const outputScale=Math.min(1,2304/Math.max(sourceWidth,sourceHeight));
+      const width=Math.max(1,Math.round(sourceWidth*outputScale));
+      const height=Math.max(1,Math.round(sourceHeight*outputScale));
+      const crop = img => {
+        if (!img) return null;
+        const c=document.createElement("canvas");
+        c.width=width; c.height=height;
+        c.getContext("2d").drawImage(img,
+          left*img.naturalWidth,top*img.naturalHeight,
+          (right-left)*img.naturalWidth,(bottom-top)*img.naturalHeight,
+          0,0,width,height);
+        return c.toDataURL("image/png");
+      };
+      return {logo:crop(logo),background:crop(background),aspect:width/height};
+    } catch {
+      // Keep both unmodified PNGs if the browser disallows canvas pixel reads.
+      return {logo:SNOW360_LOGO,background:background?SNOW360_LOGO_BACKGROUND:null,
+        aspect:logo.naturalWidth/logo.naturalHeight};
+    }
+  });
+  snow360LogoCropCache.set(key,task);
+  return task;
+}
+
+/** Layered start logo and in-game HUD logo, without vertical letterboxing. */
 function Snow360Logo({ startScreen = false, mobile = false }) {
-  const [logoMissing, setLogoMissing] = useState(false);
-  const [backgroundMissing, setBackgroundMissing] = useState(false);
-  // V37: Both logo placements are 200% of the original V36 dimensions.
-  // The start-window PNGs share this frame so the lettering and background
-  // stay registered. On narrow screens, width is capped to prevent clipping.
-  const frame = startScreen
-    ? { width: "min(100%, 960px)", height: "clamp(220px, 42vh, 370px)", margin: "9px auto 8px" }
-    : { width: mobile ? 260 : 428, height: mobile ? 94 : 132, margin: 0 };
-  const imgStyle = {
-    position: "absolute", inset: 0, width: "100%", height: "100%",
-    objectFit: "contain", objectPosition: startScreen ? "center" : "left center",
-    userSelect: "none", WebkitUserSelect: "none", pointerEvents: "none",
+  const [images,setImages] = useState(null);
+  useEffect(() => {
+    let mounted=true;
+    getSnow360TrimmedLogos(startScreen).then(result=>{
+      if(mounted) setImages(result);
+    });
+    return () => {mounted=false;};
+  },[startScreen]);
+  const hasLogo=images && !images.missing;
+  const aspect=hasLogo ? images.aspect : (startScreen ? 960/370 : mobile ? 260/94 : 428/132);
+  // V37 maximum logo dimensions are unchanged. Only transparent padding and
+  // unnecessary vertical layout space are removed, preserving proportions.
+  const maxW=startScreen ? 960 : mobile ? 260 : 428;
+  const maxH=startScreen ? 370 : mobile ? 94 : 132;
+  const width=Math.min(maxW,maxH*aspect);
+  const frame = {
+    width:startScreen ? `min(100%, ${width.toFixed(2)}px)` : width,
+    aspectRatio:String(aspect),
+    margin:startScreen ? "3px auto 3px" : 0,
+    position:"relative", flexShrink:0,
   };
-  return <div style={{ ...frame, position: "relative", flexShrink: 0 }}>
-    {logoMissing ? (
-      <div style={{ width: "100%", height: "100%", display: "flex",
-        justifyContent: startScreen ? "center" : "flex-start", alignItems: "center",
-        fontSize: startScreen ? "clamp(34px, 8vw, 64px)" : mobile ? 25 : 42,
-        fontStyle: "italic", fontWeight: 1000, letterSpacing: "-.04em", lineHeight: 1,
-        color: "#fdf3ce", textShadow: "3px 4px #245a6e" }}>
-        SNOW<span style={{ color: "#f796b6" }}>360</span>
-      </div>
-    ) : <>
-      {startScreen && !backgroundMissing && <img
-        src={SNOW360_LOGO_BACKGROUND} alt="" aria-hidden="true"
+  const imgStyle = {
+    position:"absolute",inset:0,width:"100%",height:"100%",
+    objectFit:"fill",pointerEvents:"none",userSelect:"none",WebkitUserSelect:"none",
+  };
+  return <div style={frame}>
+    {images?.missing ? <div style={{width:"100%",height:"100%",display:"flex",
+      justifyContent:startScreen?"center":"flex-start",alignItems:"center",
+      fontSize:startScreen?"clamp(34px, 8vw, 64px)":mobile?25:42,
+      fontStyle:"italic",fontWeight:1000,letterSpacing:"-.04em",lineHeight:1,
+      color:"#fdf3ce",textShadow:"3px 4px #245a6e"}}>
+      SNOW<span style={{color:"#f796b6"}}>360</span>
+    </div> : <>
+      {startScreen && <img src={hasLogo?images.background||SNOW360_LOGO_BACKGROUND:SNOW360_LOGO_BACKGROUND}
+        alt="" aria-hidden="true" loading="eager" decoding="async" draggable={false}
+        onError={e=>{e.currentTarget.style.display="none";}}
+        style={{...imgStyle,zIndex:0}} />}
+      <img src={hasLogo?images.logo:SNOW360_LOGO} alt="SNOW 360"
         loading="eager" decoding="async" draggable={false}
-        onError={() => setBackgroundMissing(true)}
-        style={{ ...imgStyle, zIndex: 0 }} />}
-      <img src={SNOW360_LOGO} alt="SNOW 360"
-        loading="eager" decoding="async" draggable={false}
-        onError={() => setLogoMissing(true)}
-        style={{ ...imgStyle, zIndex: 1 }} />
+        style={{...imgStyle,zIndex:1}} />
     </>}
   </div>;
 }
@@ -2172,7 +2259,7 @@ export default function SnowboardGame(){
     {/* Original retro filter, enabled only by the optional title-screen setting. */}
     {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
     <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",flexDirection:mobile?"column":"row",justifyContent:"space-between",alignItems:"flex-start",gap:mobile?9:10,pointerEvents:"none"}}>
-      <div style={{display:"flex",flexDirection:"column",gap:5,filter:"drop-shadow(2px 3px #103348)"}}>
+      <div style={{display:"flex",flexDirection:"column",gap:SNOW360_LOGO_HUD_GAP,filter:"drop-shadow(2px 3px #103348)"}}>
         <div style={{fontSize:10,fontWeight:900,letterSpacing:".24em",color:"#eefffc"}}>PIDGEONKITTY PRESENTS</div>
         <Snow360Logo mobile={mobile===true} />
         <div style={{fontSize:10,fontWeight:900,letterSpacing:".16em",color:"#cdfaff"}}>DOWNHILL FREESTYLE</div>
