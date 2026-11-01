@@ -499,6 +499,13 @@ function snowRemountMotion(rec, rider, board, returnTo) {
   // Anticipate the hop, travel over the edge, land, then kick off.
   const hopP=smoothstep((mountP-.10)/.37);
   const kickP=smoothstep((mountP-.71)/.29);
+  // The loose board may have spun several complete revolutions in the crash.
+  // Turn along the SHORTEST yaw arc during the hop, not during the kick-off.
+  // The deck and rider face downhill before the paws touch the bindings.
+  const turnP=smoothstep((mountP-.11)/.36);
+  const looseYaw=Number.isFinite(board.yaw)?board.yaw:0;
+  const shortestTurn=Math.atan2(Math.sin(-looseYaw),Math.cos(-looseYaw));
+  const boardYaw=looseYaw+shortestTurn*turnP;
   const arc=mountP >= .10 && mountP <= .47 ? Math.sin(Math.PI*hopP)*.83 : 0;
   const landingDip=mountP>.47 && mountP<.65 ? -.09*Math.sin(Math.PI*(mountP-.47)/.18) : 0;
   const kickBounce=mountP>.71 ? .10*Math.sin(Math.PI*kickP) : 0;
@@ -507,7 +514,7 @@ function snowRemountMotion(rec, rider, board, returnTo) {
   const riderZ=stage==="falling" ? rider.z : stage==="chasing" ? lerp(rider.z,approachZ,chaseP)
     : lerp(lerp(approachZ,board.z,hopP),returnTo.z,kickP);
   return {
-    stage, fallEnd, chaseEnd, chaseP, mountP, hopP, kickP,
+    stage, fallEnd, chaseEnd, chaseP, mountP, hopP, kickP, turnP, boardYaw,
     x:riderX, z:riderZ, arc:arc+landingDip+kickBounce,
     boardX:lerp(board.x,returnTo.x,kickP),boardZ:lerp(board.z,returnTo.z,kickP),
     // Face the stationary board during approach, then point downhill to push.
@@ -531,14 +538,15 @@ function crashCameraFrame(rider, looseBoard, azimuth, elevation, aspect, fovDegr
   const depthSpan=Math.abs((dx*sinA+dz*cosA)*cosE+dy*sinE);
   const tanHalfVertical=Math.tan(fovDegrees*Math.PI/360);
   const tanHalfHorizontal=tanHalfVertical*Math.max(.35,aspect);
-  // Larger breathing room on phones for the rider's animated limbs and board.
-  const horizontalMargin=mobile?1.65:1.50;
-  const verticalMargin=mobile?1.65:1.40;
+  // V24: closer crash framing; still fit the detached board on portrait screens.
+  const horizontalMargin=mobile?1.33:1.22;
+  const verticalMargin=mobile?1.35:1.20;
+  // Minimum distance now eases closer during the chase and hop-on remount.
   const radius=Math.min(mobile?78:65,Math.max(
-    normalRadius*(mobile?1.85:1.63),
+    normalRadius*(mobile?1.47:1.34),
     (screenX*.5+horizontalMargin)/Math.max(.12,tanHalfHorizontal),
     (screenY*.5+verticalMargin)/Math.max(.20,tanHalfVertical),
-  )+depthSpan*.5);
+  )+depthSpan*.43);
   return {
     x:(rider.x+looseBoard.x)*.5,
     y:(rider.y+looseBoard.y)*.5,
@@ -1078,7 +1086,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         const loose=rec.board;
         const motion=snowRemountMotion(rec,
           {x:fallen?.x ?? s.x,z:fallen?.z ?? s.z},
-          {x:loose?.x ?? s.x,z:loose?.z ?? s.z},
+          {x:loose?.x ?? s.x,z:loose?.z ?? s.z,yaw:loose?.yaw ?? 0},
           {x:s.x,z:s.z});
         const {fallEnd,chaseP,mountP,hopP}=motion;
         const fallP=smoothstep(rec.t/fallEnd);
@@ -1099,11 +1107,22 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           falling?downYaw:chasing?downYaw*(1-getUp):0,
           falling?downRoll:chasing?downRoll*(1-getUp)-.04*Math.sin(chaseP*17):0,
           "YXZ");
-        const toBoardX=(loose?.x??s.x)-chaseX, toBoardZ=(loose?.z??s.z)-chaseZ;
-        const lookTowardBoard=clamp(Math.atan2(toBoardX,-toBoardZ),-1.1,1.1);
-        riderModel.current.rotation.y=Math.PI/2 + (chasing ? lookTowardBoard*.72*getUp :
+        // A steady approach direction avoids a last-frame swivel when the
+        // rider reaches the middle of the deck. Turn the rider together with
+        // the board WHILE airborne, finishing the alignment before landing.
+        const lookTowardBoard=clamp(Math.atan2(motion.approachDX,-motion.approachDZ),-1.1,1.1);
+        const approachFacing=lookTowardBoard*.72;
+        // Compute the original orientation offset once from the loose board
+        // yaw; changing this reference as the board turns makes the rider
+        // briefly counter-rotate in the middle of the hop.
+        const initialBoardYaw=loose?.yaw ?? 0;
+        const facingOffset=Math.atan2(
+          Math.sin(approachFacing-initialBoardYaw),
+          Math.cos(approachFacing-initialBoardYaw)
+        );
+        riderModel.current.rotation.y=Math.PI/2 + (chasing ? approachFacing*getUp :
           falling ? (fallen?.modelTurn||0) :
-          .17*lookTowardBoard*(1-hopP));
+          motion.boardYaw+facingOffset*(1-motion.turnP));
         // The board stays put while the rider hops on. Move both together only
         // for the last push-off, restoring the normal snowboard binding height.
         riderModel.current.position.y=lerp(.06,RIDER_BINDING_HEIGHT,hopP)
@@ -1158,17 +1177,24 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         // gameplay position together, so they never pass through each other.
         const motion=snowRemountMotion(rec,
           {x:rec.rider?.x??s.x,z:rec.rider?.z??s.z},
-          {x:loose.x,z:loose.z},{x:s.x,z:s.z});
-        const remount=motion.kickP;
+          {x:loose.x,z:loose.z,yaw:loose.yaw},{x:s.x,z:s.z});
         const atX=motion.boardX, atZ=motion.boardZ;
+        // Sample the nose and tail along the board's ACTUAL yaw as it turns.
+        // Otherwise rotating a long board sideways on a sloped snowbank can
+        // push one end through the surface even though the center is clear.
+        const noseX=Math.sin(motion.boardYaw)*1.08;
+        const noseZ=Math.cos(motion.boardYaw)*1.08;
         const landingY=Math.max(
           snowSurfaceAt(atX,atZ,localChunks,groundY).height+.12,
-          snowSurfaceAt(atX,atZ-.95,localChunks,groundY).height+.06,
-          snowSurfaceAt(atX,atZ+.95,localChunks,groundY).height+.06,
+          snowSurfaceAt(atX+noseX,atZ+noseZ,localChunks,groundY).height+.06,
+          snowSurfaceAt(atX-noseX,atZ-noseZ,localChunks,groundY).height+.06,
         );
-        crashBoard.current.position.set(atX,Math.max(landingY,lerp(loose.y,landingY,remount)),atZ);
+        crashBoard.current.position.set(atX,
+          Math.max(landingY,lerp(loose.y,landingY,motion.turnP)),atZ);
         crashBoard.current.rotation.set(
-          lerp(loose.pitch,0,remount),lerp(loose.yaw,0,remount),lerp(loose.roll,0,remount),"YXZ"
+          lerp(loose.pitch,0,motion.turnP),
+          motion.boardYaw,
+          lerp(loose.roll,0,motion.turnP),"YXZ"
         );
       }
     }
@@ -1185,7 +1211,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         kickSnow.current.scale.setScalar(.6+.55*Math.sin(Math.PI*f.kickP));
       }
     }
-    // V22 cinematic crash follow: V21 randomizes the detached board and fallen
+    // V24 closer cinematic crash follow: V21 randomizes the detached board and fallen
     // rider, but the old camera tracked s.x/s.z, the original piste position.
     // At portrait aspect ratios this could put the rider BEHIND the camera or
     // zoom right into the model. Frame both real recovery objects instead.
@@ -1207,7 +1233,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const crashBlend=crashCameraBlend.current;
     const elevation=clamp(baseElevation+.12*crashBlend,.12,1.18);
     const baseFov=mobile?43:42;
-    const desiredFov=baseFov+Math.max(0,s.speed-20)*.16+crashBlend*(mobile?7:5);
+    const desiredFov=baseFov+Math.max(0,s.speed-20)*.16+crashBlend*(mobile?5:4);
     let radius=baseRadius;
     if(s.recovery && riderCarrier.current && crashBoard.current){
       // Ground-checked actual positions *after* fall, chase and remount edits.
@@ -1225,8 +1251,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
       look.lerp(new THREE.Vector3(framed.x,framed.y,framed.z),crashBlend);
       radius=lerp(baseRadius,framed.radius,crashBlend);
     } else if (crashBlend>.005) {
-      // Hold some extra space as the model remounts; don't snap to a close-up.
-      radius=baseRadius*(1+crashBlend*(mobile?.85:.63));
+      // Hold modest space while transitioning out of recovery, without the old excessive pullback.
+      radius=baseRadius*(1+crashBlend*(mobile?.47:.34));
     }
     const projected=radius*Math.cos(elevation);
     const dest=new THREE.Vector3(
