@@ -2007,9 +2007,12 @@ function FollowCameraDragArea({ cameraOrbitRef, mobile }) {
 function Snow360Logo({ startScreen = false, mobile = false }) {
   const [logoMissing, setLogoMissing] = useState(false);
   const [backgroundMissing, setBackgroundMissing] = useState(false);
+  // V37: Both logo placements are 200% of the original V36 dimensions.
+  // The start-window PNGs share this frame so the lettering and background
+  // stay registered. On narrow screens, width is capped to prevent clipping.
   const frame = startScreen
-    ? { width: "min(100%, 480px)", height: "clamp(110px, 21vh, 185px)", margin: "9px auto 8px" }
-    : { width: mobile ? 130 : 214, height: mobile ? 47 : 66, margin: 0 };
+    ? { width: "min(100%, 960px)", height: "clamp(220px, 42vh, 370px)", margin: "9px auto 8px" }
+    : { width: mobile ? 260 : 428, height: mobile ? 94 : 132, margin: 0 };
   const imgStyle = {
     position: "absolute", inset: 0, width: "100%", height: "100%",
     objectFit: "contain", objectPosition: startScreen ? "center" : "left center",
@@ -2168,13 +2171,13 @@ export default function SnowboardGame(){
     {phase==="playing" && <FrostMagicOverlay remaining={hud.powerRemaining||0} mobile={mobile===true}/>}
     {/* Original retro filter, enabled only by the optional title-screen setting. */}
     {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
-    <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,pointerEvents:"none"}}>
+    <div style={{position:"absolute",left:0,right:0,top:0,zIndex:3,padding:"clamp(9px,2vw,22px)",display:"flex",flexDirection:mobile?"column":"row",justifyContent:"space-between",alignItems:"flex-start",gap:mobile?9:10,pointerEvents:"none"}}>
       <div style={{display:"flex",flexDirection:"column",gap:5,filter:"drop-shadow(2px 3px #103348)"}}>
         <div style={{fontSize:10,fontWeight:900,letterSpacing:".24em",color:"#eefffc"}}>PIDGEONKITTY PRESENTS</div>
         <Snow360Logo mobile={mobile===true} />
         <div style={{fontSize:10,fontWeight:900,letterSpacing:".16em",color:"#cdfaff"}}>DOWNHILL FREESTYLE</div>
       </div>
-      <div className="snow64-hud" style={{display:"flex",gap:8,alignItems:"stretch"}}>
+      <div className="snow64-hud" style={{display:"flex",gap:8,alignItems:"stretch",alignSelf:mobile?"stretch":"auto",justifyContent:mobile?"space-between":"flex-start"}}>
         {[{label:"SPEED",value:hud.speed,unit:"KM/H"},{label:"TIME",value:formatTime(hud.time)},{label:"SCORE",value:hud.score.toLocaleString()}].map(v=><div key={v.label} className="snow64-panel" style={{minWidth:mobile?65:100,textAlign:"center"}}><div className="snow64-label">{v.label}</div><div className="snow64-number">{v.value}<span style={{fontSize:9,marginLeft:2}}>{v.unit}</span></div></div>)}
       </div>
     </div>
@@ -2192,7 +2195,7 @@ export default function SnowboardGame(){
       <div style={{fontSize:mobile?10:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
     </div>
     {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onClick={e=>{if(e.target?.closest?.("button"))return;phase==="paused"?pause():start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
-      <div style={{maxWidth:560,width:"min(100%,560px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
+      <div style={{maxWidth:mobile?560:1060,width:"min(100%,1060px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
         <Snow360Logo startScreen mobile={mobile===true} />
         <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`SCORE DEPLETED! Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>

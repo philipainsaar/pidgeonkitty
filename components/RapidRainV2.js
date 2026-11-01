@@ -5,11 +5,10 @@
  * stem transcription). Measured reference duration: 244.824 seconds.
  * Estimated pulse: 136 BPM; tonal center: Eb major.
  *
- * V2 N64 BASS & BREAKS MIX: percussion-first arcade snowboarding music.
- * Deep rolling synth bass, solid 90s-console kicks, crisp warm hats,
- * shuffled ghost snares and occasional low-key atmospheric accents.
- * NO piano or marimba notes in the default arrangement.
- * Dark, compact output and low-pass / soft-saturation mix bus.
+ * V3 CLEAN RHYTHM MIX: controlled N64-inspired kick/bass/hat soundtrack.
+ * Space between hits, non-overlapping monophonic bass, kick-to-bass ducking,
+ * restrained hats, centered drums, dry transient buses and clean master.
+ * No piano or marimba in the score; no external samples or audio assets.
  * Live tempo, arrangement, game events and beat sync remain available.
  * Not an extraction of any commercial game or any prerecorded samples.
  * Browser:
@@ -79,97 +78,87 @@ export function buildRapidRainScore() {
     if(t<0 || t>=DURATION-.04)return;
     e.push({t,type,note,duration,velocity,pan,...extras});
   };
-  const KICK_GROOVES=[
-    [0,6,10,14], [0,5,8,11,14.5], [0,7,10,14], [0,3.5,8,11,14],
-    [0,6,8.5,13], [0,5,10,13.5], [0,7,10,12.5,15], [0,4,8,11,14],
+  // Two or three kicks per bar, deliberately away from the snare backbeats.
+  // Close-spaced 16th kick rolls were the main cause of the muddy low-end.
+  const KICKS=[
+    [0,8,11], [0,7,10], [0,6,10.5], [0,8,14],
+    [0,6.5,11], [0,9,13], [0,7.5,10], [0,8,11.5],
   ];
-  const BASS_GROOVES=[
-    [[0,0,3.1],[3,0,1.2],[6,7,1.7],[9.5,0,2.0],[13,12,2.2]],
-    [[0,0,2.7],[4,12,1.3],[7,0,2.4],[10,7,1.4],[12.5,0,3]],
-    [[0,0,3.5],[5,0,1.1],[7,7,2.2],[10,0,1.7],[13,12,2]],
-    [[0,0,2.4],[3.5,12,1.1],[6,0,2.0],[9,7,1.7],[12.5,0,2.6]],
+  // Four notes per bar, with rhythmic gaps. A clean monophonic lane means
+  // the preceding bass note is always released before the next one.
+  const BASSES=[
+    [[0,0,2.8],[3.75,0,1.45],[7.25,7,2.15],[11.25,0,2.4]],
+    [[0,0,3.1],[5.1,7,1.3],[8.4,0,2.1],[12.5,12,1.7]],
+    [[0,0,2.45],[3.3,0,1.15],[7.6,7,2.45],[12.1,0,2.6]],
+    [[0,0,3.0],[5.4,12,1.2],[9,0,1.7],[13.25,7,1.75]],
   ];
   for(let bar=0;bar<139;bar++) {
     const s=section(bar),ch=CHORDS[bar%CHORDS.length];
     const energy=s.energy, late=bar>=132, fill=bar%8===7;
-    // A faint, soft chordless atmospheric root creates space without piano.
-    // Only on some transitions, so bass and drums remain clearly foreground.
-    if(bar%8===0 && bar>0 && bar<132) {
-      add(bar,0,'pad',ch.root+24,STEP*18,.075*s.pad,0,{bright:false});
+    const drop=bar%16===15;
+    // Very quiet pad texture only every 16 bars: not a piano/mallet layer.
+    if(bar>0 && bar%16===0 && bar<129) {
+      add(bar,0,'pad',ch.root+24,STEP*14,.028,0,{bright:false});
     }
-    // Bass is the primary musical hook: staccato, pitch-slid, and syncopated.
-    const phrase=BASS_GROOVES[(Math.floor(bar/2)+bar%2)%BASS_GROOVES.length];
-    for(let i=0;i<phrase.length;i++) {
-      const [st,pitch,len]=phrase[i];
-      const isOctave=pitch===12;
-      const human= (rand(bar*29+i,11)-.5)*.11;
-      add(bar,st+human,'bass',ch.root+pitch,
-        STEP*len, (isOctave?.39:.53) * (.86+energy*.22) * (i===0?1.06:1),0,
-        {squawk:i===2||i===4,slide:i===1||i===3});
+    const bass=BASSES[(Math.floor(bar/2)+bar%2)%BASSES.length];
+    for(let i=0;i<bass.length;i++) {
+      const [st,pitch,steps]=bass[i];
+      // Lift only the deepest G/Ab roots into a cleaner mid-bass register.
+      // The kick owns 40-70 Hz, while bass fundamentals remain audible.
+      const note=ch.root+pitch+(ch.root<=32?12:0);
+      const velocity=(pitch===12?.33:.45)*(.91+energy*.11)*(i===0?1.08:1);
+      add(bar,st,'bass',note,STEP*steps,velocity,0,{slide:i===1,squawk:i===2});
     }
-    // Subtle little walking bass turnaround every fourth bar.
-    if(bar%4===3 && bar<135) {
-      add(bar,15,'bass',CHORDS[(bar+1)%CHORDS.length].root,STEP*1.0,.30,0,{slide:true});
-    }
-    // Late-90s-style breakbeat: kick and hats carry the actual tune.
-    const kicks=KICK_GROOVES[(bar+Math.floor(bar/8))%KICK_GROOVES.length];
-    kicks.forEach((st,i)=>{
-      if(late && i>2 && bar%2===1)return;
-      const human=(i===0?0:(rand(bar*47+i,20)-.5)*.075);
-      add(bar,st+human,'kick',0,STEP*2.8,
-        (i===0?.87:i===kicks.length-1?.65:.74) * (.85+.12*energy)*s.drums,0,
+    const kickSteps=KICKS[(bar+Math.floor(bar/8))%KICKS.length];
+    kickSteps.forEach((st,i)=>{
+      if(late && i>1 && bar%2)return;
+      // Keep kick strengths repeatable and leave the main downbeat full-sized.
+      add(bar,st,'kick',0,STEP*1.6,(i===0?.87:.63)*(.91+.08*energy),0,
         {accent:i===0});
     });
-    // Short dusty backbeat and extremely quiet shuffled ghost hits.
-    [4,12].forEach((st,i)=>add(bar,st+(rand(bar*6+i,24)-.5)*.075,'snare',0,STEP*1.4,
-      (i===1?.43:.40)*s.drums,(i===0?-.09:.09)));
-    if(bar>=4 && !late) {
-      const ghosts=bar%2?[3.25,11.5,15]:[6.75,14.5];
-      ghosts.forEach((st,i)=>add(bar,st,'snare',0,STEP*.65,
-        (.10 + rand(bar+i,13)*.06)*s.drums,(i%2?-.20:.14),{ghost:true}));
+    // One clean backbeat on 2 and 4, fewer ghost snare collisions.
+    [4,12].forEach((st,i)=>add(bar,st,'snare',0,STEP*.80,
+      (i===1?.40:.41)*(.87+.11*energy),0));
+    if(bar>=8 && !late && bar%4===1) {
+      add(bar,14.6,'snare',0,STEP*.36,.105,0,{ghost:true});
     }
-    // Hats: front-and-center, not glassy. Slight swing, accent variations,
-    // occasional short opens, and 16th-note ticks in busier passages.
+    // Eight closed hats per bar, with two optional ghost ticks maximum.
+    // Hats under the snare are reduced and kick-adjacent ones are softened.
     for(let st=0;st<16;st+=2) {
       const offbeat=st%4===2;
-      const swing=offbeat?.18:0;
-      const human=(rand(bar*101+st,17)-.5)*.10;
-      const open=(st===14 && bar%4===2) || (st===6 && bar%8===6);
-      add(bar,st+swing+human,'hat',0,STEP*(open?1.4:.63),
-        (offbeat?.44:.30)*(0.91+energy*.15) * (open?.81:1),
-        offbeat?.18:-.16,{open});
+      const onSnare=st===4||st===12;
+      const swing=offbeat?.12:0;
+      const human=(rand(bar*101+st,17)-.5)*.025;
+      const opened=st===14 && bar%8===6;
+      const v=(offbeat?.32:.23)*(onSnare?.54:1)*(opened?.78:1)*(.9+energy*.06);
+      add(bar,st+swing+human,'hat',0,STEP*(opened?.87:.38),v,
+        offbeat?.13:-.11,{open:opened});
     }
-    if(bar>=4 && !late) {
-      const extras=energy>.9 ? [1.5,5.5,9.5,13.5] : bar%2===0 ? [7.5,15.2] : [3.5,11.5];
-      extras.forEach((st,i)=>add(bar,st+(rand(bar*17+i,18)-.5)*.08,'hat',0,
-        STEP*.33,(.18+rand(bar*19+i,33)*.07)*s.drums,
-        i%2?.31:-.28,{open:false}));
+    if(bar>=8 && !late && energy>.92 && !fill) {
+      [3.55,11.55].forEach((st,i)=>add(bar,st,'hat',0,STEP*.22,
+        .115,i?.09:-.09,{ghost:true}));
     }
-    // Drum rolls and rhythmic fills replace the old melodic/flutey flurries.
+    // Short deliberate fills: two extra hats + a single ghost snare,
+    // rather than the previous wall of overlapping snare/hat rolls.
     if(fill && bar>=7 && !late) {
-      for(let i=0;i<6;i++) {
-        add(bar,12+i*.6,'hat',0,STEP*.27,.16+i*.015,(i%2?-.26:.26));
-      }
-      for(let i=0;i<4;i++) {
-        add(bar,13+i*.7,'snare',0,STEP*.48,.10+i*.055,0,{ghost:i<3});
-      }
+      [13.4,15.3].forEach((st,i)=>add(bar,st,'hat',0,STEP*.20,
+        .135,i?.13:-.13,{ghost:true}));
+      add(bar,15,'snare',0,STEP*.35,.14,0,{ghost:true});
     }
-    // Rare soft console-style horn punctuations keep a trace of melody without
-    // competing with bass; the arrangement contains no piano or marimba.
-    if(bar%16===12 && bar<128) {
-      add(bar,2,'lead',ch.root+24,STEP*2.3,.10,-.11,{bright:false});
-      add(bar,10,'lead',ch.root+31,STEP*2.0,.075,.14,{bright:false});
-    }
-    // Short, dark transition sweeps, rather than brilliant synth crashes.
-    if([15,31,47,63,79,95,111,123].includes(bar))
-      add(bar,12,'rise',0,STEP*4,.14,0);
-    if([16,32,48,64,80,96,112,124].includes(bar))
-      add(bar,0,'crash',0,.62,.12,-.04);
+    // Restrained transitions, never a long noisy wash over the next groove.
+    if(drop && bar<125) add(bar,14,'rise',0,STEP*2,.075,0);
+    if(bar>0 && bar%16===0 && bar<129) add(bar,0,'crash',0,.20,.065,0);
   }
   e.sort((a,b)=>a.t-b.t);
+  // Ensure bass notes, including adjacent bars, are strictly monophonic.
+  // Subtract a small gap for oscillator releases and the kick sidechain.
+  const bass=e.filter(ev=>ev.type==='bass');
+  for(let i=0;i<bass.length-1;i++) {
+    bass[i].duration=Math.min(bass[i].duration,
+      Math.max(.04,bass[i+1].t-bass[i].t-.055));
+  }
   return e;
 }
-
 const SCORE = buildRapidRainScore();
 export const EVENT_COUNT = SCORE.length;
 function lowerBound(events,t) {
@@ -276,15 +265,15 @@ export class ProceduralRapidRain {
       if(!this.layerGains[type])continue;
       // Drum/bass-first default mix. Other lanes are still independently
       // controllable by the public remix API, but intentionally very quiet.
-      const weight=type==='kick'?(.94+.18*this.intensity)
-        :type==='hat'?(.81+.19*this.intensity)
-        :type==='bass'?(.99+.32*this.intensity)
-        :type==='snare'?(.52+.16*this.intensity)
-        :type==='pad'?(.085+.015*this.intensity)
-        :type==='lead'?(.095+.030*this.intensity)
-        :type==='glitch'?(.11+.05*this.intensity)
-        :type==='rise'||type==='crash'?.18
-        :(.04+.02*this.intensity);
+      const weight=type==='kick'?(.83+.09*this.intensity)
+        :type==='hat'?(.62+.11*this.intensity)
+        :type==='bass'?(.80+.12*this.intensity)
+        :type==='snare'?(.69+.09*this.intensity)
+        :type==='pad'?(.055+.01*this.intensity)
+        :type==='lead'?(.065+.01*this.intensity)
+        :type==='glitch'?(.055+.01*this.intensity)
+        :type==='rise'||type==='crash'?.10
+        :.025;
       const audible=!this.muted.has(type) && (this.soloed.size===0||this.soloed.has(type));
       const gain=audible?this.layerVolumes[type]*Math.max(.01,weight):0;
       for(const node of [this.layerGains[type],this.reverbGates[type],this.delayGates[type]]) {
@@ -303,23 +292,13 @@ export class ProceduralRapidRain {
     if(['shatter','power','combo','superRamp','magicTrick','land'].includes(kind)) {
       this._emit('accent',{kind,time:this.getTime(),beat:this.getBeat()});
     }
-    // Game accent = a soft rhythmic fill on the nearest grid, not piano,
-    // marimba or bright bell arpeggios; the game's own SFX remain independent.
+    // Gameplay remains reactive without multiplying kick/bass voices.
+    // Accents intentionally avoid the sub-bass and the existing SFX frequencies.
     if(['pickup','combo','magicTrick','power','shatter'].includes(kind)) {
-      const chord=CHORDS[Math.floor(this.getTime()/BAR)%CHORDS.length];
-      const eighth=60/this.tempo/2, next=now+.025;
-      if(kind==='pickup') {
-        this._scheduleNote({type:'hat',note:0,duration:.045,velocity:.31,pan:.12},next);
-      } else if(kind==='power') {
-        for(let i=0;i<4;i++)this._scheduleNote({type:'kick',note:0,duration:.18,velocity:.27+i*.05,pan:0},next+i*eighth);
-      } else if(kind==='shatter') {
-        this._scheduleNote({type:'kick',note:0,duration:.25,velocity:.33,pan:0},next);
-        this._scheduleNote({type:'hat',note:0,duration:.09,velocity:.30,pan:-.2,open:true},next+eighth*.72);
-      } else {
-        this._scheduleNote({type:'bass',note:chord.root+12,duration:eighth*.79,
-          velocity:.26,pan:0,slide:true},next);
-        this._scheduleNote({type:'hat',note:0,duration:.055,velocity:.27,pan:.20},next+eighth*.82);
-      }
+      const next=now+.025;
+      const level=kind==='pickup'?.11:kind==='shatter'?.17:.14;
+      this._scheduleNote({type:'hat',note:0,duration:.026,velocity:level,
+        pan:0,ghost:true,open:false},next);
     }
     if(['rockHit','crash','rampHit','shatter'].includes(kind) && this.duck) {
       const depth=kind==='shatter'?.67:.43;
@@ -365,29 +344,31 @@ export class ProceduralRapidRain {
     if(!Constructor) throw new Error('Web Audio is not supported by this browser.');
     const c=this.ctx=new Constructor({latencyHint:'interactive'});
     const master=this.master=c.createGain();master.gain.value=this.volume;
+    // Clean headroom rather than loud saturation: guard against stacked hits.
     const comp=c.createDynamicsCompressor();
-    comp.threshold.value=-19;comp.knee.value=19;comp.ratio.value=2.6;
-    comp.attack.value=.013;comp.release.value=.22;
+    comp.threshold.value=-12;comp.knee.value=7;comp.ratio.value=3.1;
+    comp.attack.value=.004;comp.release.value=.12;
     this.duck=c.createGain();this.duck.gain.value=1;
     // Console-inspired warm bandwidth: less glassy top, strong midrange.
     const hiShelf=this.toneShelf=c.createBiquadFilter();hiShelf.type='highshelf';
     hiShelf.frequency.value=2800;hiShelf.gain.value=-4.5;
-    const tape=c.createWaveShaper();
-    const curve=new Float32Array(1024);
-    for(let i=0;i<curve.length;i++){
-      const x=(i/(curve.length-1))*2-1;
-      curve[i]=Math.tanh(x*1.28)/Math.tanh(1.28);
-    }
-    tape.curve=curve;tape.oversample='2x';
-    const lo=this.toneLowpass=c.createBiquadFilter();lo.type='lowpass';lo.frequency.value=5100;lo.Q.value=.68;
-    master.connect(this.duck);this.duck.connect(tape);tape.connect(hiShelf);
-    hiShelf.connect(lo);lo.connect(comp);
+    const lo=this.toneLowpass=c.createBiquadFilter();lo.type='lowpass';
+    lo.frequency.value=5200;lo.Q.value=.64;
+    const subClean=c.createBiquadFilter();subClean.type='highpass';
+    subClean.frequency.value=31;subClean.Q.value=.65;
+    // No waveshaper: the old tanh stage smeared overlapping transients.
+    master.connect(this.duck);this.duck.connect(subClean);
+    subClean.connect(hiShelf);hiShelf.connect(lo);lo.connect(comp);
     this.analyser=c.createAnalyser();this.analyser.fftSize=512;
     this.analyser.smoothingTimeConstant=.8;
     comp.connect(this.analyser);this.analyser.connect(c.destination);
     this.musicBus=c.createGain();this.drumBus=c.createGain();
-    this.musicBus.gain.value=.91;this.drumBus.gain.value=1.08;
+    this.musicBus.gain.value=.74;this.drumBus.gain.value=.76;
     this.musicBus.connect(master);this.drumBus.connect(master);
+    // Kick-triggered gain dip makes space for the kick fundamental.
+    // This is an AudioParam envelope, no extra JS timer or sample loading.
+    this.bassDuck=c.createGain();this.bassDuck.gain.value=1;
+    this.bassDuck.connect(this.musicBus);
     // Generate impulse response from math/noise: NOT a sample or network file.
     // Tiny bandlimited ROM-like wavetables synthesized in memory, not sampled.
     const makeWave=(harmonics)=>{
@@ -411,14 +392,14 @@ export class ProceduralRapidRain {
     }
     this.revIn=c.createGain();this.revIn.gain.value=1;
     const rev=c.createConvolver();rev.buffer=ir;
-    const revWet=c.createGain();revWet.gain.value=.060;
+    const revWet=c.createGain();revWet.gain.value=.017;
     const revTone=c.createBiquadFilter();revTone.type='lowpass';revTone.frequency.value=2500;
     this.revIn.connect(rev);rev.connect(revTone);revTone.connect(revWet);revWet.connect(master);
     this.delayIn=c.createGain();
     const dl=this.delay=c.createDelay(1.2);dl.delayTime.value=STEP*3;
-    const feedback=c.createGain();feedback.gain.value=.24;
+    const feedback=c.createGain();feedback.gain.value=.11;
     const dlTone=c.createBiquadFilter();dlTone.type='lowpass';dlTone.frequency.value=2000;
-    const dlWet=c.createGain();dlWet.gain.value=.065;
+    const dlWet=c.createGain();dlWet.gain.value=.010;
     this.delayIn.connect(dl);dl.connect(dlTone);dlTone.connect(feedback);
     feedback.connect(dl);dlTone.connect(dlWet);dlWet.connect(master);
     // Each lane gets its own dry and FX gates for live mute/solo/remixing.
@@ -427,7 +408,8 @@ export class ProceduralRapidRain {
       const rev=this.reverbGates[type]=c.createGain();
       const delay=this.delayGates[type]=c.createGain();
       channel.gain.value=1;rev.gain.value=1;delay.gain.value=1;
-      channel.connect(DRUM_LAYERS.has(type)?this.drumBus:this.musicBus);
+      channel.connect(type==='bass'?this.bassDuck
+        :DRUM_LAYERS.has(type)?this.drumBus:this.musicBus);
       rev.connect(this.revIn);delay.connect(this.delayIn);
     }
     this._refreshLayerGains();
@@ -494,6 +476,14 @@ export class ProceduralRapidRain {
   _scheduleNote(ev,t) {
     const c=this.ctx,f=midiHz(ev.note),dur=ev.duration;
     this._eventInstrument=ev.type;
+    if(ev.type==='kick' && this.bassDuck) {
+      const g=this.bassDuck.gain;
+      const pre=Math.max(this.ctx.currentTime+.001,t-.010);
+      g.setValueAtTime(1,pre);
+      g.linearRampToValueAtTime(.34,t+.009);
+      g.linearRampToValueAtTime(.65,t+.080);
+      g.linearRampToValueAtTime(1,t+.195);
+    }
     let v;
     switch(ev.type) {
       case 'pluck': { // Soft, pseudo-sampled wooden mallet (marimba/kalimba)
@@ -576,12 +566,12 @@ export class ProceduralRapidRain {
         break;
       }
       case 'bass': { // Deep but audible on mobile: sine sub + filtered harmonics
-        v=this._makeVoice(t,dur,ev.velocity*.68,{attack:.004,decay:.12,sustain:.61,release:.09,
-          pan:0,reverb:.005});
+        v=this._makeVoice(t,dur,ev.velocity*.64,{attack:.006,decay:.085,
+          sustain:.48,release:.028,pan:0,reverb:0,delay:0});
         const sub=c.createOscillator();sub.type='sine';
         sub.frequency.setValueAtTime(f*(ev.slide?1.095:1.025),t);
         sub.frequency.exponentialRampToValueAtTime(f,t+(ev.slide?.085:.034));
-        sub.connect(v.input);v.track(sub,t,t+dur+.11);
+        sub.connect(v.input);v.track(sub,t,t+dur+.035);
         const body=c.createOscillator(),fil=v.add(c.createBiquadFilter()),g=v.add(c.createGain());
         body.type='triangle';body.frequency.setValueAtTime(f*(ev.slide?1.08:1),t);
         if(ev.slide)body.frequency.exponentialRampToValueAtTime(f,t+.09);
@@ -589,12 +579,12 @@ export class ProceduralRapidRain {
         fil.frequency.setValueAtTime(ev.squawk?890:670,t);
         fil.frequency.exponentialRampToValueAtTime(175,t+.20);
         g.gain.value=.78;body.connect(fil);fil.connect(g);g.connect(v.input);
-        v.track(body,t,t+dur+.10);
+        v.track(body,t,t+dur+.035);
         // A quiet second harmonic lets small phone speakers reproduce bass notes.
         const overtone=c.createOscillator(),og=v.add(c.createGain());
         overtone.type='sine';overtone.frequency.value=f*2;
-        og.gain.setValueAtTime(.27,t);og.gain.exponentialRampToValueAtTime(.05,t+Math.min(.2,dur));
-        overtone.connect(og);og.connect(v.input);v.track(overtone,t,t+dur+.08);
+        og.gain.setValueAtTime(.16,t);og.gain.exponentialRampToValueAtTime(.035,t+Math.min(.16,dur));
+        overtone.connect(og);og.connect(v.input);v.track(overtone,t,t+dur+.030);
         break;
       }
       case 'glitch': { // Occasional muted 8-bit-flavored accent, never a sharp square shriek
@@ -608,34 +598,34 @@ export class ProceduralRapidRain {
         break;
       }
       case 'kick': { // Chunky late-90s drum machine: body before click
-        v=this._makeVoice(t,.29,ev.velocity*.96,{attack:.0015,decay:.080,sustain:.29,release:.060,
-          bus:'drum',reverb:.004});
+        v=this._makeVoice(t,.205,ev.velocity*.77,{attack:.0015,decay:.052,
+          sustain:.17,release:.038,bus:'drum',reverb:0,delay:0});
         const o=c.createOscillator();o.type='sine';
         o.frequency.setValueAtTime(ev.accent?155:133,t);
-        o.frequency.exponentialRampToValueAtTime(55,t+.073);
-        o.frequency.exponentialRampToValueAtTime(43,t+.26);
-        o.connect(v.input);v.track(o,t,t+.315);
+        o.frequency.exponentialRampToValueAtTime(58,t+.059);
+        o.frequency.exponentialRampToValueAtTime(46,t+.20);
+        o.connect(v.input);v.track(o,t,t+.25);
         // Very quiet click for articulation, deliberately below snare/hats.
-        this._noise(v,t,t+.012,{filterType:'bandpass',cutoff:1080,q:.8,gain:.075});
+        this._noise(v,t,t+.008,{filterType:'bandpass',cutoff:950,q:.7,gain:.048});
         break;
       }
       case 'snare': { // Dusty snare with a short, warm body and soft noise
         const ghost=!!ev.ghost;
-        v=this._makeVoice(t,ghost?.07:.12,ev.velocity*.59,{attack:.0018,decay:.063,sustain:.24,
-          release:ghost?.043:.064,bus:'drum',pan:ev.pan,reverb:.07});
-        this._noise(v,t,t+(ghost?.09:.16),{filterType:'bandpass',cutoff:1320,q:.8,gain:.79});
+        v=this._makeVoice(t,ghost?.055:.090,ev.velocity*.54,{attack:.002,decay:.040,sustain:.17,
+          release:ghost?.025:.039,bus:'drum',pan:0,reverb:.008,delay:0});
+        this._noise(v,t,t+(ghost?.06:.11),{filterType:'bandpass',cutoff:1470,q:.75,gain:.65});
         const o=c.createOscillator();o.type='triangle';
         o.frequency.setValueAtTime(172,t);o.frequency.exponentialRampToValueAtTime(117,t+.075);
         const g=v.add(c.createGain());g.gain.value=.46;
-        o.connect(g);g.connect(v.input);v.track(o,t,t+.14);
+        o.connect(g);g.connect(v.input);v.track(o,t,t+.10);
         break;
       }
       case 'hat': { // Front-of-mix warm hats, never high-register glassy bells
         const open=!!ev.open;
-        v=this._makeVoice(t,open?.115:.035,ev.velocity*.56,{attack:.0015,decay:.035,
-          sustain:.13,release:open?.082:.018,pan:ev.pan,bus:'drum',reverb:.008});
-        this._noise(v,t,t+(open?.19:.062),{filterType:'bandpass',cutoff:open?2750:2450,q:.67,
-          gain:open?.74:.92});
+        v=this._makeVoice(t,open?.088:.027,ev.velocity*.52,{attack:.0015,decay:.021,
+          sustain:.09,release:open?.029:.012,pan:ev.pan,bus:'drum',reverb:0,delay:0});
+        this._noise(v,t,t+(open?.12:.045),{filterType:'bandpass',cutoff:open?2800:2500,q:.65,
+          gain:open?.60:.78});
         break;
       }
       case 'rise': {
@@ -648,8 +638,8 @@ export class ProceduralRapidRain {
         break;
       }
       case 'crash': {
-        v=this._makeVoice(t,.18,ev.velocity*.28,{attack:.004,decay:.09,sustain:.16,release:.9,pan:ev.pan,reverb:.28});
-        this._noise(v,t,t+1.2,{filterType:'bandpass',cutoff:2700,q:.8,gain:.50});
+        v=this._makeVoice(t,.12,ev.velocity*.15,{attack:.004,decay:.045,sustain:.10,release:.18,pan:0,reverb:.04});
+        this._noise(v,t,t+.26,{filterType:'bandpass',cutoff:2300,q:.8,gain:.28});
         break;
       }
     }
