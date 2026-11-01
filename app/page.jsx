@@ -1,4 +1,5 @@
 import SnowboardGame from "../components/SnowboardGame";
+import Snow64ReactiveMusic from "../components/Snow64ReactiveMusic";
 
 export const metadata = {
   title: "PidgeonKitty Snow 64 | Downhill Freestyle",
@@ -6,5 +7,8 @@ export const metadata = {
 };
 
 export default function HomePage() {
-  return <SnowboardGame />;
+  return <>
+    <SnowboardGame />
+    <Snow64ReactiveMusic />
+  </>;
 }
