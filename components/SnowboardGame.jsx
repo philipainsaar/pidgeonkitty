@@ -19,6 +19,7 @@ import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture } from "./snow64VisualMaterials";
 import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
+import Snow360CloudRamp from "./Snow360CloudRamps";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -283,7 +284,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef}) {
       pose={r=>({position:[r.x,groundY(r.x,r.z),r.z],rotation:[0,.8,0],
         dimensions:[r.size*2,r.size*1.6,r.size*2.2]})}/>
       : data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
-    {data.ramps.map(r=><Ramp key={r.id} {...r} />)}
+    {data.ramps.map(r=><Snow360CloudRamp key={r.id} {...r} groundHeight={groundY(r.x,r.z)} />)}
     {tokenModel ? <SnowGLBInstances asset={tokenModel} type="token" items={data.coins}
       hidden={c=>collectedRef.current.has(c.id)} animated
       pose={(c,i,t)=>({position:[c.x,groundY(c.x,c.z)+.83+Math.sin(t*4+c.z)*.14,c.z],

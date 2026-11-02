@@ -5,14 +5,13 @@ import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
 
 /**
- * SNOW360 V51: gameplay-aligned procedural wedge ramps with three cloud-fleece fabrics.
+ * SNOW360 V58: fluffy, softly rounded PROCEDURAL wedge ramps.
  *
- * IMPORTANT: The riding deck is EXACTLY the same LINEAR slope as rampTopAt()
- * in snow64Collision.js: near (+Z) = 0, far (-Z) = ramp.height.
- * There are NO half-pipe walls and NO GLB geometry to misalign with the rider.
- *
- * All surfaces reuse the compact exported fleecy textures, including the
- * blue/yellow/pink tones originally baked from Ramps 123.blend.
+ * - Straight planar riding surface matching the game's ramp collision slope.
+ * - Rounded silhouette and bevels, not half-pipe sidewalls.
+ * - Horizontal cloud patterns on the triangular side panels.
+ * - Blue/yellow regular variants; pink reserved for Super Big Air.
+ * - UV size stays proportional in world units across all ramp sizes.
  */
 const FLEECE_TEXTURES = [
   "/textures/snow360-cloud-blue.jpg",
@@ -20,59 +19,109 @@ const FLEECE_TEXTURES = [
   "/textures/snow360-cloud-pink.jpg",
 ];
 
-const RAMP_HALF_WIDTH = 2;
-const FABRIC_TILE_METERS = 4; // Texture repeats by world-size, not by ramp height.
+const RAMP_WIDTH = 4;
+const FABRIC_TILE_METERS = 4;
+const BEVEL_SEGMENTS = 6;
 
-function createProceduralRamp(height, length) {
-  const half = length * 0.5;
-  const h = Math.max(0.01, height);
-  const riseLength = Math.hypot(length, h);
-  const tile = FABRIC_TILE_METERS;
-  const pos = [];
-  const uv = [];
+/** The profile runs from entry (0, 0) to the high lip (length, height).
+ * Its upper edge remains a linear incline, with small rounded corners.
+ */
+function roundedWedgeShape(length, height, cornerCut) {
+  const vertices = [[0, 0], [length, 0], [length, height]];
+  const corners = vertices.map((v, i) => {
+    const prev = vertices[(i + 2) % 3];
+    const next = vertices[(i + 1) % 3];
+    const along = p => {
+      const dx = p[0] - v[0], dy = p[1] - v[1];
+      const factor = cornerCut / Math.max(0.0001, Math.hypot(dx, dy));
+      return [v[0] + dx * factor, v[1] + dy * factor];
+    };
+    return {before: along(prev), after: along(next)};
+  });
 
-  function tri(a, b, c, ta, tb, tc) {
-    for (const [p, t] of [[a, ta], [b, tb], [c, tc]]) {
-      pos.push(...p);
-      uv.push(...t);
+  const shape = new THREE.Shape();
+  shape.moveTo(...corners[0].after);
+  for (let i = 1; i < 3; i++) {
+    shape.lineTo(...corners[i].before);
+    shape.quadraticCurveTo(...vertices[i], ...corners[i].after);
+  }
+  shape.lineTo(...corners[0].before);
+  shape.quadraticCurveTo(...vertices[0], ...corners[0].after);
+  shape.closePath();
+  return shape;
+}
+
+function makeRoundedRampGeometry(rawHeight, rawLength, superAir) {
+  const h = Math.max(0.1, rawHeight);
+  const length = Math.max(0.5, rawLength);
+  const round = Math.min(superAir ? 0.19 : 0.13, h * 0.17, length * 0.055);
+  const bevelThickness = round;
+  const bevelSize = round * 0.35;
+  const cornerCut = Math.min(round * 1.4, h * 0.17, length * 0.05);
+  const shape = roundedWedgeShape(length, h, cornerCut);
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: RAMP_WIDTH - 2 * bevelThickness,
+    steps: 1,
+    bevelEnabled: true,
+    bevelThickness,
+    bevelSize,
+    bevelSegments: BEVEL_SEGMENTS,
+    curveSegments: 7,
+  });
+
+  // Remap (forward, up, width) to world (X, Y, Z).
+  // This keeps the deck flat in X and linear from +Z entry to -Z lip.
+  const positions = geometry.getAttribute("position");
+  const original = new Float32Array(positions.array);
+  for (let i = 0; i < positions.count; i++) {
+    positions.setXYZ(i,
+      original[i * 3 + 2] - RAMP_WIDTH * 0.5 + bevelThickness,
+      original[i * 3 + 1],
+      length * 0.5 - original[i * 3]);
+  }
+  positions.needsUpdate = true;
+  geometry.computeVertexNormals();
+
+  // ExtrudeGeometry groups with materialIndex 0 are the triangular side caps.
+  const isCap = new Uint8Array(positions.count);
+  for (const group of geometry.groups) {
+    if (group.materialIndex === 0) {
+      for (let i = group.start; i < group.start + group.count; i++) isCap[i] = 1;
     }
   }
-  function quad(a, b, c, d, ta, tb, tc, td) {
-    tri(a, b, c, ta, tb, tc);
-    tri(b, d, c, tb, td, tc);
+  const normals = geometry.getAttribute("normal");
+  const uv = new Float32Array(positions.count * 2);
+  const tile = FABRIC_TILE_METERS;
+  const slopeScale = Math.hypot(length, h) / length;
+
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i);
+    const y = positions.getY(i);
+    const z = positions.getZ(i);
+    const forward = length * 0.5 - z;
+    const nx = normals.getX(i), ny = normals.getY(i), nz = normals.getZ(i);
+    let u, v;
+    if (isCap[i] || Math.abs(nx) > 0.75) {
+      // Side triangles: clouds align along horizontal travel, not vertically.
+      u = forward / tile;
+      v = y / tile;
+    } else if (ny > 0.20) {
+      // Riding deck: true physical lengths prevent stretching on Big Air.
+      u = (x + RAMP_WIDTH / 2) / tile;
+      v = forward * slopeScale / tile;
+    } else if (nz < -0.20) {
+      // Back face beneath the lip: clouds remain horizontal.
+      u = (x + RAMP_WIDTH / 2) / tile;
+      v = y / tile;
+    } else {
+      u = (x + RAMP_WIDTH / 2) / tile;
+      v = forward / tile;
+    }
+    uv[i * 2] = u;
+    uv[i * 2 + 1] = v;
   }
-
-  const entryL = [-RAMP_HALF_WIDTH, 0, half];
-  const entryR = [RAMP_HALF_WIDTH, 0, half];
-  const lipL = [-RAMP_HALF_WIDTH, h, -half];
-  const lipR = [RAMP_HALF_WIDTH, h, -half];
-  const baseL = [-RAMP_HALF_WIDTH, 0, -half];
-  const baseR = [RAMP_HALF_WIDTH, 0, -half];
-
-  // The snowboard slides up this FLAT sloping deck, not into a half pipe.
-  // UVs are proportional to physical distance so the clouds aren't stretched
-  // vertically on the taller Big Air version.
-  const u0 = 0;
-  const u1 = 2 * RAMP_HALF_WIDTH / tile;
-  const v1 = riseLength / tile;
-  quad(entryL, entryR, lipL, lipR,
-    [u0, 0], [u1, 0], [u0, v1], [u1, v1]);
-
-  // Front vertical face under the lip.
-  quad(lipL, lipR, baseL, baseR,
-    [u0, v1], [u1, v1], [u0, v1 + h / tile], [u1, v1 + h / tile]);
-
-  // Closed triangular side faces. Decorative only: collision is governed by
-  // the same rampTopAt / sweptRampSideHit routines as the original game.
-  tri(entryL, lipL, baseL,
-    [0, 0], [riseLength / tile, 0], [length / tile, h / tile]);
-  tri(entryR, baseR, lipR,
-    [0, 0], [length / tile, h / tile], [riseLength / tile, 0]);
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
-  geometry.computeVertexNormals();
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
 }
@@ -84,11 +133,12 @@ export default function Snow360CloudRamp({
   const ordinaryVariant = variant === undefined ? index % 2 : variant;
   const styleIndex = superAir ? 2 : ordinaryVariant === 1 ? 1 : 0;
   const texture = useTexture(FLEECE_TEXTURES[styleIndex]);
-  const geometry = useMemo(() => createProceduralRamp(height, length), [height, length]);
+  const geometry = useMemo(
+    () => makeRoundedRampGeometry(height, length, superAir),
+    [height, length, superAir],
+  );
 
   useEffect(() => {
-    // useTexture caches these THREE.Texture instances across all course chunks.
-    // RepeatWrapping supports proportional UVs outside 0..1 on the Big Air ramp.
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -97,18 +147,20 @@ export default function Snow360CloudRamp({
   }, [texture]);
   useEffect(() => () => geometry.dispose(), [geometry]);
 
-  const lipColor = styleIndex === 2 ? "#ffb9e6" : styleIndex === 1 ? "#ffefba" : "#d0efff";
+  // A low, rounded pastel takeoff trim; not a raised sidewall.
+  const trimColor = styleIndex === 2 ? "#ffd4ee" : styleIndex === 1 ? "#fff3ce" : "#daf1ff";
   return (
     <group position={[x, groundHeight, z]}>
       <mesh geometry={geometry} castShadow receiveShadow>
         <meshStandardMaterial map={texture} color="#ffffff" roughness={0.98}
           metalness={0} side={THREE.DoubleSide} />
       </mesh>
-      {/* Small pastel takeoff trim, fully aligned with the collision lip. */}
-      <mesh position={[0, height + 0.038, -length / 2]} castShadow>
-        <boxGeometry args={[3.94, 0.075, 0.12]} />
-        <meshStandardMaterial color={lipColor} roughness={0.95} metalness={0} />
+      <mesh position={[0, height + 0.012, -length * 0.5 + 0.035]}
+        rotation={[0, 0, Math.PI / 2]} castShadow>
+        <capsuleGeometry args={[0.038, RAMP_WIDTH - 0.24, 4, 8]} />
+        <meshStandardMaterial color={trimColor} roughness={1} metalness={0} />
       </mesh>
     </group>
   );
 }
+
