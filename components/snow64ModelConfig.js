@@ -16,8 +16,9 @@ export const SNOW64_MODEL_PATHS = Object.freeze({
   riderMobile: "/models/pidgeonkitty-snowboard-v2-mobile.glb",
   tree: "/models/snow64-tree.glb",
   rock: "/models/snow64-rock.glb",
-  ramp: "/models/snow64-ramp.glb",
-  superRamp: "/models/snow64-super-ramp.glb",
+  ramp: null,
+  ramp2: null,
+  superRamp: null,
   token: "/models/snow64-token.glb",
   frostShroom: "/models/snow64-frost-shroom.glb",
   snowboard: "/models/snow64-snowboard.glb",
@@ -31,7 +32,7 @@ export const SNOW64_MODEL_PATHS = Object.freeze({
  * For ramp models, keep [1,1,1] so the visible mesh matches ramp collisions.
  */
 export const SNOW64_MODEL_SCALE = Object.freeze({
-  tree: [1,1,1], rock: [1,1,1], ramp: [1,1,1], superRamp: [1,1,1],
+  tree: [1,1,1], rock: [1,1,1], ramp: [1,1,1], ramp2: [1,1,1], superRamp: [1,1,1],
   token: [1,1,1], frostShroom: [1,1,1], snowboard: [1,1,1],
   courseMarker: [1,1,1], mountain: [1,1,1],
   explosionShard: [1,1,1], explosionBurst: [1,1,1],

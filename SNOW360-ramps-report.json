@@ -1,0 +1,71 @@
+{
+  "source": "Ramps 123.blend",
+  "material_source": "sky_blue_sherpa_cloud_fleece.png",
+  "meshes": [
+    {
+      "object": "Ramp 1",
+      "file": "snow360-ramp-1.glb",
+      "original_dimensions": [
+        0.687,
+        0.572,
+        0.957
+      ],
+      "game_normalized_dimensions": [
+        4.0,
+        1.0,
+        3.0
+      ],
+      "triangle_count": 524,
+      "UVs": 1572,
+      "material": "Base",
+      "mix_B_linear_RGB": null,
+      "output_kb": 2024.5
+    },
+    {
+      "object": "Ramp 2",
+      "file": "snow360-ramp-2.glb",
+      "original_dimensions": [
+        1.245,
+        0.572,
+        1.192
+      ],
+      "game_normalized_dimensions": [
+        4.0,
+        1.0,
+        3.0
+      ],
+      "triangle_count": 524,
+      "UVs": 1572,
+      "material": "Mix Color Hue",
+      "mix_B_linear_RGB": [
+        1.0,
+        0.91389,
+        0.49956
+      ],
+      "output_kb": 1959.6
+    },
+    {
+      "object": "Ramp 3 Big Air",
+      "file": "snow360-ramp-3-big-air.glb",
+      "original_dimensions": [
+        1.158,
+        1.056,
+        1.051
+      ],
+      "game_normalized_dimensions": [
+        4.0,
+        1.0,
+        3.0
+      ],
+      "triangle_count": 524,
+      "UVs": 1572,
+      "material": "Mix Color Hue",
+      "mix_B_linear_RGB": [
+        0.49998,
+        0.0,
+        0.34018
+      ],
+      "output_kb": 2036.5
+    }
+  ]
+}

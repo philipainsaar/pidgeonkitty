@@ -48,7 +48,7 @@ export function generateSnowChunk(index) {
       const superAir = rampIndex % 4 === groupSuperSlot(Math.floor(rampIndex/4));
       const height = superAir ? 2.9+random()*1.35 : .95+random()*.62;
       const length = superAir ? 4.2+random()*.6 : 3;
-      ramps.push({id:`ramp-${row}`,x:SNOW_LANES[1+Math.floor(random()*3)],z,index:row,height,length,superAir});
+      ramps.push({id:`ramp-${row}`,x:SNOW_LANES[1+Math.floor(random()*3)],z,index:row,height,length,superAir,variant:Math.floor(random()*2)});
     }
     if (row > 12 && row % 7 === 0 && row % 15 !== 0) {
       rocks.push({id:`rock-${row}`,x:SNOW_LANES[Math.floor(random()*SNOW_LANES.length)],z:z+.9,size:.6+random()*.55});

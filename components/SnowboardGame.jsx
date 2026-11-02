@@ -18,6 +18,7 @@ import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture } from "./snow64VisualMaterials";
 import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
+import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -271,11 +272,13 @@ function CourseMarker({ z, side }) {
 const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef}) {
   const data = useMemo(() => getSnowChunk(index), [index]);
   const rockModel=useSnowModel("rock");
+  const obstacleLibrary=useSnow64Obstacles();
   const tokenModel=useSnowModel("token");
   return <>
     <Terrain index={index} />
     <Forest trees={data.trees} />
-    {rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
+    {obstacleLibrary ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
+      : rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
       hidden={r=>stateRef.current.consumedRocks.has(r.id)}
       pose={r=>({position:[r.x,groundY(r.x,r.z),r.z],rotation:[0,.8,0],
         dimensions:[r.size*2,r.size*1.6,r.size*2.2]})}/>
@@ -1092,17 +1095,24 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
             if (s.consumedRocks.has(rock.id)) continue;
             const powered = s.frostHover && s.powerTime > 0;
             if (!powered && s.hitRocks.has(rock.id)) continue;
+            const obstacle=getSnow64ObstacleParams(rock);
             const contact = powered
-              ? frostPathHit(from,end,rock,rock.size*1.18+.9)
-              : sweptRockHit(from,end,rock,groundY,.37);
+              ? (snow64ObstacleHit(from,end,rock,groundY,.62,true)
+                ?? frostPathHit(from,end,rock,rock.size*1.18+.9))
+              : (snow64ObstacleHit(from,end,rock,groundY,.32)
+                ?? sweptRockHit(from,end,rock,groundY,.32));
             if (contact) {
               if(powered) {
                 // Destruction is exclusive to the active Frost Shroom.
                 s.consumedRocks.add(rock.id);
                 // The boost turns real collisions into shattering rock geometry.
                 // Don't award shatter points for distant rocks or rocks jumped over.
-                s.rockExplosions.push({x:rock.x,y:groundY(rock.x,rock.z)+rock.size*.65,
-                  z:rock.z,size:rock.size,seed:s.rockShattered,at:s.t});
+                const obstacleBase=obstacle ? getSnow64ObstacleBaseY(rock,groundY,obstacle) : groundY(rock.x,rock.z);
+                s.rockExplosions.push({x:rock.x,y:obstacleBase+(obstacle?.height??rock.size*1.3)*.5,
+                  z:rock.z,size:rock.size,seed:s.rockShattered,at:s.t,baseY:obstacleBase,
+                  obstacleVariant:obstacle?.asset.name||null,
+                  scale:obstacle?.scale||1,
+                  yaw:obstacle?.yaw||0});
                 if(s.rockExplosions.length>9)s.rockExplosions.shift();
                 s.rockShattered++;
                 s.score+=110;
@@ -1657,6 +1667,7 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
     <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef}/>
     <Snow64ExplosionVFX stateRef={stateRef} mobile={mobile}/>
+    <Snow64ObstacleShatterVFX stateRef={stateRef} groundY={groundY} mobile={mobile}/>
     <FrostMushroom stateRef={stateRef}/>
     <Mountains stateRef={stateRef}/>
     <Suspense fallback={<Loading/>}>

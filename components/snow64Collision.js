@@ -7,7 +7,7 @@ const END_PAD = 0.24; // prevent narrow gaps near ramp ends
 export function rampTopAt(ramp, x, z, terrainHeight) {
   const half = (ramp.length ?? 3) / 2;
   if (Math.abs(x - ramp.x) > 2 + SIDE_PAD || z < ramp.z - half - END_PAD || z > ramp.z + half + END_PAD) return null;
-  const t = clamp((ramp.z + half + END_PAD - z) / (2 * half + END_PAD), 0, 1);
+  const t = clamp((ramp.z + half - z) / (2 * half), 0, 1);
   return terrainHeight(ramp.x, ramp.z) + t * ramp.height;
 }
 
