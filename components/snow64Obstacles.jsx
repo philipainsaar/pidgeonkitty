@@ -98,7 +98,7 @@ const ROCK_VARIANT_COLORS = {
 // V62: translucent body underneath Core Planet's holographic shell.
 // The previous 39% body was almost completely covered by the brighter film.
 // 0.58 still lets snowy scenery show through, while color motion stays legible.
-const CRYSTAL_BODY_OPACITY = 0.58;
+const CRYSTAL_BODY_OPACITY = 0.68;
 const CRYSTAL_CYCLE_SECONDS = 12.0; // Visible, continuous two-second pastel transitions.
 const CRYSTAL_BODY_PASTELS = [
   '#ffd0e9', // baby pink
@@ -185,8 +185,9 @@ function makeBrightCrystalTexture(source) {
     const pixels = data.data;
     for (let index = 0; index < pixels.length; index += 4) {
       const tone = pixels[index] * 0.299 + pixels[index+1] * 0.587 + pixels[index+2] * 0.114;
-      // 198..252: veins stay visible, while all six pastels stay light.
-      const ivory = Math.round(198 + tone * 0.21);
+      // Brightened further for V63 so the body color reads clearly under the separate holographic film.
+      // 208..249 keeps the embedded cracks visible without muting the pastel cycle.
+      const ivory = Math.round(208 + tone * 0.16);
       pixels[index] = pixels[index+1] = pixels[index+2] = ivory;
       // Preserve the source alpha if one exists.
     }
@@ -613,38 +614,27 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
   const isCrystal = !!part.material?.userData?.isCrystal;
   const partIndex = asset.parts.indexOf(part);
   const pastelColor = useMemo(() => new THREE.Color(), []);
-  const crystalPhases = useMemo(() => isCrystal ? items.map(rock => {
+  const familyPhase = useMemo(() => {
     const familyStart = CRYSTAL_FAMILY_START_INDEX[asset.name] ?? 0;
-    const n = stableHash(`${rock.id}:${asset.name}:pastel`)/4294967296;
-    return familyStart + partIndex * 0.13 + (n - 0.5) * 0.35;
-  }) : null, [isCrystal, items, asset.name, partIndex]);
+    return familyStart + partIndex * 0.13;
+  }, [asset.name, partIndex]);
   const film = useMemo(() => isCrystal
     ? makeCorePlanetCrystalFilm(part.geometry, asset.name, Math.max(0, partIndex))
     : null, [isCrystal, part.geometry, asset.name, partIndex]);
-  const keyView = useMemo(() => new THREE.Vector3(), []);
-  const fillView = useMemo(() => new THREE.Vector3(), []);
   const poses = useMemo(() => items.map(rock => {
     const p = parameters(rock);
     return { rock, scale: p?.scale || 1, yaw: p?.yaw || 0,
       y: getSnow64ObstacleBaseY(rock, groundY, p) };
   }), [items, groundY]);
   useEffect(() => () => { film?.dispose(); }, [film]);
-  // Initialize instance colors BEFORE the first render/compiled WebGL program.
-  // V61 first created instanceColor in useFrame, which could leave some
-  // renderer/material combinations with a non-instanced shader variant.
   useLayoutEffect(() => {
-    if (!isCrystal || !ref.current) return;
-    const mesh = ref.current;
-    for (let i = 0; i < crystalPhases.length; i++) {
-      mesh.setColorAt(i, sampleCrystalBodyPastel(
-        pastelColor, crystalPhases[i]));
-    }
-    if (mesh.instanceColor) {
-      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-      mesh.instanceColor.needsUpdate = true;
-    }
+    if (!isCrystal) return;
+    // V63: drive the visible pastel animation directly on the material color.
+    // This avoids relying on instanced color compilation paths, which made the
+    // 12-second cycle hard to see or appear static on some renderer setups.
+    part.material.color.copy(sampleCrystalBodyPastel(pastelColor, familyPhase));
     part.material.needsUpdate = true;
-  }, [isCrystal, crystalPhases, part.material, pastelColor]);
+  }, [isCrystal, familyPhase, part.material, pastelColor]);
   useFrame(({ camera, clock }) => {
     if (!ref.current) return;
     poses.forEach((p, i) => {
@@ -655,29 +645,21 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
       dummy.updateMatrix();
       ref.current.setMatrixAt(i, dummy.matrix);
       if (filmRef.current) filmRef.current.setMatrixAt(i, dummy.matrix);
-      if (isCrystal) {
-        const phase = (clock.elapsedTime / CRYSTAL_CYCLE_SECONDS)
-          * CRYSTAL_BODY_PASTELS.length + crystalPhases[i];
-        // Per-instance tint changes on the body only, the Core Planet film
-        // shader, colors, alpha, reflection and animation remain unchanged.
-        ref.current.setColorAt(i, sampleCrystalBodyPastel(pastelColor, phase));
-      }
     });
     ref.current.instanceMatrix.needsUpdate = true;
-    if (isCrystal && ref.current.instanceColor) {
-      ref.current.instanceColor.needsUpdate = true;
-    }
     if (filmRef.current) filmRef.current.instanceMatrix.needsUpdate = true;
+    if (isCrystal) {
+      const phase = (clock.elapsedTime / CRYSTAL_CYCLE_SECONDS)
+        * CRYSTAL_BODY_PASTELS.length + familyPhase;
+      // Strong, unmistakable pastel body cycle under the unchanged holographic film.
+      part.material.color.copy(sampleCrystalBodyPastel(pastelColor, phase));
+    }
     if (film) {
-      // Source CorePlanet updates uTime and the actual light positions every frame.
-      // Update these uniforms without allocating textures or changing the GLB.
       film.uniforms.uTime.value = clock.elapsedTime;
       film.uniforms.uKeyViewPosition.value.copy(crystalKeyWorld)
         .applyMatrix4(camera.matrixWorldInverse);
       film.uniforms.uFillViewPosition.value.copy(crystalFillWorld)
         .applyMatrix4(camera.matrixWorldInverse);
-      // The Core Planet hologram is independently animated above; the body
-      // pastel cycling is handled by per-instance colors, not material.color.
     }
   });
   return <>
@@ -685,7 +667,7 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
       frustumCulled={false} dispose={null}/>
     {film && <instancedMesh ref={filmRef}
       args={[part.geometry, film, items.length]}
-      renderOrder={3} frustumCulled={false} dispose={null}/>}
+      renderOrder={3} frustumCulled={false} dispose={null}/>} 
   </>;
 }
 export function Snow64ObstacleField({rocks,stateRef,groundY,data}) {
