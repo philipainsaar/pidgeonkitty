@@ -8,6 +8,10 @@ import { SNOW64_MODEL_PATHS, SNOW64_MODEL_SCALE, SNOW64_SNOWBOARD_FOOT_TUNE } fr
 
 const Context = createContext({});
 const FALLBACK_SIZE = 0.0001;
+// Bury the widened root base beneath the snow, so the tree grows naturally
+// out of the ground rather than displaying an exposed platform at its foot.
+// Adjust this fraction (0.00 to 0.15 is a useful range) if desired.
+const TREE_ROOT_BURY_FRACTION = 0.10;
 
 /** Pure GLB analysis: establishes a common origin at the bottom, center X/Z. */
 export function describeSnowModel(gltf) {
@@ -88,6 +92,19 @@ export function SnowGLBVisual({asset, type, dimensions}) {
   </group>;
 }
 
+/** Stable, world-position-based variation for trees.
+ * Each tree has a different yaw/lean/size, but its shape never jitters as the
+ * camera moves or endless course chunks recycle. Does not affect physics.
+ */
+function treeHash(tree, index, salt) {
+  const x = Math.round((tree.x ?? 0) * 137);
+  const z = Math.round((tree.z ?? 0) * 137);
+  let h = Math.imul(x, 374761393) ^ Math.imul(z, 668265263)
+        ^ Math.imul(index + 1, 2246822519) ^ Math.imul(salt + 1, 3266489917);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
 /** Draw all the GLB trees (or other static repeated props) in a few GPU draws.
  * The original per-item collision IDs and world positions are unchanged.
  * Each GLB mesh is instanced, so an authored multi-part tree remains efficient.
@@ -98,6 +115,14 @@ export function SnowGLBInstances({asset, type, items, pose, hidden, animated=fal
   poseRef.current = pose;
   const hiddenRefRef = useRef(hidden);
   hiddenRefRef.current = hidden;
+  // Different tree headings + very subtle individual lean and size. The forest
+  // remains efficiently GPU-instanced, even on mobile.
+  const treeVariation = useMemo(() => type !== "tree" ? null : items.map((tree, i) => ({
+    yaw: (treeHash(tree, i, 0) - 0.5) * 1.2,
+    leanX: (treeHash(tree, i, 1) - 0.5) * 0.075,
+    leanZ: (treeHash(tree, i, 2) - 0.5) * 0.075,
+    size: 0.95 + treeHash(tree, i, 3) * 0.10,
+  })), [items, type]);
   const scratch = useMemo(() => ({
     position: new THREE.Vector3(), rotation: new THREE.Euler(), quaternion: new THREE.Quaternion(),
     scale: new THREE.Vector3(), base: new THREE.Matrix4(), fit: new THREE.Matrix4(), mat: new THREE.Matrix4(),
@@ -112,10 +137,24 @@ export function SnowGLBInstances({asset, type, items, pose, hidden, animated=fal
         const isHidden = !!hiddenRefRef.current?.(obj);
         const p = poseRef.current(obj,i,t);
         scratch.position.set(...p.position);
-        scratch.rotation.set(...(p.rotation || [0,0,0]));
+        // The GLB is normally snapped to its lowest point. For this cloud tree
+        // that leaves the wide roots exposed on top of the snow. Sink only the
+        // tree visual, proportionally to its fitted height, under the terrain.
+        // Physics positions and other models stay unchanged.
+        if (type === "tree") scratch.position.y -= p.dimensions[1] * TREE_ROOT_BURY_FRACTION;
+        const originalRotation = p.rotation || [0,0,0];
+        const variety = treeVariation?.[i];
+        scratch.rotation.set(
+          originalRotation[0] + (variety?.leanX || 0),
+          originalRotation[1] + (variety?.yaw || 0),
+          originalRotation[2] + (variety?.leanZ || 0),
+        );
         scratch.quaternion.setFromEuler(scratch.rotation);
         if (isHidden) scratch.scale.setScalar(.000001);
-        else scratch.scale.set(...scaleFor(type,asset,p.dimensions));
+        else {
+          scratch.scale.set(...scaleFor(type,asset,p.dimensions));
+          if (variety) scratch.scale.multiplyScalar(variety.size);
+        }
         scratch.base.compose(scratch.position,scratch.quaternion,scratch.scale);
         scratch.mat.copy(scratch.base).multiply(scratch.origin).multiply(asset.meshes[j].local);
         mesh.setMatrixAt(i,scratch.mat);
@@ -123,7 +162,7 @@ export function SnowGLBInstances({asset, type, items, pose, hidden, animated=fal
       mesh.instanceMatrix.needsUpdate = true;
     }
   };
-  useEffect(() => { update(0); }, [asset,items,scratch]);
+  useEffect(() => { update(0); }, [asset,items,scratch,treeVariation]);
   useFrame(({clock}) => { if (animated || hidden) update(clock.elapsedTime); });
   return <group>
     {asset.meshes.map((part,i)=><instancedMesh key={i} ref={v=>{refs.current[i]=v;}}
