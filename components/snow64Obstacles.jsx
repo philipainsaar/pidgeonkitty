@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
@@ -92,11 +92,14 @@ const ROCK_VARIANT_COLORS = {
   Rock5: '#eef2f6', Rock6: '#fafcff', Rock7: '#f4f7fa',
 };
 
-// V61: only the GLB-textured crystal BODY is recolored. The independent
+// V62: brighten the embedded crystal detail for legible color animation. The independent
 // Core Planet holographic film below is intentionally left unchanged.
 // Every crystal cycles through ALL six soft colors, not just its own family.
-const CRYSTAL_BODY_OPACITY = 0.39; // V60 was 0.72; leave the hologram untouched.
-const CRYSTAL_CYCLE_SECONDS = 15.0; // Full loop. 2.5 seconds per pastel color.
+// V62: translucent body underneath Core Planet's holographic shell.
+// The previous 39% body was almost completely covered by the brighter film.
+// 0.58 still lets snowy scenery show through, while color motion stays legible.
+const CRYSTAL_BODY_OPACITY = 0.58;
+const CRYSTAL_CYCLE_SECONDS = 12.0; // Visible, continuous two-second pastel transitions.
 const CRYSTAL_BODY_PASTELS = [
   '#ffd0e9', // baby pink
   '#c8e7ff', // sky blue
@@ -157,6 +160,60 @@ function makeGrayTexture(map) {
   grayTextureCache.set(map, tex);
   return tex;
 }
+// The exported Coke/Coke.png crystal texture is grayscale but its middle
+// values are dark (roughly 145/255). Multiplying pastel RGB by that map
+// made the whole translucent crystal look gray-purple. Brighten the same
+// embedded texture *in memory*, retaining its veins, UV set, and sampler.
+// This adds NO image files and changes NO holographic shader.
+const brightCrystalTextureCache = new WeakMap();
+function makeBrightCrystalTexture(source) {
+  if (!source?.image || typeof document === 'undefined') return source || null;
+  const existing = brightCrystalTextureCache.get(source);
+  if (existing) return existing;
+  const image = source.image;
+  const width = image.width || image.videoWidth || image.naturalWidth;
+  const height = image.height || image.videoHeight || image.naturalHeight;
+  if (!width || !height) return source;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return source;
+    context.drawImage(image, 0, 0, width, height);
+    const data = context.getImageData(0, 0, width, height);
+    const pixels = data.data;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const tone = pixels[index] * 0.299 + pixels[index+1] * 0.587 + pixels[index+2] * 0.114;
+      // 198..252: veins stay visible, while all six pastels stay light.
+      const ivory = Math.round(198 + tone * 0.21);
+      pixels[index] = pixels[index+1] = pixels[index+2] = ivory;
+      // Preserve the source alpha if one exists.
+    }
+    context.putImageData(data, 0, 0);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.name = `${source.name || 'crystal'}_pastelNeutral`;
+    texture.colorSpace = source.colorSpace;
+    texture.channel = source.channel; // CRITICAL: TEXCOORD_1 on some crystals.
+    texture.wrapS = source.wrapS;
+    texture.wrapT = source.wrapT;
+    texture.repeat.copy(source.repeat);
+    texture.offset.copy(source.offset);
+    texture.center.copy(source.center);
+    texture.rotation = source.rotation;
+    texture.flipY = source.flipY;
+    texture.magFilter = source.magFilter;
+    texture.minFilter = source.minFilter;
+    texture.generateMipmaps = source.generateMipmaps;
+    texture.anisotropy = Math.min(4, source.anisotropy || 1);
+    texture.needsUpdate = true;
+    brightCrystalTextureCache.set(source, texture);
+    return texture;
+  } catch (error) {
+    console.warn('SNOW360: falling back to embedded crystal texture', error);
+    return source;
+  }
+}
 function cloneColor(colorLike, fallback) {
   return colorLike?.clone?.() || new THREE.Color(fallback);
 }
@@ -178,15 +235,13 @@ function styleObstacleMaterial(sourceMaterial, variantName, partIndex = 0) {
   if (isCrystalVariant(variantName)) {
     const palette = paletteToColors(CRYSTAL_VARIANT_COLORS[variantName] || ['#d7f4ff']);
     const tint = palette[partIndex % palette.length].clone();
-    // V60 FIX: V59 dropped src.map entirely, turning textured crystals into
-    // flat translucent polygons. The glTF texture has its own UV channel
-    // (Crystals/Crystals2 use TEXCOORD_1), preserved by reusing the GLTFLoader
-    // texture object. Do NOT create a replacement image or alter map.channel.
+    // V62: use the GLB's original crack/vein detail, neutralized toward
+    // ivory so it does not darken or bias the six animated pastel tints.
+    // The original map's UV channel and sampler are retained.
     const material = new THREE.MeshBasicMaterial({
       name: `${variantName}_TEXTURED_PastelCrystalBody`,
-      map: src?.map || null,
-      // setColorAt() gives each individual instance a different pastel cycle.
-      // White base avoids multiplying/gray-shifting the moving pastel tint.
+      map: makeBrightCrystalTexture(src?.map),
+      // White base allows instanceColor to determine the body hue.
       color: '#ffffff',
       transparent: true,
       opacity: CRYSTAL_BODY_OPACITY,
@@ -574,6 +629,22 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
       y: getSnow64ObstacleBaseY(rock, groundY, p) };
   }), [items, groundY]);
   useEffect(() => () => { film?.dispose(); }, [film]);
+  // Initialize instance colors BEFORE the first render/compiled WebGL program.
+  // V61 first created instanceColor in useFrame, which could leave some
+  // renderer/material combinations with a non-instanced shader variant.
+  useLayoutEffect(() => {
+    if (!isCrystal || !ref.current) return;
+    const mesh = ref.current;
+    for (let i = 0; i < crystalPhases.length; i++) {
+      mesh.setColorAt(i, sampleCrystalBodyPastel(
+        pastelColor, crystalPhases[i]));
+    }
+    if (mesh.instanceColor) {
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor.needsUpdate = true;
+    }
+    part.material.needsUpdate = true;
+  }, [isCrystal, crystalPhases, part.material, pastelColor]);
   useFrame(({ camera, clock }) => {
     if (!ref.current) return;
     poses.forEach((p, i) => {
@@ -587,8 +658,8 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
       if (isCrystal) {
         const phase = (clock.elapsedTime / CRYSTAL_CYCLE_SECONDS)
           * CRYSTAL_BODY_PASTELS.length + crystalPhases[i];
-        // Only the textured base is recolored. The film's shader, uniforms,
-        // hues, intensity and animation are not modified by this cycle.
+        // Per-instance tint changes on the body only, the Core Planet film
+        // shader, colors, alpha, reflection and animation remain unchanged.
         ref.current.setColorAt(i, sampleCrystalBodyPastel(pastelColor, phase));
       }
     });
