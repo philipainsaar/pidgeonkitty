@@ -38,15 +38,21 @@ export const SNOW64_MODEL_SCALE = Object.freeze({
 });
 
 /**
- * Extra CUSTOM snowboard visual translation in game units, after GLB auto-fit.
- * The rider and procedural board stay exactly where they were.
+ * V46: CUSTOM snowboard sideways foot alignment, in game/world units.
  *
- * The previous +/-0.80 offset moved most of the board out from under the feet.
- * This V45 value is deliberately small (about 5% of the 2.43-unit board length).
+ * The original/procedural board and rider remain unchanged.
+ * V42-V45 changed Z, which slides the board along its LENGTH rather than
+ * aligning it under the rider's toes in the user's mobile screenshot.
  *
- * +Z moves the board toward the character's forward foot in the currently
- * corrected V6 snowboard orientation. If it is still slightly off, adjust Z
- * in 0.05 steps. X moves sideways, Y moves vertically.
- * This does not change GLB geometry, textures, rotation, physics or animations.
+ * The mobile follow camera sees +X toward screen right. The rider's toes are
+ * on that side of the custom board, so move the custom board toward +X.
+ *
+ * [ X sideways, Y height, Z lengthwise ]
+ * Start with X=+0.22 and Z=0. Increase X to +0.26 if the feet still stick out,
+ * or decrease to +0.16 if the deck moves too far toward the toes.
+ * Keep Z=0 unless the nose/tail alignment is also wrong.
+ *
+ * Only applied to SnowGLBVisual(type="snowboard") by snow64VisualModels.jsx
+ * from V45. This doesn't touch the mesh, texture, procedural board, or rider.
  */
-export const SNOW64_SNOWBOARD_FOOT_TUNE = Object.freeze([0, 0, 0.12]);
+export const SNOW64_SNOWBOARD_FOOT_TUNE = Object.freeze([0.22, 0, 0]);
