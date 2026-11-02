@@ -36,3 +36,17 @@ export const SNOW64_MODEL_SCALE = Object.freeze({
   courseMarker: [1,1,1], mountain: [1,1,1],
   explosionShard: [1,1,1], explosionBurst: [1,1,1],
 });
+
+/**
+ * Extra CUSTOM snowboard visual translation in game units, after GLB auto-fit.
+ * The rider and procedural board stay exactly where they were.
+ *
+ * The previous +/-0.80 offset moved most of the board out from under the feet.
+ * This V45 value is deliberately small (about 5% of the 2.43-unit board length).
+ *
+ * +Z moves the board toward the character's forward foot in the currently
+ * corrected V6 snowboard orientation. If it is still slightly off, adjust Z
+ * in 0.05 steps. X moves sideways, Y moves vertically.
+ * This does not change GLB geometry, textures, rotation, physics or animations.
+ */
+export const SNOW64_SNOWBOARD_FOOT_TUNE = Object.freeze([0, 0, 0.12]);

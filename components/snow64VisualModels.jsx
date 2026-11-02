@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useFrame } from "@react-three/fiber";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
-import { SNOW64_MODEL_PATHS, SNOW64_MODEL_SCALE } from "./snow64ModelConfig";
+import { SNOW64_MODEL_PATHS, SNOW64_MODEL_SCALE, SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
 
 const Context = createContext({});
 const FALLBACK_SIZE = 0.0001;
@@ -75,9 +75,15 @@ export function SnowGLBVisual({asset, type, dimensions}) {
   const clone = useMemo(() => asset?.scene.clone(true), [asset]);
   if (!asset || !clone) return null;
   const scales = scaleFor(type, asset, dimensions);
-  return <group scale={scales}>
-    <group position={[-asset.centerX,-asset.bottom,-asset.centerZ]}>
-      <primitive object={clone} dispose={null}/>
+  // Keep the common auto-fit origin. Apply only a *small* configurable visual
+  // translation outside the scale group, in world/game units. Never shift the
+  // rider, board physics, or procedural snowboard geometry.
+  const visualOffset = type === "snowboard" ? SNOW64_SNOWBOARD_FOOT_TUNE : [0, 0, 0];
+  return <group position={visualOffset}>
+    <group scale={scales}>
+      <group position={[-asset.centerX,-asset.bottom,-asset.centerZ]}>
+        <primitive object={clone} dispose={null}/>
+      </group>
     </group>
   </group>;
 }
