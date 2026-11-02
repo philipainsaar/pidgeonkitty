@@ -17,6 +17,7 @@ import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } fr
 import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture } from "./snow64VisualMaterials";
+import { snow360Drift } from "./snow64SnowDrifts";
 import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
 import Snow360CloudRamp from "./Snow360CloudRamps";
@@ -80,23 +81,43 @@ function rand(seed) {
 function groundY(x, z) {
   const rolled = 0.5 * Math.sin(-z * 0.04) + 0.31 * Math.sin(x * 0.22 - z * 0.018);
   const bank = Math.max(0, Math.abs(x) - 12);
-  return SLOPE * z + rolled + bank * bank * 0.055;
+  // Same deterministic snow mounds for rider, terrain, rocks, trees and ramps.
+  return SLOPE * z + rolled + bank * bank * 0.055 + snow360Drift(x, z);
 }
 
-function Terrain({index}) {
+/** Match the rendered terrain's analytic normals to its physical height. */
+function snowGroundAndSlope(x, z) {
+  const phase = x * 0.22 - z * 0.018;
+  const bank = Math.max(0, Math.abs(x) - 12);
+  const drift = snow360Drift(x, z, true);
+  return {
+    y: SLOPE * z + 0.5 * Math.sin(-z * 0.04) + 0.31 * Math.sin(phase)
+      + bank * bank * 0.055 + drift.height,
+    dx: 0.31 * 0.22 * Math.cos(phase)
+      + (bank > 0 ? Math.sign(x) * 0.11 * bank : 0) + drift.dx,
+    dz: SLOPE - 0.02 * Math.cos(-z * 0.04)
+      - 0.31 * 0.018 * Math.cos(phase) + drift.dz,
+  };
+}
+
+function Terrain({index, mobile=false}) {
   // One shared snow shader and one continuous world-space UV field for the
   // entire center and both banks. No separate material boundary is visible.
   const material = useSnow64TerrainMaterials();
   const geometry = useMemo(() => {
     const vertices = [], uvs = [], normals = [], colors = [], indices = [];
-    const halfWidth = 34, stepsX = 34, stepsZ = 55;
+    // More triangles where the drift silhouettes need them, but cheaper on mobile.
+    const halfWidth = 34;
+    const stepsX = mobile ? 50 : 68;
+    const stepsZ = mobile ? 88 : 120;
     const c = new THREE.Color();
     const smooth = t => { const v = clamp(t, 0, 1); return v * v * (3 - 2 * v); };
     for (let i = 0; i <= stepsZ; i++) {
       const z = 32 - index * SNOW_CHUNK_LENGTH - i * (SNOW_CHUNK_LENGTH / stepsZ);
       for (let j = 0; j <= stepsX; j++) {
         const x = -halfWidth + j / stepsX * (halfWidth * 2);
-        vertices.push(x, groundY(x, z), z);
+        const snow = snowGroundAndSlope(x, z);
+        vertices.push(x, snow.y, z);
 
         // Absolutely anchored to the terrain coordinates. Moving the rider
         // makes the snowy surface flow under the board, without UV scrolling.
@@ -106,14 +127,8 @@ function Terrain({index}) {
 
         // Analytic derivatives of groundY. Recomputing face normals inside
         // each chunk caused different shading along the shared chunk border.
-        const phase = x * 0.22 - z * 0.018;
-        const bank = Math.max(0, Math.abs(x) - 12);
-        const slopeX = 0.31 * 0.22 * Math.cos(phase)
-          + (bank > 0 ? Math.sign(x) * 0.11 * bank : 0);
-        const slopeZ = SLOPE - 0.02 * Math.cos(-z * 0.04)
-          - 0.31 * 0.018 * Math.cos(phase);
-        const inv = 1 / Math.hypot(slopeX, 1, slopeZ);
-        normals.push(-slopeX * inv, inv, -slopeZ * inv);
+        const inv = 1 / Math.hypot(snow.dx, 1, snow.dz);
+        normals.push(-snow.dx * inv, inv, -snow.dz * inv);
 
         // Deterministic WORLD-COORDINATE tint, never row or chunk index.
         // Side snow gradually acquires a little extra lavender depth near trees.
@@ -141,7 +156,7 @@ function Terrain({index}) {
     g.setIndex(indices);
     g.computeBoundingSphere();
     return g;
-  }, [index]);
+  }, [index, mobile]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   return <mesh geometry={geometry} material={material} receiveShadow={false}/>;
 }
@@ -291,13 +306,13 @@ function CourseMarker({ z, side }) {
     </group>
   );
 }
-const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef}) {
+const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mobile}) {
   const data = useMemo(() => getSnowChunk(index), [index]);
   const rockModel=useSnowModel("rock");
   const obstacleLibrary=useSnow64Obstacles();
   const tokenModel=useSnowModel("token");
   return <>
-    <Terrain index={index} />
+    <Terrain index={index} mobile={mobile} />
     <Forest trees={data.trees} />
     {obstacleLibrary ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
       : rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
@@ -314,10 +329,10 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef}) {
     {data.banners.map(c=><CourseMarker key={c.id} {...c} />)}
   </>;
 });
-function Course({ collectedRef, distance, stateRef }) {
+function Course({ collectedRef, distance, stateRef, mobile }) {
   const center = snowChunkIndex(distance);
   const indexes = useMemo(() => Array.from({length:5},(_,i)=>center+i-1).filter(i=>i>=0),[center]);
-  return <>{indexes.map(index=><CourseChunk key={index} index={index} collectedRef={collectedRef} stateRef={stateRef} />)}</>;
+  return <>{indexes.map(index=><CourseChunk key={index} index={index} collectedRef={collectedRef} stateRef={stateRef} mobile={mobile} />)}</>;
 }
 
 function Mountains({stateRef}) {
@@ -1687,7 +1702,7 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     <ambientLight intensity={1.7}/>
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
-    <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef}/>
+    <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef} mobile={mobile}/>
     <Snow64ExplosionVFX stateRef={stateRef} mobile={mobile}/>
     <Snow64ObstacleShatterVFX stateRef={stateRef} groundY={groundY} mobile={mobile}/>
     <FrostMushroom stateRef={stateRef}/>
