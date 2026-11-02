@@ -285,17 +285,13 @@ function styleObstacleMaterial(sourceMaterial, variantName, partIndex = 0) {
   return material;
 }
 
-// CorePlanet.jsx reference: createShellHologram's blue/pink interference film.
-// Per-family endpoints keep pink, sky blue, mint, violet and aqua distinct.
-// These colors move *across the surface* rather than making the whole crystal
-// a single uniform rainbow color on each frame.
-const CORE_PLANET_CRYSTAL_FILMS = {
-  Crystals:     ['#ff5acb', '#bba9ff'],  // pink to lilac
-  Crystals2:    ['#d1a8ff', '#49c9ff'],  // sky blue / periwinkle
-  RockCrystal1: ['#bcffe8', '#57d9ff'],  // mint / aqua
-  RockCrystal2: ['#ff92df', '#967cff'],  // violet / opal pink
-  RockCrystal3: ['#a8c9ff', '#58f2f4'],  // icy blue / turquoise
-};
+// V64: the exact CorePlanet thin-film GLSL still creates the moving
+// interference, glints and Fresnel rim. Only its uPink/uBlue colors now follow
+// the six-color crystal body cycle, rather than staying permanently pink/blue.
+// Keep the film endpoints in nearly the same hue so it reads as ONE cycling
+// pastel crystal with a holographic surface instead of two conflicting colors.
+const CRYSTAL_HOLO_NEXT_COLOR_OFFSET = 0.65; // fractional palette step
+const CRYSTAL_HOLO_SECOND_COLOR_BLEND = 0.50; // 0 = uniform; 1 = 0.65 step ahead
 const CORE_PLANET_HOLO = {
   flowSpeed: 1.05,
   bandScale: 1.55,
@@ -311,7 +307,12 @@ function makeCorePlanetCrystalFilm(geometry, variantName, partIndex) {
   geometry.computeBoundingSphere();
   const bounds = geometry.boundingSphere;
   const radius = Math.max(bounds?.radius || 0.12, 0.001);
-  const endpoints = CORE_PLANET_CRYSTAL_FILMS[variantName] || ['#ff54d4', '#49c9ff'];
+  const startingPhase = (CRYSTAL_FAMILY_START_INDEX[variantName] ?? 0)
+    + partIndex * 0.13;
+  const startingPastel = sampleCrystalBodyPastel(new THREE.Color(), startingPhase);
+  const startingNext = sampleCrystalBodyPastel(
+    new THREE.Color(), startingPhase + CRYSTAL_HOLO_NEXT_COLOR_OFFSET
+  ).lerp(startingPastel, 1 - CRYSTAL_HOLO_SECOND_COLOR_BLEND);
   const uniforms = {
     uTime: { value: 0 },
     uKeyViewPosition: { value: new THREE.Vector3() },
@@ -324,8 +325,8 @@ function makeCorePlanetCrystalFilm(geometry, variantName, partIndex) {
     uReflections: { value: CORE_PLANET_HOLO.reflections },
     uFlowSpeed: { value: CORE_PLANET_HOLO.flowSpeed },
     uBandScale: { value: CORE_PLANET_HOLO.bandScale },
-    uPink: { value: new THREE.Color(endpoints[0]) },
-    uBlue: { value: new THREE.Color(endpoints[1]) },
+    uPink: { value: startingPastel },
+    uBlue: { value: startingNext },
     uPhase: { value: partIndex * 0.47 + (stableHash(variantName) % 29) * .19 },
   };
   const mat = new THREE.ShaderMaterial({
@@ -614,6 +615,7 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
   const isCrystal = !!part.material?.userData?.isCrystal;
   const partIndex = asset.parts.indexOf(part);
   const pastelColor = useMemo(() => new THREE.Color(), []);
+  const nextFilmPastel = useMemo(() => new THREE.Color(), []);
   const familyPhase = useMemo(() => {
     const familyStart = CRYSTAL_FAMILY_START_INDEX[asset.name] ?? 0;
     return familyStart + partIndex * 0.13;
@@ -651,10 +653,18 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
     if (isCrystal) {
       const phase = (clock.elapsedTime / CRYSTAL_CYCLE_SECONDS)
         * CRYSTAL_BODY_PASTELS.length + familyPhase;
-      // Strong, unmistakable pastel body cycle under the unchanged holographic film.
+      // One palette drives the textured body and the two thin-film endpoints.
+      // All six colors appear in the actual HOLOGRAPHIC FILM, not only behind it.
       part.material.color.copy(sampleCrystalBodyPastel(pastelColor, phase));
+      if (film) {
+        film.uniforms.uPink.value.copy(part.material.color);
+        film.uniforms.uBlue.value.copy(sampleCrystalBodyPastel(
+          nextFilmPastel, phase + CRYSTAL_HOLO_NEXT_COLOR_OFFSET
+        )).lerp(part.material.color, 1 - CRYSTAL_HOLO_SECOND_COLOR_BLEND);
+      }
     }
     if (film) {
+      // These CorePlanet flow/reflection controls are NOT changed in V64.
       film.uniforms.uTime.value = clock.elapsedTime;
       film.uniforms.uKeyViewPosition.value.copy(crystalKeyWorld)
         .applyMatrix4(camera.matrixWorldInverse);
@@ -687,7 +697,7 @@ export function Snow64ObstacleField({rocks,stateRef,groundY,data}) {
   })}</group>;
 }
 
-// V60: repair the missing GLB crystal textures; keep an obviously visible
+// V64: animate thin-film colors with the crystal bodies; preserve GLB textures and
 // CorePlanet-inspired holographic thin-film layer on each instanced crystal;
 // 2 flowing interference waves, looping reflective strip, camera Fresnel,
 // scene-linked light glints and pastel crystal family base colors.
