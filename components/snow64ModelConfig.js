@@ -36,20 +36,3 @@ export const SNOW64_MODEL_SCALE = Object.freeze({
   courseMarker: [1,1,1], mountain: [1,1,1],
   explosionShard: [1,1,1], explosionBurst: [1,1,1],
 });
-
-/**
- * V42: visual position offsets in GAME UNITS, after auto-scaling.
- * The loader normally recenters GLBs by their bounding boxes, so changing
- * the GLB origin in Blender does not shift the visible board in the game.
- *
- * SNOWBOARD: V42 used negative Z, which moved the board BACKWARD in the
- * actual game orientation. Positive Z moves it toward the rider's feet.
- * Start at +0.80 (the opposite of V42's -0.80). If the board travels too
- * far forward, reduce the value to +0.60 or +0.40; if still too far back,
- * increase it to +1.00. This only affects the snowboard's visual placement.
- *
- * The offset affects ONLY the custom visual, not collision/physics.
- */
-export const SNOW64_MODEL_POSITION_OFFSET = Object.freeze({
-  snowboard: [0, 0, 0.80],
-});
