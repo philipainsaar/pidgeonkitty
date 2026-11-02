@@ -61,9 +61,14 @@ function createShardMaterial(sourceMaterial, name) {
   material.transparent = src?.transparent ?? false;
   material.opacity = src?.opacity ?? 1;
   if (src?.userData?.isCrystal) {
+    // Instanced body color is white to avoid multiplying away pastel hues.
+    // Fragments retain the family's original pastel instead of turning white.
+    if (src.userData.crystalInitialTint) {
+      material.color.copy(src.userData.crystalInitialTint);
+    }
     material.transparent = true;
     material.opacity = Math.max(0.48, Math.min(material.opacity, 0.62));
-    material.emissive = cloneColor(src.color || src.emissive, '#ffffff');
+    material.emissive = cloneColor(src.userData.crystalInitialTint || src.emissive, '#ffffff');
     material.emissiveIntensity = Math.max(src.emissiveIntensity || 0, 1.05);
     material.roughness = Math.min(material.roughness ?? 0.2, 0.16);
     material.metalness = Math.max(material.metalness ?? 0, 0.02);
@@ -86,6 +91,37 @@ const ROCK_VARIANT_COLORS = {
   Rock1: '#f7f8fb', Rock2: '#fbfcfe', Rock3: '#f2f5f8', Rock4: '#ffffff',
   Rock5: '#eef2f6', Rock6: '#fafcff', Rock7: '#f4f7fa',
 };
+
+// V61: only the GLB-textured crystal BODY is recolored. The independent
+// Core Planet holographic film below is intentionally left unchanged.
+// Every crystal cycles through ALL six soft colors, not just its own family.
+const CRYSTAL_BODY_OPACITY = 0.39; // V60 was 0.72; leave the hologram untouched.
+const CRYSTAL_CYCLE_SECONDS = 15.0; // Full loop. 2.5 seconds per pastel color.
+const CRYSTAL_BODY_PASTELS = [
+  '#ffd0e9', // baby pink
+  '#c8e7ff', // sky blue
+  '#c8ffe8', // mint
+  '#e1cfff', // lavender
+  '#ccfbff', // aqua
+  '#ffe3cb', // peach
+].map(hex => new THREE.Color(hex));
+const CRYSTAL_FAMILY_START_INDEX = {
+  Crystals: 0,      // start in baby pink
+  Crystals2: 1,     // start in sky blue
+  RockCrystal1: 2,  // start in mint
+  RockCrystal2: 3,  // start in lavender
+  RockCrystal3: 4,  // start in aqua
+};
+// Reuse one Color per instancing group: no per-frame object allocations.
+function sampleCrystalBodyPastel(out, phase) {
+  const count = CRYSTAL_BODY_PASTELS.length;
+  const wrapped = ((phase % count) + count) % count;
+  const index = Math.floor(wrapped);
+  const local = wrapped - index;
+  const smooth = local * local * (3 - 2 * local);
+  return out.copy(CRYSTAL_BODY_PASTELS[index])
+    .lerp(CRYSTAL_BODY_PASTELS[(index + 1) % count], smooth);
+}
 function isCrystalVariant(name) {
   return name.startsWith('Crystal') || name.startsWith('RockCrystal');
 }
@@ -149,9 +185,11 @@ function styleObstacleMaterial(sourceMaterial, variantName, partIndex = 0) {
     const material = new THREE.MeshBasicMaterial({
       name: `${variantName}_TEXTURED_PastelCrystalBody`,
       map: src?.map || null,
-      color: tint,
+      // setColorAt() gives each individual instance a different pastel cycle.
+      // White base avoids multiplying/gray-shifting the moving pastel tint.
+      color: '#ffffff',
       transparent: true,
-      opacity: 0.72,
+      opacity: CRYSTAL_BODY_OPACITY,
       depthWrite: false,
       depthTest: true,
       side: THREE.FrontSide,
@@ -160,6 +198,7 @@ function styleObstacleMaterial(sourceMaterial, variantName, partIndex = 0) {
       fog: false,
     });
     material.userData.isCrystal = true;
+    material.userData.crystalInitialTint = tint;
     material.userData.crystalPalette = palette;
     material.userData.holoSpeed = 0.37;
     material.userData.holoPhase = partIndex * .59 + (stableHash(variantName) % 27) * .13;
@@ -518,6 +557,12 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const isCrystal = !!part.material?.userData?.isCrystal;
   const partIndex = asset.parts.indexOf(part);
+  const pastelColor = useMemo(() => new THREE.Color(), []);
+  const crystalPhases = useMemo(() => isCrystal ? items.map(rock => {
+    const familyStart = CRYSTAL_FAMILY_START_INDEX[asset.name] ?? 0;
+    const n = stableHash(`${rock.id}:${asset.name}:pastel`)/4294967296;
+    return familyStart + partIndex * 0.13 + (n - 0.5) * 0.35;
+  }) : null, [isCrystal, items, asset.name, partIndex]);
   const film = useMemo(() => isCrystal
     ? makeCorePlanetCrystalFilm(part.geometry, asset.name, Math.max(0, partIndex))
     : null, [isCrystal, part.geometry, asset.name, partIndex]);
@@ -539,8 +584,18 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
       dummy.updateMatrix();
       ref.current.setMatrixAt(i, dummy.matrix);
       if (filmRef.current) filmRef.current.setMatrixAt(i, dummy.matrix);
+      if (isCrystal) {
+        const phase = (clock.elapsedTime / CRYSTAL_CYCLE_SECONDS)
+          * CRYSTAL_BODY_PASTELS.length + crystalPhases[i];
+        // Only the textured base is recolored. The film's shader, uniforms,
+        // hues, intensity and animation are not modified by this cycle.
+        ref.current.setColorAt(i, sampleCrystalBodyPastel(pastelColor, phase));
+      }
     });
     ref.current.instanceMatrix.needsUpdate = true;
+    if (isCrystal && ref.current.instanceColor) {
+      ref.current.instanceColor.needsUpdate = true;
+    }
     if (filmRef.current) filmRef.current.instanceMatrix.needsUpdate = true;
     if (film) {
       // Source CorePlanet updates uTime and the actual light positions every frame.
@@ -550,10 +605,8 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
         .applyMatrix4(camera.matrixWorldInverse);
       film.uniforms.uFillViewPosition.value.copy(crystalFillWorld)
         .applyMatrix4(camera.matrixWorldInverse);
-      const material = part.material;
-      const palette = material.userData.crystalPalette;
-      const t = clock.elapsedTime * material.userData.holoSpeed + material.userData.holoPhase;
-      material.color.copy(shimmerColor(palette, t, 0.78));
+      // The Core Planet hologram is independently animated above; the body
+      // pastel cycling is handled by per-instance colors, not material.color.
     }
   });
   return <>
@@ -710,7 +763,8 @@ function ShatterBurst({ blast, asset, stateRef, mobile }) {
     const palette = V53_PALETTE.map(hex => new THREE.Color(hex));
     const base = asset.parts.map(p => {
       const mat = Array.isArray(p.material) ? p.material[0] : p.material;
-      return mat?.color?.clone?.() || new THREE.Color('#99eaff');
+      return mat?.userData?.crystalInitialTint?.clone?.()
+        || mat?.color?.clone?.() || new THREE.Color('#99eaff');
     });
     return base.length ? [...base, ...palette] : palette;
   }, [asset]);
