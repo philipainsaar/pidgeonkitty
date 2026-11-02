@@ -36,3 +36,19 @@ export const SNOW64_MODEL_SCALE = Object.freeze({
   courseMarker: [1,1,1], mountain: [1,1,1],
   explosionShard: [1,1,1], explosionBurst: [1,1,1],
 });
+
+/**
+ * V42: visual position offsets in GAME UNITS, after auto-scaling.
+ * The loader normally recenters GLBs by their bounding boxes, so changing
+ * the GLB origin in Blender does not shift the visible board in the game.
+ *
+ * SNOWBOARD: Negative Z is downhill / towards Pidgeon Kitty's facing
+ * direction in the side camera. Start at -0.80 to center the bindings
+ * under the rider's feet. Increase the magnitude for further forward:
+ *   -0.60 = smaller correction; -0.80 = recommended; -1.00 = stronger.
+ *
+ * The offset affects ONLY the custom visual, not collision/physics.
+ */
+export const SNOW64_MODEL_POSITION_OFFSET = Object.freeze({
+  snowboard: [0, 0, -0.80],
+});

@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useFrame } from "@react-three/fiber";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
-import { SNOW64_MODEL_PATHS, SNOW64_MODEL_SCALE } from "./snow64ModelConfig";
+import { SNOW64_MODEL_PATHS, SNOW64_MODEL_SCALE, SNOW64_MODEL_POSITION_OFFSET } from "./snow64ModelConfig";
 
 const Context = createContext({});
 const FALLBACK_SIZE = 0.0001;
@@ -75,7 +75,11 @@ export function SnowGLBVisual({asset, type, dimensions}) {
   const clone = useMemo(() => asset?.scene.clone(true), [asset]);
   if (!asset || !clone) return null;
   const scales = scaleFor(type, asset, dimensions);
-  return <group scale={scales}>
+  // Apply visual-only offsets AFTER scale, so the value is always in
+  // world/game units regardless of the GLB's original export dimensions.
+  // All other model types default to the original centered placement.
+  const offset = SNOW64_MODEL_POSITION_OFFSET[type] || [0, 0, 0];
+  return <group position={offset} scale={scales}>
     <group position={[-asset.centerX,-asset.bottom,-asset.centerZ]}>
       <primitive object={clone} dispose={null}/>
     </group>
