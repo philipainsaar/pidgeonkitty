@@ -1,393 +1,426 @@
 /**
- * SNOW 64 V8: Original-speed recorded soundtrack + cinematic wipeout slowdown.
+ * SNOW 64 V9: BUBBLE RADIO, six recorded songs / three adaptive tiers.
+ * A complete replacement for components/RapidRainV2.js.
+ * Works with the existing snow64Music.js and Snow64ReactiveMusic.jsx adapter.
+ * Browser chooses WebM/Opus or MP3, never downloads both formats.
+ * No visible player, samples generated in JS, or additional dependencies.
  *
- * Place alongside /public/audio/snow64-theme.webm and snow64-theme.mp3.
- * WebM/Opus is preferred, MP3 is the compatibility fallback. No visible player.
- * Compatible with the existing snow64Music.js and Snow64ReactiveMusic.jsx APIs.
- * Existing snowboarding sound effects remain independent.
+ * Tiers (selected by snowboard speed OR the highest score in the run):
+ *   Candy  / Candy 1 : gentle riding
+ *   Surf   / Surf 1  : tucked / higher-score riding
+ *   Speed  / Speed 1 : Frost Shroom / fastest / high-score riding
+ * Smooth, two-element crossfades. Variants are random on each tier entry and
+ * periodically while riding. Wipeouts slow the recording like a tape effect.
+ * Different source songs are not guaranteed to share beat grids or key.
  */
-export const BPM = 156; // Approximate beat grid for the original-speed recording.
-export const DURATION = 125.53;
+export const BPM = 156; // Compatibility/reference beat clock, NOT a claim about all six songs.
+export const DURATION = 300; // Replaced with the actual loaded track's duration.
 export const BAR = 240 / BPM;
 export const RAPID_RAIN_LAYERS = Object.freeze(['music']);
 export const EVENT_COUNT = 0;
 export function buildRapidRainScore() { return []; }
 
-const OPUS_URL = '/audio/snow64-theme.webm';
-const MP3_URL = '/audio/snow64-theme.mp3';
-const TICK_MS = 40;
-const clamp = (value, lower, upper) => Math.max(lower, Math.min(upper, Number(value) || 0));
-const monotonicNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
-
-// All speeds are relative to the ORIGINAL file, not a previously slowed export.
-export const SNOW64_MUSIC_TUNING = Object.freeze({
-  normalRateMin: 0.97,
-  normalRateMax: 1.075,
-  wipeoutLowRate: 0.62,
-  crashFadeSeconds: 0.35,
-  resumeFadeSeconds: 0.75,
-  crashVolumeFactor: 0.72,
+export const SNOW64_BUBBLE_CONFIG = Object.freeze({
+  // Game displays km/h; updateFromGame receives meters/second.
+  surfSpeedKmh: 105,
+  speedSpeedKmh: 170,
+  surfScore: 4500,
+  speedScore: 7600,
+  downshiftHysteresisKmh: 16,
+  crossfadeSeconds: 2.8,
+  minimumTierSeconds: 8,
+  tierConfirmSeconds: 1.0,
+  variantChangeSeconds: 80,
+  maxFastPlaybackRate: 1.06,
+  wipeoutPlaybackRate: 0.62,
 });
 
+const SONGS = Object.freeze([
+  Object.freeze([{id:'bubble-candy',name:'Bubble Candy'}, {id:'bubble-candy-1',name:'Bubble Candy 1'}]),
+  Object.freeze([{id:'bubble-surf',name:'Bubble Surf'}, {id:'bubble-surf-1',name:'Bubble Surf 1'}]),
+  Object.freeze([{id:'bubble-speed',name:'Bubble Speed'}, {id:'bubble-speed-1',name:'Bubble Speed 1'}]),
+]);
+const clamp = (n,a,b) => Math.min(b,Math.max(a,Number.isFinite(Number(n)) ? Number(n) : a));
+const nowSeconds = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+
 export class ProceduralRapidRain {
-  constructor({volume=.14, onEnded=null, sourceOpus=OPUS_URL, sourceMP3=MP3_URL}={}) {
+  constructor({volume=.14,onEnded=null,random=Math.random}={}) {
     this.volume=clamp(volume,0,1);
     this.onEnded=onEnded;
-    this.sourceOpus=sourceOpus;
-    this.sourceMP3=sourceMP3;
     this.loop=true;
     this.tempo=BPM;
     this.intensity=.53;
     this.arrangement='auto';
+    this.warmth=.25;
     this.isPlaying=false;
     this.position=0;
-    this.audio=null;
     this.ctx=null;
-    this.analyser=null;
     this.master=null;
-    this.warmth=.36;
-    this._duration=DURATION;
-    this._normalRate=1;
+    this.analyser=null;
+    this.slots=[];
+    this.activeSlot=0;
+    this.track=null;
+    this.tier=0;
+    this._desiredTier=0;
+    this._desiredSince=0;
+    this._lastSwitchAt=-10000;
+    this._variantAt=0;
+    this._transition=null;
+    this._busy=false;
+    this._generation=0;
+    this._clock=nowSeconds;
+    this._random=typeof random==='function'?random:Math.random;
+    this._timer=null;
+    this._listeners=new Map();
+    this._lastBeat=-1;
+    this._lastPosition=0;
+    this._lastGameUpdate=-100;
+    this._lastEvent=new Map();
+    this._bins=null;
+    this._duck=1;
     this._desiredRate=1;
     this._currentRate=1;
-    this._lastTick=0;
-    this._lastGameUpdate=0;
-    this._timer=null;
-    this._lastBeat=-1;
-    this._lastSection='';
-    this._lastPosition=0;
-    this._lastEvent=new Map();
-    this._listeners=new Map();
-    this._bins=null;
-    this._mixDuck=1;
-    this._frost=false;
-    this._air=false;
+    this._manualRate=1;
     this._recovery=false;
-    this._wipeoutStartedAt=null;
-    this._restorePitchPending=false;
-    this._usedFallback=false;
-    this._musicMuted=false;
-    this._savedVolume=this.volume;
+    this._recoveryStage='riding';
+    this._frost=false;
+    this._inAir=false;
+    this._lastScore=2800;
+    this._peakScore=2800;
+    this._lastSpeed=21.5;
+    this._codec='mp3';
   }
 
-  getDuration(){return this._duration;}
-  getTime(){return this.audio && Number.isFinite(this.audio.currentTime) ? this.audio.currentTime : this.position;}
-  getProgress(){return this.getTime()/Math.max(1,this.getDuration());}
-  getTempo(){return BPM*this._currentRate;}
-  getBeat(){return this.getTime()*BPM/60;}
-  getBeatPhase(){const beat=this.getBeat();return beat-Math.floor(beat);}
-  getSection(){
-    const part=this.getProgress();
-    if(part<.12)return 'mountain start';
-    if(part<.35)return 'snow trail';
-    if(part<.63)return 'downhill';
-    if(part<.86)return 'frost run';
-    return 'summit loop';
-  }
-  getEnergy(){
+  getDuration() { const d=this.slots[this.activeSlot]?.audio.duration;return Number.isFinite(d)&&d>1?d:DURATION; }
+  getTime() { const t=this.slots[this.activeSlot]?.audio.currentTime;return Number.isFinite(t)?t:this.position; }
+  getProgress() {return clamp(this.getTime()/Math.max(1,this.getDuration()),0,1);}
+  getTempo() {return this.tempo;}
+  getBeat() {return this.getTime()*BPM/60;}
+  getBeatPhase() {const x=this.getBeat();return x-Math.floor(x);}
+  getSection() {return ['candy','surf','speed'][this.tier]||'candy';}
+  getEnergy() {
     if(!this.analyser)return 0;
     if(!this._bins)this._bins=new Uint8Array(this.analyser.frequencyBinCount);
     this.analyser.getByteFrequencyData(this._bins);
-    let sum=0;
-    const count=Math.min(120,this._bins.length);
+    let sum=0;const count=Math.min(120,this._bins.length);
     for(let i=0;i<count;i++)sum+=this._bins[i];
-    return count?sum/(255*count):0;
+    return count?sum/(count*255):0;
   }
-  on(type,callback){
-    if(typeof callback!=='function')return()=>{};
+  on(type,listener) {
+    if(typeof listener!=='function')return()=>{};
     if(!this._listeners.has(type))this._listeners.set(type,new Set());
-    this._listeners.get(type).add(callback);
-    return()=>this.off(type,callback);
+    this._listeners.get(type).add(listener);
+    return()=>this.off(type,listener);
   }
-  off(type,callback){this._listeners.get(type)?.delete(callback);}
-  _emit(type,data){
-    for(const listener of this._listeners.get(type)||[]){
-      try{listener(data);}catch(error){console.warn('[SNOW64 music event]',error);}
+  off(type,listener){this._listeners.get(type)?.delete(listener);}
+  _emit(type,payload){for(const cb of this._listeners.get(type)||[]){try{cb(payload);}catch(e){console.warn('[SNOW64 music listener]',e);}}}
+
+  _choose(tier,excludeId=null) {
+    const options=SONGS[clamp(tier,0,2)];
+    const available=options.filter(s=>s.id!==excludeId);
+    const choices=available.length?available:options;
+    return choices[Math.min(choices.length-1,Math.floor(clamp(this._random(),0,.999999)*choices.length))];
+  }
+  _trackUrl(id,format=this._codec){return `/audio/${id}.${format==='webm'?'webm':'mp3'}`;}
+  _setPitchPreservation(el,preserve){
+    for(const key of ['preservesPitch','webkitPreservesPitch','mozPreservesPitch']){
+      if(key in el){try{el[key]=preserve;}catch{}}
     }
   }
-  _pitchPreservation(value){
-    const a=this.audio;
-    if(!a)return;
-    if('preservesPitch' in a)a.preservesPitch=value;
-    else if('webkitPreservesPitch' in a)a.webkitPreservesPitch=value;
-    else if('mozPreservesPitch' in a)a.mozPreservesPitch=value;
-  }
-  _init(){
-    if(this.audio||typeof window==='undefined')return;
-    const a=this.audio=new Audio();
-    a.preload='auto';
-    a.loop=this.loop;
-    a.playsInline=true;
-    a.volume=this.volume;
-    this._pitchPreservation(true);
-    const canOpus=!!a.canPlayType?.('audio/webm; codecs="opus"');
-    a.src=canOpus?this.sourceOpus:this.sourceMP3;
-    a.addEventListener('loadedmetadata',()=>{
-      if(Number.isFinite(a.duration)&&a.duration>2)this._duration=a.duration;
-    });
-    a.addEventListener('ended',()=>{
-      if(this.loop)return;
-      this.pause();
-      this._emit('ended',{});
-      this.onEnded?.();
-    });
-    a.addEventListener('error',()=>{
-      if(!this._usedFallback && a.src.includes('snow64-theme.webm')){
-        this._usedFallback=true;
-        const seekTo=this.getTime();
-        a.src=this.sourceMP3;
-        a.load();
-        a.addEventListener('loadedmetadata',()=>{
-          try{a.currentTime=Math.min(seekTo,Math.max(0,a.duration-.1));}catch{}
-          if(this.isPlaying)void a.play().catch(e=>this._emit('error',{message:String(e)}));
-        },{once:true});
-      }else this._emit('error',{message:'Music file failed to load from public/audio/.'});
-    });
-
+  _init() {
+    if(this.ctx || typeof window==='undefined')return;
     const Context=window.AudioContext||window.webkitAudioContext;
-    if(Context){
-      try{
-        const ctx=this.ctx=new Context({latencyHint:'playback'});
-        const source=ctx.createMediaElementSource(a);
-        this.highShelf=ctx.createBiquadFilter();
-        this.highShelf.type='highshelf';
-        this.highShelf.frequency.value=3700;
-        this.highShelf.gain.value=-3;
-        this.lowpass=ctx.createBiquadFilter();
-        this.lowpass.type='lowpass';
-        this.lowpass.frequency.value=9500;
-        this.lowpass.Q.value=.6;
-        this.bassShelf=ctx.createBiquadFilter();
-        this.bassShelf.type='lowshelf';
-        this.bassShelf.frequency.value=115;
-        this.bassShelf.gain.value=0;
-        this.duck=ctx.createGain();
-        this.duck.gain.value=1;
-        // Gentle limiter protects the soundtrack without flattening the SFX.
-        const compressor=ctx.createDynamicsCompressor();
-        compressor.threshold.value=-7;
-        compressor.knee.value=8;
-        compressor.ratio.value=2;
-        compressor.attack.value=.009;
-        compressor.release.value=.22;
-        this.master=ctx.createGain();
-        this.master.gain.value=this.volume;
-        this.analyser=ctx.createAnalyser();
-        this.analyser.fftSize=512;
-        source.connect(this.highShelf);
-        this.highShelf.connect(this.lowpass);
-        this.lowpass.connect(this.bassShelf);
-        this.bassShelf.connect(this.duck);
-        this.duck.connect(compressor);
-        compressor.connect(this.master);
-        this.master.connect(this.analyser);
-        this.analyser.connect(ctx.destination);
-      }catch(error){
-        console.warn('[SNOW64] Music effects could not initialize:',error);
-        // The HTMLAudioElement still works on browsers without Web Audio.
+    if(!Context)throw new Error('Web Audio API is required for SNOW 64 recorded music.');
+    const c=this.ctx=new Context({latencyHint:'playback'});
+    this.master=c.createGain();this.master.gain.value=this.volume;
+    this.duck=c.createGain();this.duck.gain.value=1;
+    this.lowpass=c.createBiquadFilter();this.lowpass.type='lowpass';this.lowpass.frequency.value=12500;this.lowpass.Q.value=.6;
+    this.analyser=c.createAnalyser();this.analyser.fftSize=512;
+    this.duck.connect(this.lowpass);this.lowpass.connect(this.master);
+    this.master.connect(this.analyser);this.analyser.connect(c.destination);
+    this.slots=Array.from({length:2},()=>{
+      const audio=new Audio();
+      audio.preload='auto'; audio.loop=true;audio.playsInline=true;
+      audio.volume=1;
+      this._setPitchPreservation(audio,true);
+      const source=c.createMediaElementSource(audio);
+      const gain=c.createGain();gain.gain.value=0;
+      source.connect(gain);gain.connect(this.duck);
+      return {audio,gain,track:null};
+    });
+    this._codec=this.slots[0].audio.canPlayType?.('audio/webm; codecs="opus"')?'webm':'mp3';
+  }
+  _load(slot,track,format=this._codec){
+    slot.track=track;
+    slot.audio.src=this._trackUrl(track.id,format);
+    slot.audio.load();
+    slot.gain.gain.setValueAtTime(0,this.ctx.currentTime);
+    this._setPitchPreservation(slot.audio,!this._recovery);
+    slot.audio.playbackRate=this._currentRate;
+  }
+  async _startSlot(slot,track) {
+    this._load(slot,track);
+    try {
+      await slot.audio.play();
+    } catch(error) {
+      // The source can fail on one codec despite an optimistic canPlayType().
+      // Never hide a permissions/autoplay error by silently changing the track.
+      if(this._codec!=='webm'||error?.name==='NotAllowedError')throw error;
+      this._load(slot,track,'mp3');
+      await slot.audio.play();
+    }
+  }
+
+  _chooseTier(speedKmh,peakScore,powered) {
+    if(powered)return 2;
+    const scoreTier=peakScore>=SNOW64_BUBBLE_CONFIG.speedScore?2
+      :peakScore>=SNOW64_BUBBLE_CONFIG.surfScore?1:0;
+    const c=SNOW64_BUBBLE_CONFIG;
+    // Hysteresis prevents chatter when the rider is hovering near a threshold.
+    let speedTier=0;
+    if(this.tier===0){speedTier=speedKmh>=c.speedSpeedKmh?2:speedKmh>=c.surfSpeedKmh?1:0;}
+    else if(this.tier===1){speedTier=speedKmh>=c.speedSpeedKmh?2
+      :speedKmh<c.surfSpeedKmh-c.downshiftHysteresisKmh?0:1;}
+    else {speedTier=speedKmh>=c.speedSpeedKmh-c.downshiftHysteresisKmh?2
+      :speedKmh>=c.surfSpeedKmh-c.downshiftHysteresisKmh?1:0;}
+    return Math.max(scoreTier,speedTier);
+  }
+
+  /** Called by the existing adapter; `speed` is in meters/second, not km/h. */
+  updateFromGame({playing=true,speed=21.5,score=2800,peakScore=2800,powered=false,
+    recovery=false,recoveryStage='riding',inAir=false,tuck=false,airHeight=0,steer=0}={}) {
+    if(!playing||!this.isPlaying)return;
+    const at=this._clock();
+    if(at-this._lastGameUpdate<.10)return;
+    this._lastGameUpdate=at;
+    const speedMs=clamp(speed,0,90),kmh=speedMs*3.6;
+    this._lastSpeed=speedMs;
+    this._lastScore=clamp(score,0,1000000);
+    this._peakScore=Math.max(this._peakScore,clamp(peakScore,2800,1000000),this._lastScore);
+    this._recovery=!!recovery;
+    this._recoveryStage=recoveryStage;
+    this._frost=!!powered;
+    this._inAir=!!inAir;
+    this.intensity=clamp(.25+speedMs/85+(powered?.26:0),0,1.35);
+
+    // In ordinary riding, the TRACK is what makes the game feel faster;
+    // playbackRate adds only a tiny extra push so the recorded mix stays clear.
+    const speedLift=clamp((kmh-80)/140,0,1)*.039;
+    const scoreLift=clamp((this._peakScore-2800)/10000,0,1)*.013;
+    const ridingRate=clamp(this._manualRate+speedLift+scoreLift+(powered?.008:0),.98,
+      SNOW64_BUBBLE_CONFIG.maxFastPlaybackRate);
+    const recoveryRate=recoveryStage==='falling'?.62
+      :recoveryStage==='chasing'?.78
+      :recoveryStage==='remounting'?.91:.70;
+    this._desiredRate=recovery?recoveryRate:ridingRate;
+    this._setColor();
+    for(const slot of this.slots)this._setPitchPreservation(slot.audio,!recovery);
+
+    if(!recovery){
+      const wanted=this._chooseTier(kmh,this._peakScore,powered);
+      if(wanted!==this._desiredTier){this._desiredTier=wanted;this._desiredSince=at;}
+      if(wanted!==this.tier && at-this._desiredSince>=SNOW64_BUBBLE_CONFIG.tierConfirmSeconds
+        && at-this._lastSwitchAt>=SNOW64_BUBBLE_CONFIG.minimumTierSeconds && !this._transition && !this._busy){
+        void this._switchTrack(wanted,false);
       }
     }
-    this._updateColor();
-    this._updateGain();
+    this._emit('motion',{speed:speedMs,score:this._lastScore,peakScore:this._peakScore,
+      powered,recovery,inAir,tuck,airHeight,steer,level:this.tier,
+      bpm:this.getTempo(),track:this.track?.name,intensity:this.intensity});
   }
-  _updateColor(){
+  _setColor() {
     if(!this.ctx)return;
     const t=this.ctx.currentTime;
-    // Warm filter during airborne play; soft low-pass during a crash.
-    this.lowpass?.frequency.setTargetAtTime(
-      this._recovery?3850:this._air?7700:this._frost?10500:9600,t,
-      this._recovery?.22:.42);
-    this.highShelf?.gain.setTargetAtTime(
-      this._recovery?-7.5:-2.3-3*this.warmth,t,.26);
-    this.bassShelf?.gain.setTargetAtTime(this._frost?1.0:0,t,.3);
+    const frequency=this._recovery?5800:this._inAir?10200:13500;
+    this.lowpass.frequency.setTargetAtTime(frequency,t,.22);
   }
-  _updateGain(){
-    const target=clamp(this.volume*this._mixDuck,0,1);
-    if(this.ctx && this.master){
-      this.master.gain.setTargetAtTime(target,this.ctx.currentTime,.11);
-      this.audio.volume=1;
-    }else if(this.audio)this.audio.volume=target;
+  setTempo(value) {
+    // Retain the legacy adapter API. Each song plays at its original pitch
+    // and speed by default; minor game-driven rate changes are separate.
+    const bpm=clamp(value,80,220);
+    this.tempo=bpm;
+    this._manualRate=clamp(bpm/BPM,.94,1.06);
+    if(!this.isPlaying)this._desiredRate=this._manualRate;
+    this._emit('tempo',{bpm});
   }
-  setVolume(value){
-    this.volume=clamp(value,0,1);
-    if(!this._musicMuted)this._savedVolume=this.volume;
-    this._updateGain();
-  }
-  setWarmth(value=.4){this.warmth=clamp(value,0,1);this._updateColor();}
-  setTempo(value){
-    // External tempo changes remain available, but gameplay favors original rate.
-    const requested=clamp(value,BPM*.85,BPM*1.15);
-    this.tempo=requested;
-    this._normalRate=clamp(requested/BPM,SNOW64_MUSIC_TUNING.normalRateMin,SNOW64_MUSIC_TUNING.normalRateMax);
-    if(!this._recovery)this._desiredRate=this._normalRate;
-    this._emit('tempo',{bpm:requested});
-  }
+  setVolume(value){this.volume=clamp(value,0,1);if(this.ctx)this.master.gain.setTargetAtTime(this.volume,this.ctx.currentTime,.06);}
+  setWarmth(value){this.warmth=clamp(value,0,1);}
   setIntensity(value){this.intensity=clamp(value,0,1.35);}
-  transitionTo(name,{bars=2}={}){
+  transitionTo(name,{bars=2}={}) {
     if(!['auto','calm','groove','peak'].includes(name))return false;
     this.arrangement=name;
-    if(name!=='auto')this.setIntensity({calm:.18,groove:.6,peak:1.2}[name]);
-    this._emit('arrangement',{name,bars});
-    return true;
+    if(name!=='auto')this.setIntensity({calm:.2,groove:.65,peak:1.2}[name]);
+    this._emit('arrangement',{name,bars});return true;
   }
-  setInstrumentVolume(name,level){
-    if(name!=='music')return false;
-    this.setVolume(level);return true;
-  }
-  muteInstrument(name,muted=true){
-    if(name!=='music')return false;
-    if(muted && !this._musicMuted){this._savedVolume=this.volume;this._musicMuted=true;this.volume=0;}
-    else if(!muted && this._musicMuted){this._musicMuted=false;this.volume=this._savedVolume;}
-    this._updateGain();return true;
-  }
+  setInstrumentVolume(name,value){if(name!=='music')return false;this.setVolume(value);return true;}
+  muteInstrument(name,muted=true){if(name!=='music')return false;this.master?.gain.setTargetAtTime(muted?0:this.volume,this.ctx.currentTime,.07);return true;}
   soloInstrument(name){return name==='music';}
-
-  _beginWipeout(){
-    if(this._recovery)return;
-    this._recovery=true;
-    this._wipeoutStartedAt=monotonicNow();
-    this._restorePitchPending=true;
-    // Pitch falls together with speed for a cinematic tape-slowing effect.
-    this._pitchPreservation(false);
-    this._mixDuck=Math.min(this._mixDuck,SNOW64_MUSIC_TUNING.crashVolumeFactor);
-    this._updateGain();
-    this._updateColor();
-    this._emit('wipeout',{time:this.getTime()});
-  }
-  _endWipeout(){
-    if(!this._recovery)return;
-    this._recovery=false;
-    this._desiredRate=this._normalRate;
-    this._updateColor();
-    this._emit('recovered',{time:this.getTime()});
-  }
-  reactToGameEvent(kind){
+  reactToGameEvent(kind) {
     if(!this.isPlaying)return;
-    const t=this.ctx?.currentTime ?? monotonicNow();
-    if(t-(this._lastEvent.get(kind)??-100)<.12)return;
-    this._lastEvent.set(kind,t);
-    if(kind==='crash'||kind==='rockHit'||kind==='rampHit')this._beginWipeout();
-    else if(kind==='shatter'){
-      this._mixDuck=Math.min(this._mixDuck,.82);
-      this._updateGain();
-    }
+    const at=this._clock();if(at-(this._lastEvent.get(kind)??-100)<.14)return;
+    this._lastEvent.set(kind,at);
     if(kind==='power')this._emit('power',{time:this.getTime()});
-    if(['pickup','combo','magicTrick','power','shatter','land','superRamp'].includes(kind))
-      this._emit('accent',{kind,time:this.getTime(),beat:this.getBeat()});
+    if(['pickup','combo','power','shatter','land','magicTrick','superRamp'].includes(kind))
+      this._emit('accent',{kind,time:this.getTime()});
+    if(['crash','rockHit','rampHit','shatter'].includes(kind))this._duck=kind==='shatter'?.74:.55;
   }
-  updateFromGame({playing=true,speed=21.5,powered=false,inAir=false,recovery=false,tuck=false,steer=0,airHeight=0}={}){
-    if(!playing||!this.isPlaying)return;
-    const clock=monotonicNow();
-    if(clock-this._lastGameUpdate<.13)return;
-    this._lastGameUpdate=clock;
-    const desiredRate=clamp(
-      1 + (speed-21.5)*.0014 + (powered?.018:0) + (tuck?.006:0),
-      SNOW64_MUSIC_TUNING.normalRateMin,SNOW64_MUSIC_TUNING.normalRateMax);
-    this.tempo=BPM*desiredRate;
-    this._normalRate=desiredRate;
-    if(recovery&&!this._recovery)this._beginWipeout();
-    else if(!recovery&&this._recovery)this._endWipeout();
-    if(!this._recovery)this._desiredRate=this._normalRate;
-    if(this.arrangement==='auto')this.setIntensity(
-      this.intensity+(clamp(.40+speed*.010+(powered?.25:0),.3,1.25)-this.intensity)*.16);
-    if(powered!==this._frost||inAir!==this._air){
-      this._frost=powered;this._air=inAir;this._updateColor();
-    }
-    this._emit('motion',{speed,powered,inAir,recovery,tuck,steer,airHeight,bpm:this.getTempo(),intensity:this.intensity});
+
+  async _switchTrack(nextTier,shuffle=false) {
+    if(!this.ctx||!this.isPlaying||this._busy||this._transition||this._recovery)return;
+    const dest=this._choose(nextTier,shuffle?this.track?.id:null);
+    if(dest.id===this.track?.id)return;
+    const incomingIdx=1-this.activeSlot;
+    const incoming=this.slots[incomingIdx];
+    const source=this.slots[this.activeSlot];
+    this._busy=true;const token=++this._generation;
+    try {
+      await this._startSlot(incoming,dest);
+      if(token!==this._generation || !this.isPlaying || this._recovery) {
+        incoming.audio.pause();return;
+      }
+      // The old song remains audible while the new audio is buffering.
+      // Only begin the fade after the browser has actually started playback.
+      const at=this.ctx.currentTime;
+      this._transition={from:this.activeSlot,to:incomingIdx,started:at,
+        duration:SNOW64_BUBBLE_CONFIG.crossfadeSeconds,
+        tier:nextTier,track:dest,previous:source.track};
+      this._emit('crossfade',{from:source.track?.name,to:dest.name,tier:nextTier,
+        seconds:SNOW64_BUBBLE_CONFIG.crossfadeSeconds});
+    } catch(error) {
+      incoming.audio.pause();
+      // Don't stop the current music if a requested track fails to load/play.
+      this._emit('error',{message:`Could not transition to ${dest.name}: ${String(error)}`});
+    } finally {this._busy=false;}
   }
+
   _tick(){
-    if(!this.isPlaying||!this.audio)return;
-    const now=monotonicNow();
-    const dt=clamp(now-(this._lastTick||now),.001,.11);
-    this._lastTick=now;
-    if(this._recovery){
-      const age=Math.max(0,now-(this._wipeoutStartedAt??now));
-      // Fall: deep slowdown. Chasing the board: a little faster.
-      // Remount: glide toward normal before the wipeout finishes.
-      const target=age<1.1?.62:age<2.4?.70:.83;
-      this._desiredRate=target;
+    if(!this.isPlaying||!this.ctx)return;
+    const t=this.ctx.currentTime;
+    // Smooth acceleration; much quicker slowdown on wipeout, gentle recovery.
+    const delta=this._desiredRate-this._currentRate;
+    const maxStep=this._recovery?.008:.0035; // Called every ~40ms.
+    this._currentRate+=clamp(delta,-maxStep,maxStep);
+    for(const s of this.slots){
+      if(s.track && Math.abs(s.audio.playbackRate-this._currentRate)>.0005){
+        try{s.audio.playbackRate=this._currentRate;}catch{}
+      }
     }
-    const tau=this._recovery?SNOW64_MUSIC_TUNING.crashFadeSeconds:SNOW64_MUSIC_TUNING.resumeFadeSeconds;
-    const blend=1-Math.exp(-dt/tau);
-    this._currentRate+= (this._desiredRate-this._currentRate)*blend;
-    if(Math.abs(this._currentRate-this.audio.playbackRate)>.0004){
-      this.audio.playbackRate=clamp(this._currentRate,.5,1.15);
+    this._duck=Math.min(1,this._duck+.012);
+    this.duck.gain.setTargetAtTime(this._duck,t,.06);
+
+    if(this._transition){
+      const tr=this._transition;
+      const u=clamp((t-tr.started)/tr.duration,0,1);
+      const theta=u*Math.PI/2;
+      // Equal-power curve, modest overlap attenuation to prevent loudness spikes.
+      const overlap=1-.10*Math.sin(u*Math.PI);
+      this.slots[tr.from].gain.gain.setTargetAtTime(Math.cos(theta)*overlap,t,.025);
+      this.slots[tr.to].gain.gain.setTargetAtTime(Math.sin(theta)*overlap,t,.025);
+      if(u>=1){
+        const old=this.slots[tr.from],current=this.slots[tr.to];
+        old.gain.gain.setValueAtTime(0,t);
+        old.audio.pause();old.audio.removeAttribute('src');old.audio.load();old.track=null;
+        current.gain.gain.setTargetAtTime(1,t,.025);
+        this.activeSlot=tr.to;this.tier=tr.tier;this.track=tr.track;
+        this._lastSwitchAt=this._clock();
+        this._variantAt=this._lastSwitchAt+SNOW64_BUBBLE_CONFIG.variantChangeSeconds;
+        this._transition=null;
+        this._lastBeat=-1;
+        this._lastPosition=0;
+        this._emit('track',{name:this.track.name,id:this.track.id,tier:this.tier});
+      }
+    } else if(!this._busy && !this._recovery &&
+      this._clock()>=this._variantAt && this._clock()-this._lastSwitchAt>=SNOW64_BUBBLE_CONFIG.minimumTierSeconds) {
+      // Rotate between the two variants at a gentle interval while staying
+      // within the same tier; not random chaos or a shuffle every few seconds.
+      this._variantAt=this._clock()+SNOW64_BUBBLE_CONFIG.variantChangeSeconds;
+      void this._switchTrack(this.tier,true);
     }
-    // Keep the tape effect on until the ramp back to normal is almost complete.
-    if(this._restorePitchPending&&!this._recovery&&Math.abs(this._currentRate-this._normalRate)<.018){
-      this._restorePitchPending=false;
-      this._pitchPreservation(true);
-    }
-    if(this._mixDuck<.999){
-      this._mixDuck=Math.min(1,this._mixDuck+dt*(this._recovery?.09:.58));
-      this._updateGain();
-    }
+
     const pos=this.getTime();
-    const beat=Math.floor(pos*BPM/60);
     if(this._lastPosition-pos>1.2){this._lastBeat=-1;this._emit('loop',{time:pos});}
+    const beat=Math.floor(pos*BPM/60); // Approximate visual pulse only.
     if(beat!==this._lastBeat){
       this._lastBeat=beat;
-      this._emit('beat',{beat:((beat%4)+4)%4,bar:Math.floor(beat/4),bpm:this.getTempo(),time:pos,phase:this.getBeatPhase()});
+      this._emit('beat',{beat:((beat%4)+4)%4,bar:Math.floor(beat/4),time:pos,
+        bpm:BPM*this._currentRate,approximate:true,track:this.track?.name});
     }
-    const section=this.getSection();
-    if(section!==this._lastSection){this._lastSection=section;this._emit('section',{name:section,time:pos});}
     this._lastPosition=pos;
   }
+
   async play(){
     if(this.isPlaying)return;
     this._init();
-    if(!this.audio)throw new Error('Recorded soundtrack requires a browser.');
-    this.audio.loop=this.loop;
-    if(this.position>=this.getDuration()-.1)this.position=0;
-    if(Math.abs(this.audio.currentTime-this.position)>.1){
-      try{this.audio.currentTime=this.position;}catch{}
+    if(!this.ctx)throw new Error('Music needs a browser AudioContext.');
+    const resumePending=this.ctx.state==='suspended'?this.ctx.resume():Promise.resolve();
+    const slot=this.slots[this.activeSlot];
+    const first=!slot.track;
+    if(first){
+      this.tier=0;this._desiredTier=0;this._desiredSince=this._clock();
+      this.track=this._choose(0);
+      // Start from Candy, not from the rider's speed on a prior run.
+      this._load(slot,this.track);
+      if(this.position>0)slot.audio.currentTime=this.position;
     }
-    if(this.ctx?.state==='suspended')void this.ctx.resume().catch(()=>{});
-    this._lastTick=monotonicNow();
-    this.audio.playbackRate=this._currentRate;
-    // Must be called during the user click or tap for browser autoplay policies.
-    const pending=this.audio.play();
+    slot.gain.gain.setValueAtTime(1,this.ctx.currentTime);
+    slot.audio.loop=this.loop;
+    slot.audio.playbackRate=this._currentRate;
+    // play() is invoked immediately within the Start click's activation.
+    const pending=slot.audio.play();
+    try {
+      await Promise.all([resumePending,pending]);
+    } catch(error) {
+      if(this._codec==='webm'&&error?.name!=='NotAllowedError'&&first){
+        this._load(slot,this.track,'mp3');
+        slot.gain.gain.setValueAtTime(1,this.ctx.currentTime);
+        try{await slot.audio.play();}catch(second){throw second;}
+      } else throw error;
+    }
     this.isPlaying=true;
-    this._timer=setInterval(()=>this._tick(),TICK_MS);
-    try{await pending;this._tick();}
-    catch(error){
-      this.isPlaying=false;
-      clearInterval(this._timer);this._timer=null;
-      this._emit('error',{message:String(error)});
-      throw error;
-    }
+    this._variantAt=this._clock()+SNOW64_BUBBLE_CONFIG.variantChangeSeconds;
+    this._timer=setInterval(()=>this._tick(),40);
+    this._tick();
+    this._emit('track',{name:this.track?.name,id:this.track?.id,tier:this.tier});
   }
   async resume(){return this.play();}
   pause(){
-    if(!this.audio||!this.isPlaying)return;
+    if(!this.isPlaying)return;
     this.position=this.getTime();
     this.isPlaying=false;
-    clearInterval(this._timer);this._timer=null;
-    this.audio.pause();
+    if(this._timer){clearInterval(this._timer);this._timer=null;}
+    this._generation++;
+    this._transition=null;
+    for(let i=0;i<this.slots.length;i++){
+      const slot=this.slots[i];slot.audio.pause();
+      slot.gain.gain.cancelScheduledValues(this.ctx.currentTime);
+      slot.gain.gain.setValueAtTime(i===this.activeSlot?1:0,this.ctx.currentTime);
+    }
   }
   stop(){
-    this.pause();
-    this.position=0;
-    this._lastBeat=-1;this._lastSection='';this._lastPosition=0;
-    this._recovery=false;this._wipeoutStartedAt=null;
-    this._restorePitchPending=false;
-    this._currentRate=1;this._desiredRate=1;this._normalRate=1;
-    this.tempo=BPM;this._mixDuck=1;
-    this._pitchPreservation(true);
-    if(this.audio){try{this.audio.currentTime=0;this.audio.playbackRate=1;}catch{}}
-    this._updateColor();this._updateGain();
+    this.pause();this._generation++;
+    this.position=0;this._desiredRate=1;this._currentRate=1;this._manualRate=1;
+    this._recovery=false;this._recoveryStage='riding';this._peakScore=2800;
+    this._desiredTier=0;this._desiredSince=0;this._lastSwitchAt=-10000;
+    this._lastBeat=-1;this._lastPosition=0;
+    this.activeSlot=0;this.track=null;this.tier=0;
+    this._transition=null;
+    for(const slot of this.slots){
+      slot.audio.pause();slot.audio.removeAttribute('src');slot.audio.load();slot.track=null;
+      slot.gain.gain.setValueAtTime(0,this.ctx.currentTime);
+    }
   }
   seek(seconds){
-    const t=clamp(seconds,0,this.getDuration());
-    this.position=t;
-    if(this.audio){try{this.audio.currentTime=t;}catch{}}
-    this._lastPosition=t;this._lastBeat=-1;
+    const t=clamp(seconds,0,this.getDuration());this.position=t;
+    const slot=this.slots[this.activeSlot];
+    if(slot){try{slot.audio.currentTime=t;}catch{}}
+    this._lastBeat=-1;this._lastPosition=t;
   }
   async dispose(){
     this.stop();this._listeners.clear();
-    if(this.audio){this.audio.removeAttribute('src');this.audio.load();this.audio=null;}
+    for(const slot of this.slots){slot.audio.removeAttribute('src');slot.audio.load();try{slot.gain.disconnect();}catch{}}
+    this.slots=[];
     if(this.ctx){try{await this.ctx.close();}catch{}}
-    this.ctx=null;this.analyser=null;this.master=null;
+    this.ctx=null;this.master=null;this.analyser=null;
   }
 }
 export default ProceduralRapidRain;
