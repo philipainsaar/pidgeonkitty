@@ -6,10 +6,11 @@
  * normal maps must be LINEAR and use OpenGL +Y green convention.
  */
 export const SNOW64_TEXTURE_PATHS = Object.freeze({
-  snowGround: "/textures/snow64-snow-ground.webp",
-  snowBanks: "/textures/snow64-snow-banks.webp",
-  snowNormal: "/textures/snow64-snow-normal.webp",
-  bankNormal: "/textures/snow64-bank-normal.webp",
+  snowGround: "/textures/snow64-cotton-candy-snow.webp",
+  snowBanks: null, // The EXACT same albedo on center and banks.,
+  snowNormal: "/textures/snow64-cotton-candy-normal.webp",
+  bankNormal: null, // One normal field with no seam.,
+  snowPile: "/textures/snow64-cotton-candy-pile.webp",
   snowflake: "/textures/snow64-snowflake.png",
   snowSpray: "/textures/snow64-snow-spray.png",
   explosionFlash: "/textures/snow64-explosion-flash.png",
@@ -17,9 +18,9 @@ export const SNOW64_TEXTURE_PATHS = Object.freeze({
 
 /** World-space UVs never reset at procedural chunk boundaries. */
 export const SNOW64_TERRAIN = Object.freeze({
-  textureTileMeters: 7.5, // Lower = more repeats/detail; larger = wider patterns
-  normalStrength: 0.45,
-  roughness: 0.94,
+  textureTileMeters: 6.8, // Lower = more repeats/detail; larger = wider patterns
+  normalStrength: 0.70,
+  roughness: 0.985,
   useGroundTextureOnBanksWhenMissing: true,
 });
 

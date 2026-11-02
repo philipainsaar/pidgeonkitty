@@ -84,45 +84,66 @@ function groundY(x, z) {
 }
 
 function Terrain({index}) {
-  const materials=useSnow64TerrainMaterials();
+  // One shared snow shader and one continuous world-space UV field for the
+  // entire center and both banks. No separate material boundary is visible.
+  const material = useSnow64TerrainMaterials();
   const geometry = useMemo(() => {
-    const verts = [], colors = [], uvs = [], centerIndices = [], bankIndices = [];
-    const w = 34, stepsX = 34, stepsZ = 55;
+    const vertices = [], uvs = [], normals = [], colors = [], indices = [];
+    const halfWidth = 34, stepsX = 34, stepsZ = 55;
     const c = new THREE.Color();
+    const smooth = t => { const v = clamp(t, 0, 1); return v * v * (3 - 2 * v); };
     for (let i = 0; i <= stepsZ; i++) {
       const z = 32 - index * SNOW_CHUNK_LENGTH - i * (SNOW_CHUNK_LENGTH / stepsZ);
       for (let j = 0; j <= stepsX; j++) {
-        const x = -w + (j / stepsX) * w * 2;
-        const y = groundY(x, z);
-        verts.push(x, y, z);
-        // World-space UVs continue seamlessly across endless terrain chunks.
-        uvs.push(x / SNOW64_TERRAIN.textureTileMeters, -z / SNOW64_TERRAIN.textureTileMeters);
-        const texture = 0.5 + 0.5 * Math.sin(j * 12.93 + i * 17.77);
-        const center = Math.abs(x) < 11;
-        const shade = center ? 0.965 + 0.022 * texture : 0.88 + texture * 0.065;
-        c.setRGB(shade * 0.84, shade * 0.93, shade);
+        const x = -halfWidth + j / stepsX * (halfWidth * 2);
+        vertices.push(x, groundY(x, z), z);
+
+        // Absolutely anchored to the terrain coordinates. Moving the rider
+        // makes the snowy surface flow under the board, without UV scrolling.
+        // Neighboring endless chunks share exactly matching UV coordinates.
+        uvs.push(x / SNOW64_TERRAIN.textureTileMeters,
+          -z / SNOW64_TERRAIN.textureTileMeters);
+
+        // Analytic derivatives of groundY. Recomputing face normals inside
+        // each chunk caused different shading along the shared chunk border.
+        const phase = x * 0.22 - z * 0.018;
+        const bank = Math.max(0, Math.abs(x) - 12);
+        const slopeX = 0.31 * 0.22 * Math.cos(phase)
+          + (bank > 0 ? Math.sign(x) * 0.11 * bank : 0);
+        const slopeZ = SLOPE - 0.02 * Math.cos(-z * 0.04)
+          - 0.31 * 0.018 * Math.cos(phase);
+        const inv = 1 / Math.hypot(slopeX, 1, slopeZ);
+        normals.push(-slopeX * inv, inv, -slopeZ * inv);
+
+        // Deterministic WORLD-COORDINATE tint, never row or chunk index.
+        // Side snow gradually acquires a little extra lavender depth near trees.
+        const side = smooth((Math.abs(x) - 10.5) / 8.5);
+        const breath = Math.sin(x * 0.31 + z * 0.083)
+          * Math.sin(x * 0.17 - z * 0.19);
+        const shade = 0.981 + breath * 0.010 - side * 0.026;
+        c.setRGB(shade * (1.0 - side * 0.006),
+          shade * (1.0 - side * 0.004), shade);
         colors.push(c.r, c.g, c.b);
       }
     }
     for (let i = 0; i < stepsZ; i++) {
       for (let j = 0; j < stepsX; j++) {
-        const a = i * (stepsX + 1) + j, b = a + stepsX + 1;
-        const destination = Math.abs(-w+((j+.5)/stepsX)*w*2)<11 ? centerIndices : bankIndices;
-        destination.push(a, a + 1, b, a + 1, b + 1, b);
+        const a = i * (stepsX + 1) + j;
+        const b = a + stepsX + 1;
+        indices.push(a, a + 1, b, a + 1, b + 1, b);
       }
     }
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    g.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs,2));
-    g.setIndex([...centerIndices,...bankIndices]);
-    g.addGroup(0,centerIndices.length,0);
-    g.addGroup(centerIndices.length,bankIndices.length,1);
-    g.computeVertexNormals();
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(indices);
+    g.computeBoundingSphere();
     return g;
   }, [index]);
   useEffect(() => () => geometry.dispose(), [geometry]);
-  return <mesh geometry={geometry} material={materials} receiveShadow={false}/>;
+  return <mesh geometry={geometry} material={material} receiveShadow={false}/>;
 }
 
 function Forest({trees}) {
