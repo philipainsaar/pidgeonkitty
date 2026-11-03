@@ -1,4 +1,4 @@
-import SnowboardGame from "../components/SnowboardGame";
+import Snow64Welcome from "../components/Snow64Welcome";
 import Snow64ReactiveMusic from "../components/Snow64ReactiveMusic";
 
 export const metadata = {
@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function HomePage() {
   return <>
-    <SnowboardGame />
+    <Snow64Welcome />
     <Snow64ReactiveMusic />
   </>;
 }

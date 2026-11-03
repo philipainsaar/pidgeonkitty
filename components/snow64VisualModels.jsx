@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useFrame } from "@react-three/fiber";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
+import Snow64StartCastle from "./Snow64StartCastle";
 import { SNOW64_MODEL_PATHS, SNOW64_MODEL_SCALE, SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
 
 const Context = createContext({});
@@ -62,7 +63,12 @@ export function Snow64ModelProvider({children}) {
     }
     return () => { cancelled = true; };
   }, []);
-  return <Context.Provider value={models}>{children}</Context.Provider>;
+  // The same permanent castle exists in the real gameplay world and the
+  // preloaded intro world. It never follows the rider or affects collisions.
+  return <Context.Provider value={models}>
+    {children}
+    <Snow64StartCastle />
+  </Context.Provider>;
 }
 
 export function useSnowModel(name) { return useContext(Context)[name] || null; }
