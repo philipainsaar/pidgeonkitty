@@ -32,10 +32,10 @@ function WelcomeScene({mobile,stage,onComplete}) {
 
 function WelcomeToggle({label,checked,onClick}) {
   return <button type="button" onClick={onClick} aria-pressed={checked}
-    style={{padding:"8px 10px",borderRadius:9,font:"800 11px system-ui,sans-serif",
-      letterSpacing:".02em",minHeight:34,background:checked?"#ccefe7":"#24495d",
-      border:`1.5px solid ${checked?"#f7fffa":"#769bae"}`,
-      color:checked?"#254657":"#f2fbff",cursor:"pointer",touchAction:"manipulation"}}>
+    style={{padding:"7px 8px",borderRadius:9,font:"800 10px system-ui,sans-serif",
+      letterSpacing:".02em",minHeight:30,background:checked?"#d1f5e9":"#ffffff98",
+      border:`1.5px solid ${checked?"#fff":"#a0bdd1"}`,
+      color:checked?"#254657":"#4c6f86",cursor:"pointer",touchAction:"manipulation"}}>
     {label}: {checked?"ON":"OFF"}
   </button>;
 }
@@ -47,6 +47,7 @@ export default function Snow64Welcome(){
   const [soundOn,setSoundOn]=useState(true);
   const [musicOn,setMusicOn]=useState(true);
   const [retro,setRetro]=useState(false);
+  const [settingsOpen,setSettingsOpen]=useState(false);
   const [assetsReady,setAssetsReady]=useState(false);
   const {active: loadingActive, progress: loadingProgress, total: loadTotal} = useProgress();
   const committed=useRef(false);
@@ -167,54 +168,123 @@ export default function Snow64Welcome(){
       {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,zIndex:1,
         pointerEvents:"none",background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#23546833 4px)",
         opacity:.55}}/>}
-      <div style={{position:"absolute",left:mobile?15:30,top:mobile?20:24,
-        zIndex:2,pointerEvents:"none",filter:"drop-shadow(2px 3px 1px #13425966)"}}>
-        <div style={{font:"900 10px system-ui",letterSpacing:".18em",color:"#164b61"}}>PIDGEONKITTY PRESENTS</div>
-        <img alt="SNOW//360" src="/images/Snow360Logo.png"
-          style={{display:"block",width:mobile?"min(48vw,190px)":"min(28vw,380px)",
-            maxHeight:mobile?92:170,objectFit:"contain",objectPosition:"left"}}/>
-        <div style={{font:"900 9px system-ui",letterSpacing:".15em",color:"#164b61"}}>DOWNHILL FREESTYLE</div>
+      <style>{`
+        @keyframes snow360GlassShift {
+          0%,100% { background-position: 0% 48%; }
+          50% { background-position: 100% 52%; }
+        }
+        @keyframes snow360LogoHover {
+          0%,100% { transform: translateX(-50%) translateY(0px); }
+          50% { transform: translateX(-50%) translateY(-6px); }
+        }
+        .snow360-start-logo { animation: snow360LogoHover 6s ease-in-out infinite; }
+        .snow360-start-glass button:hover:not(:disabled) { filter: brightness(1.06); }
+        .snow360-start-glass button:focus-visible { outline: 3px solid #a389ff; outline-offset: 2px; }
+        @media (prefers-reduced-motion: reduce) {
+          .snow360-start-logo, .snow360-start-glass { animation: none !important; }
+          .snow360-start-glass * { transition: none !important; }
+        }
+      `}</style>
+      {/* Centered, aligned foreground + background logo layers. Both PNGs
+          share exactly the same image frame so the fluffy border fits. */}
+      <div className="snow360-start-logo" style={{
+        position:"absolute",zIndex:3,pointerEvents:"none",
+        left:"50%",top:mobile?"7.2%":"6.6%",
+        width:mobile?"min(82vw,350px)":"min(44vw,520px)",
+        aspectRatio:"2.3 / 1",transform:"translateX(-50%)",
+        filter:"drop-shadow(0 9px 14px #7394bb62)",
+      }}>
+        <img src="/images/Snow360Logo-background.png" alt="" aria-hidden="true"
+          draggable={false} decoding="async" loading="eager" style={{
+            width:"100%",height:"100%",position:"absolute",inset:0,
+            objectFit:"contain",userSelect:"none",
+          }}/>
+        <img src="/images/Snow360Logo.png" alt="SNOW//360"
+          draggable={false} decoding="async" loading="eager" style={{
+            width:"100%",height:"100%",position:"absolute",inset:0,
+            objectFit:"contain",userSelect:"none",
+          }}/>
       </div>
-      {stage==="ready" ? <div style={{position:"absolute",zIndex:5,
-        bottom:mobile?"max(12px, env(safe-area-inset-bottom))":undefined,
-        right:mobile?"50%":"clamp(20px,5vw,86px)",
-        top:mobile?undefined:"50%",
-        transform:mobile?"translateX(50%)":"translateY(-50%)",
-        width:mobile?"min(94vw,430px)":"min(355px,38vw)",
-        boxSizing:"border-box",background:"linear-gradient(145deg,#113b55eb,#203f65e8)",
-        border:"2px solid #d7f5ff",borderRadius:18,padding:mobile?"13px 15px":"24px",
-        boxShadow:"0 16px 35px #113c5966",textAlign:"center",maxHeight:mobile?"51dvh":"90dvh",
-        overflowY:"auto"}}>
-        <div style={{color:"#d3f7fc",font:"900 10px system-ui",letterSpacing:".22em"}}>READY FOR THE MOUNTAIN?</div>
-        <div style={{font:"1000 21px system-ui",color:"#fff5d8",margin:"6px 0"}}>WAVE HELLO! 👋</div>
-        <p style={{font:"600 12px/1.4 system-ui",color:"#d8effa",margin:"4px 0 12px"}}>
-          PidgeonKitty is waiting at the start. Press PLAY to wave, walk onto the board, and ride!
-        </p>
-        <div style={{display:"flex",gap:7,justifyContent:"center",marginBottom:10}}>
-          <button type="button" onClick={()=>setTrickButtons(false)} aria-pressed={!trickButtons}
-            style={{flex:1,padding:"8px 6px",cursor:"pointer",font:"900 11px system-ui",borderRadius:9,
-              color:!trickButtons?"#153c54":"#dff6ff",background:!trickButtons?"#ffe3a9":"#24495d",
-              border:"1.5px solid #fff2d9"}}>✎ DRAW TRICKS</button>
-          <button type="button" onClick={()=>setTrickButtons(true)} aria-pressed={trickButtons}
-            style={{flex:1,padding:"8px 6px",cursor:"pointer",font:"900 11px system-ui",borderRadius:9,
-              color:trickButtons?"#153c54":"#dff6ff",background:trickButtons?"#ffe3a9":"#24495d",
-              border:"1.5px solid #fff2d9"}}>▦ TRICK BUTTONS</button>
+      {stage==="ready" ? <div className="snow360-start-glass" style={{
+        position:"absolute",zIndex:5,left:"50%",bottom:mobile?"max(13px,env(safe-area-inset-bottom))":"clamp(20px,5.5vh,70px)",
+        transform:"translateX(-50%)",width:mobile?"min(84vw,284px)":"min(290px,85vw)",
+        boxSizing:"border-box",padding:mobile?"9px":"10px",borderRadius:22,
+        background:"linear-gradient(115deg,rgba(255,236,247,.71),rgba(215,241,255,.72),rgba(236,220,255,.68),rgba(224,253,241,.72),rgba(255,237,224,.70))",
+        backgroundSize:"350% 350%",animation:"snow360GlassShift 12s ease-in-out infinite",
+        border:"1.6px solid rgba(255,255,255,.95)",
+        boxShadow:"0 14px 36px #52779d4a,inset 0 1px 0 #ffffffcf,0 0 25px #f5d1ff55",
+        backdropFilter:"blur(19px) saturate(1.48)",WebkitBackdropFilter:"blur(19px) saturate(1.48)",
+        color:"#244762",textAlign:"center",maxHeight:"min(66dvh,480px)",overflowY:"auto",overscrollBehavior:"contain",
+      }}>
+        {/* The resting menu contains only these two controls. */}
+        <div style={{display:"flex",gap:8,alignItems:"stretch"}}>
+          <button type="button" onClick={play} disabled={!assetsReady}
+            aria-label={assetsReady?"Play Snow360":"Loading course"}
+            style={{minWidth:0,flex:1,padding:"12px 12px",borderRadius:15,
+              background:"linear-gradient(125deg,#ffe9a9,#ffd4dd 47%,#cebaff 100%)",
+              color:"#255273",border:"1.6px solid #fff9f0",
+              boxShadow:"0 3px 0 #c8a9b8,0 5px 12px #a57d9d38",
+              font:"1000 21px system-ui,sans-serif",letterSpacing:".12em",cursor:assetsReady?"pointer":"wait",
+              opacity:assetsReady?1:.65,touchAction:"manipulation",
+              textShadow:"0 1px 0 #ffffff9c",transition:"transform .18s ease,box-shadow .18s ease",
+            }}>{assetsReady?"▶ PLAY":"LOADING…"}</button>
+          <button type="button" aria-label={settingsOpen?"Close settings":"Open settings"}
+            aria-expanded={settingsOpen} aria-controls="snow360-intro-settings"
+            onClick={()=>setSettingsOpen(v=>!v)}
+            style={{flex:"0 0 58px",width:58,minHeight:50,display:"flex",flexDirection:"column",gap:1,alignItems:"center",justifyContent:"center",cursor:"pointer",
+              borderRadius:15,border:"1.6px solid #fffcff",
+              color:settingsOpen?"#774a8c":"#4d6e8c",
+              background:settingsOpen?"#ffe5f9d9":"#ffffff99",
+              boxShadow:"0 2px 9px #7997bb31",touchAction:"manipulation",
+              transition:"transform .2s ease,background .2s ease"}}>
+            <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"
+              style={{transform:settingsOpen?"rotate(55deg)":"rotate(0deg)",transition:"transform .35s ease"}}>
+              <path d="M12 2.7 14 3.4l.4 2.1 1.8 1 2.1-.7 1.5 1.6-.8 2 1 1.8 2.1.4.6 2.1-.6 2.1-2.1.4-1 1.8.8 2-1.5 1.6-2.1-.7-1.8 1-.4 2.1-2 .7-2-.7-.4-2.1-1.8-1-2.1.7-1.5-1.6.8-2-1-1.8-2.1-.4-.6-2.1.6-2.1 2.1-.4 1-1.8-.8-2 1.5-1.6 2.1.7 1.8-1 .4-2.1Z"/>
+              <circle cx="12" cy="12" r="3.25"/>
+            </svg>
+            <span style={{font:"850 7px system-ui,sans-serif",letterSpacing:".045em",lineHeight:1}}>SETTINGS</span>
+          </button>
         </div>
-        <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:13,flexWrap:"wrap"}}>
-          <WelcomeToggle label="SFX" checked={soundOn} onClick={()=>setSoundOn(v=>!v)}/>
-          <WelcomeToggle label="MUSIC" checked={musicOn} onClick={()=>setMusicOn(v=>!v)}/>
-          <WelcomeToggle label="N64 FILTER" checked={retro} onClick={()=>setRetro(v=>!v)}/>
+        <div id="snow360-intro-settings" inert={!settingsOpen} aria-hidden={!settingsOpen}
+          style={{display:"grid",gridTemplateRows:settingsOpen?"1fr":"0fr",
+            opacity:settingsOpen?1:0,transition:"grid-template-rows .32s ease,opacity .25s ease"}}>
+          <div style={{minHeight:0,overflow:"hidden"}}>
+            <div style={{padding:"12px 4px 4px"}}>
+              <div style={{font:"1000 11px system-ui",letterSpacing:".13em",color:"#456188",marginBottom:7}}>
+                SETTINGS <span aria-hidden="true">✦</span>
+              </div>
+              <p style={{margin:"0 0 7px",font:"850 9px system-ui",letterSpacing:".10em",color:"#5b7194"}}>
+                PIDGEONKITTY PRESENTS · DOWNHILL FREESTYLE
+              </p>
+              <p style={{margin:"0 0 13px",font:"650 11px/1.45 system-ui",color:"#3c6080"}}>
+                WAVE HELLO! PidgeonKitty is waiting at the start.
+                Press PLAY to wave, walk onto the snowboard, and ride!
+              </p>
+              <div role="group" aria-label="Trick controls" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:9}}>
+                <button type="button" aria-pressed={!trickButtons} onClick={()=>setTrickButtons(false)}
+                  style={{padding:"9px 4px",borderRadius:10,font:"900 10px system-ui",cursor:"pointer",
+                    border:"1px solid #fff",background:!trickButtons?"#ffe4b0":"#ffffff75",
+                    color:"#32536b",boxShadow:!trickButtons?"0 2px 7px #ebcda355":"none"}}>✎ DRAW TRICKS</button>
+                <button type="button" aria-pressed={trickButtons} onClick={()=>setTrickButtons(true)}
+                  style={{padding:"9px 4px",borderRadius:10,font:"900 10px system-ui",cursor:"pointer",
+                    border:"1px solid #fff",background:trickButtons?"#ffe4b0":"#ffffff75",
+                    color:"#32536b",boxShadow:trickButtons?"0 2px 7px #ebcda355":"none"}}>▦ TRICK BUTTONS</button>
+              </div>
+              <div style={{display:"flex",gap:5,justifyContent:"center",flexWrap:"wrap",marginBottom:9}}>
+                <WelcomeToggle label="SFX" checked={soundOn} onClick={()=>setSoundOn(v=>!v)}/>
+                <WelcomeToggle label="MUSIC" checked={musicOn} onClick={()=>setMusicOn(v=>!v)}/>
+                <WelcomeToggle label="N64 FILTER" checked={retro} onClick={()=>setRetro(v=>!v)}/>
+              </div>
+              <p style={{margin:"7px 1px 0",color:"#3e6685",font:"750 10px/1.55 system-ui"}}>
+                {mobile?"LEFT: CARVE / TUCK · RIGHT: JUMP / TRICKS":"A/D: CARVE · W: TUCK · SPACE: JUMP · P: PAUSE"}
+              </p>
+              <p style={{margin:"6px 0 0",font:"650 10px/1.45 system-ui",color:"#587a98"}}>
+                Endless downhill. Land tricks, collect tokens, and keep your score above zero!
+              </p>
+            </div>
+          </div>
         </div>
-        <button type="button" onClick={play} disabled={!assetsReady} autoFocus
-          style={{width:"100%",padding:mobile?"13px 20px":"16px 24px",borderRadius:12,
-            background:"linear-gradient(180deg,#fff3b3,#f8c5a4)",color:"#243f56",
-            border:"2px solid #fffce8",boxShadow:"0 5px 0 #a67a75",
-            font:"1000 20px system-ui",letterSpacing:".12em",cursor:assetsReady?"pointer":"wait",
-            opacity:assetsReady?1:.64,
-            touchAction:"manipulation"}}>{assetsReady?"▶ PLAY":"LOADING COURSE…"}</button>
-        <p style={{font:"700 10px system-ui",color:"#c2e9f4",margin:"10px 0 0"}}>
-          {mobile?"CARVE • JUMP • DRAW OR TAP TRICKS":"A/D CARVE · W TUCK · SPACE JUMP · P PAUSE"}
-        </p>
       </div> : <div style={{position:"absolute",left:"50%",bottom:"min(12vh,110px)",transform:"translateX(-50%)",
         color:"#fff7e3",font:"1000 clamp(21px,4vw,43px) system-ui",letterSpacing:".10em",
         textShadow:"2px 3px 0 #285a7a,0 4px 15px #173e59",whiteSpace:"nowrap",pointerEvents:"none"}}>
