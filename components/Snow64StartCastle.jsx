@@ -6,22 +6,25 @@ import * as THREE from "three";
 import { snow360Drift } from "./snow64SnowDrifts";
 
 /**
- * SNOW360 V5: an OPTIONAL, persistent start-point castle.
+ * SNOW360 V7: optimized, retextured start castle, carefully framed in the intro.
  *
- * Drop public/models/snow360-start-castle.glb into the project and refresh.
- * The same world-space castle is rendered in BOTH the intro Canvas and the
- * original game Canvas, as the providers share this simple scenery component.
- * Missing files fail quietly, and no collision or physics changes are made.
+ * Fixes the upside-down castle by applying the corrective model rotation
+ * BEFORE measuring bounds and grounding the object. This keeps the castle
+ * sitting properly on the snow instead of hanging from the sky.
  */
 export const START_CASTLE = Object.freeze({
-  url: "/models/snow360-start-castle.glb",
+  url: "/models/snow360-start-castle.glb?v=7",
   x: 0,
-  z: 23,               // Uphill, physically behind the starting character.
-  extraHeight: 0,      // Raise for castles with a buried plinth or foundation.
-  maximumWidth: 12,
-  maximumHeight: 12.5,
-  maximumDepth: 9.5,
-  heading: 0,          // In Blender, castle entrance should face -Z.
+  z: 24, // Remain inside the real course terrain (ends at world Z=32).
+  extraHeight: 0,
+  maximumWidth: 11,
+  maximumHeight: 8.8, // Entire castle fits above the rider in the opening view.
+  maximumDepth: 8.5,
+  heading: 0,
+  // V7 GLB retains the V6 orientation, so this corrective rotation still applies.
+  modelPitch: Math.PI,
+  modelYaw: 0,
+  modelRoll: 0,
 });
 
 let cachedModel = null;
@@ -32,8 +35,14 @@ function loadCastleOnce() {
     pendingModel = new Promise(resolve => {
       const loader = new GLTFLoader();
       loader.load(START_CASTLE.url, gltf => {
-        const scene = gltf?.scene;
-        if (!scene) { resolve(null); return; }
+        const source = gltf?.scene;
+        if (!source) { resolve(null); return; }
+        const scene = source.clone(true);
+        scene.rotation.set(
+          START_CASTLE.modelPitch,
+          START_CASTLE.modelYaw,
+          START_CASTLE.modelRoll,
+        );
         scene.updateMatrixWorld(true);
         const bounds = new THREE.Box3().setFromObject(scene);
         if (bounds.isEmpty()) { resolve(null); return; }
@@ -44,7 +53,7 @@ function loadCastleOnce() {
           START_CASTLE.maximumHeight / Math.max(size.y, 0.0001),
           START_CASTLE.maximumDepth / Math.max(size.z, 0.0001),
         );
-        cachedModel = {scene,center,bottom:bounds.min.y,scale};
+        cachedModel = { scene, center, bottom: bounds.min.y, scale };
         resolve(cachedModel);
       }, undefined, () => resolve(null));
     });
@@ -61,11 +70,11 @@ export default function Snow64StartCastle() {
   }, []);
   const clone = useMemo(() => asset?.scene.clone(true), [asset]);
   const ground = useMemo(() => {
-    const {x,z} = START_CASTLE;
+    const { x, z } = START_CASTLE;
     const bank = Math.max(0, Math.abs(x) - 12);
-    return 0.077*z + 0.5*Math.sin(-z*0.04)
-      + 0.31*Math.sin(x*0.22 - z*0.018)
-      + bank*bank*0.055 + snow360Drift(x,z) + START_CASTLE.extraHeight;
+    return 0.077 * z + 0.5 * Math.sin(-z * 0.04)
+      + 0.31 * Math.sin(x * 0.22 - z * 0.018)
+      + bank * bank * 0.055 + snow360Drift(x, z) + START_CASTLE.extraHeight;
   }, []);
   if (!clone || !asset) return null;
   return (
@@ -73,7 +82,7 @@ export default function Snow64StartCastle() {
       rotation={[0, START_CASTLE.heading, 0]}>
       <group scale={asset.scale}>
         <group position={[-asset.center.x, -asset.bottom, -asset.center.z]}>
-          <primitive object={clone} dispose={null}/>
+          <primitive object={clone} dispose={null} />
         </group>
       </group>
     </group>

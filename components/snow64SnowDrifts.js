@@ -1,5 +1,5 @@
 /**
- * SNOW360 V60: endless, deterministic 3D cotton-candy snowdrifts.
+ * SNOW360 V62: endless, deterministic 3D cotton-candy snowdrifts.
  *
  * Evaluated entirely in WORLD coordinates. Chunk seams share identical
  * positions/normals, and repeated runs reproduce the same lovely piles.
@@ -10,9 +10,9 @@
  * timers, meshes per pile, or per-frame geometry regeneration.
  */
 
-const CELL_X = 8.0;
-const CELL_Z = 11.0;
-const SEED = 0x36070;
+const CELL_X = 7.0;
+const CELL_Z = 9.2;
+const SEED = 0x36072;
 const mix = (a, b, t) => a + (b - a) * t;
 
 function hash2(ix, iz, salt) {
@@ -50,13 +50,28 @@ export function snow360Drift(x, z, gradient = false) {
   const sa = Math.sin(a), ca = Math.cos(a);
   const sb = Math.sin(b), cb = Math.cos(b);
   const wave = sa * cb;
-  const amplitude = 0.058 + bank * 0.115;
+  const amplitude = 0.095 + bank * 0.145;
   let height = amplitude * wave;
   let dx = 0, dz = 0;
   if (gradient) {
-    dx = bankDx * 0.115 * wave
+    dx = bankDx * 0.145 * wave
       + amplitude * (0.113 * ca * cb - 0.047 * sa * sb);
     dz = amplitude * (0.091 * ca * cb + 0.163 * sa * sb);
+  }
+
+  // Secondary, finer undulations sculpt soft, overlapping cloud billows
+  // across the riding lane rather than saving all 3D volume for the banks.
+  const c = 0.21 * x - 0.13 * z + 1.7;
+  const d = 0.08 * x + 0.26 * z - .8;
+  const sc = Math.sin(c), cc = Math.cos(c);
+  const sd = Math.sin(d), cd = Math.cos(d);
+  const fine = sc * cd;
+  const fineAmplitude = 0.062 + bank * 0.055;
+  height += fineAmplitude * fine;
+  if (gradient) {
+    dx += bankDx * 0.055 * fine
+      + fineAmplitude * (0.21 * cc * cd - 0.08 * sc * sd);
+    dz += fineAmplitude * (-0.13 * cc * cd - 0.26 * sc * sd);
   }
 
   // Sparse, smooth snow pillows. We only inspect adjacent world cells;
@@ -67,8 +82,8 @@ export function snow360Drift(x, z, gradient = false) {
     for (let i = cellX - 1; i <= cellX + 1; i++) {
       const cx = (i + 0.5) * CELL_X + (hash2(i, j, 1) - 0.5) * 3.8;
       const cz = (j + 0.5) * CELL_Z + (hash2(i, j, 2) - 0.5) * 5.0;
-      const radiusX = 3.0 + hash2(i, j, 3) * 2.2;
-      const radiusZ = 4.5 + hash2(i, j, 4) * 2.65;
+      const radiusX = 2.7 + hash2(i, j, 3) * 2.4;
+      const radiusZ = 3.9 + hash2(i, j, 4) * 2.7;
       const nx = (x - cx) / radiusX;
       const nz = (z - cz) / radiusZ;
       const q = 1 - nx * nx - nz * nz;
@@ -78,7 +93,7 @@ export function snow360Drift(x, z, gradient = false) {
       const luck = hash2(i, j, 5);
       // Smooth, low mounds in the lane, taller plush heaps beyond x≈12.
       // The tiny central rise stays safe under the snowboard and ramps.
-      const rise = mix(0.075 + luck * 0.125, 0.38 + luck * 0.75, side);
+      const rise = mix(0.17 + luck * 0.26, 0.46 + luck * 0.86, side);
       const eased = q * q;
       height += rise * eased;
       if (gradient) {

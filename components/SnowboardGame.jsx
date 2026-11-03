@@ -21,6 +21,7 @@ import { snow360Drift } from "./snow64SnowDrifts";
 import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
 import Snow360CloudRamp from "./Snow360CloudRamps";
+import Snow64CloudLayer from "./Snow64CloudLayer";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -313,6 +314,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
   const tokenModel=useSnowModel("token");
   return <>
     <Terrain index={index} mobile={mobile} />
+    <Snow64CloudLayer index={index} mobile={mobile} groundY={groundY} ramps={data.ramps} />
     <Forest trees={data.trees} />
     {obstacleLibrary ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
       : rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
