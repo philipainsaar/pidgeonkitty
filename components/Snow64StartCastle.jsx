@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { snow360Drift } from "./snow64SnowDrifts";
 
 /**
- * SNOW360 V7: optimized, retextured start castle, carefully framed in the intro.
+ * SNOW360 V9: softly enlarged and brought slightly forward for the new cloudscape.
  *
  * Fixes the upside-down castle by applying the corrective model rotation
  * BEFORE measuring bounds and grounding the object. This keeps the castle
@@ -15,11 +15,11 @@ import { snow360Drift } from "./snow64SnowDrifts";
 export const START_CASTLE = Object.freeze({
   url: "/models/snow360-start-castle.glb?v=7",
   x: 0,
-  z: 24, // Remain inside the real course terrain (ends at world Z=32).
+  z: 22, // Slightly closer, but still safely uphill behind the rider.
   extraHeight: 0,
-  maximumWidth: 11,
-  maximumHeight: 8.8, // Entire castle fits above the rider in the opening view.
-  maximumDepth: 8.5,
+  maximumWidth: 12.0,
+  maximumHeight: 9.6, // A little larger, framed with the upward-tilted start camera.
+  maximumDepth: 9.1,
   heading: 0,
   // V7 GLB retains the V6 orientation, so this corrective rotation still applies.
   modelPitch: Math.PI,

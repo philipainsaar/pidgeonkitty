@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useSnowModel, SnowGLBInstances } from "./snow64VisualModels";
 import { useSnow64TerrainMaterials } from "./snow64VisualMaterials";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
@@ -73,7 +75,7 @@ function PreviewTrees({trees}){
   if(model)return <SnowGLBInstances asset={model} type="tree" items={visible}
     pose={tree=>({position:[tree.x,introGroundY(tree.x,tree.z),tree.z],
       rotation:[0,0,0],dimensions:[1.38*tree.size,2.42*tree.size,1.38*tree.size]})}/>;
-  return <group>{visible.map((t,i)=><group key={t.id}
+  return <group>{visible.map(t=><group key={t.id}
     position={[t.x,introGroundY(t.x,t.z),t.z]} scale={t.size}>
     <mesh position={[0,.55,0]}><cylinderGeometry args={[.09,.15,1.1,5]}/><meshLambertMaterial color="#dba3c1"/></mesh>
     <mesh position={[0,1.08,0]}><coneGeometry args={[.69,1.85,6]}/><meshLambertMaterial color="#eff9ff"/></mesh>
@@ -111,6 +113,120 @@ function PreviewMarkers({banners}){
       <meshBasicMaterial color={b.side>0?"#ff77ab":"#f8bb66"} side={THREE.DoubleSide}/></mesh>
   </group>)}</group>;
 }
+
+// SNOW360 V9: all four existing Big Air GLBs become permanent intro scenery.
+// The castle sits at Z=22 with a maximum depth of 9.1m. Every cloud below
+// is strictly BEHIND its far wall (Z > 27), not between the camera and castle.
+// Gems are modeled on +Z in these GLBs; the intro camera sits toward -Z.
+// Start the clouds yawed exactly 180 degrees to expose the gems and stars.
+const CLOUD_LAYOUT = [
+  {key:"c1",url:"/models/snow360-sky-cloud-1.glb",x:-10.2,z:32.0,lift:10.1,scale:10.0,bob:.35,drift:.85,phase:.4,rotate:.10},
+  {key:"c2",url:"/models/snow360-sky-cloud-2.glb",x:10.0,z:33.5,lift:10.9,scale:10.1,bob:.30,drift:.73,phase:1.9,rotate:.09},
+  {key:"c3",url:"/models/snow360-sky-cloud-3.glb",x:-5.2,z:40.0,lift:17.2,scale:11.2,bob:.40,drift:.95,phase:3.2,rotate:.08},
+  {key:"c4",url:"/models/snow360-sky-cloud-4.glb",x:6.3,z:41.5,lift:16.5,scale:10.5,bob:.36,drift:.84,phase:4.4,rotate:.08},
+];
+
+// Keep original baked AO and maps. ONLY the fluffy body gets soft transparency.
+// Pastel pearls/stars remain solid and metallic, just like the Big Air GLBs.
+const cloudSoftMaterials = new WeakMap();
+function softFleeceMaterial(original){
+  const prior=cloudSoftMaterials.get(original);
+  if(prior)return prior;
+  const material=original.clone();
+  material.name="SNOW360_IntroSoftFleece_AO";
+  material.transparent=true;
+  material.opacity=.93;
+  material.depthWrite=false;
+  material.roughness=.99;
+  material.metalness=0;
+  material.side=THREE.FrontSide;
+  material.onBeforeCompile=shader=>{
+    shader.vertexShader=`varying vec3 vIntroCloudNormal;
+varying vec3 vIntroCloudEye;
+`+shader.vertexShader;
+    shader.vertexShader=shader.vertexShader.replace(
+      "#include <worldpos_vertex>",
+      `#include <worldpos_vertex>
+       vec4 introCloudView=modelViewMatrix*vec4(transformed,1.0);
+       vIntroCloudEye=normalize(-introCloudView.xyz);
+       vIntroCloudNormal=normalize(normalMatrix*normal);`
+    );
+    shader.fragmentShader=`varying vec3 vIntroCloudNormal;
+varying vec3 vIntroCloudEye;
+`+shader.fragmentShader;
+    shader.fragmentShader=shader.fragmentShader.replace(
+      "#include <opaque_fragment>",
+      `float introFacing=abs(dot(normalize(vIntroCloudNormal),normalize(vIntroCloudEye)));
+       diffuseColor.a *= mix(.38,1.0,smoothstep(.08,.82,introFacing));
+       #include <opaque_fragment>`
+    );
+  };
+  material.customProgramCacheKey=()=>"snow360-intro-fleece-soft-v9";
+  material.needsUpdate=true;
+  cloudSoftMaterials.set(original,material);
+  return material;
+}
+
+const cloudCache=new Map();
+const cloudPending=new Map();
+function loadCloud(url){
+  if(cloudCache.has(url))return Promise.resolve(cloudCache.get(url));
+  if(!cloudPending.has(url)){
+    cloudPending.set(url,new Promise(resolve=>{
+      new GLTFLoader().load(url,gltf=>{
+        const source=gltf?.scene||null;
+        cloudCache.set(url,source);
+        resolve(source);
+      },undefined,()=>resolve(null));
+    }));
+  }
+  return cloudPending.get(url);
+}
+
+function StartCloud({item,mobile}){
+  const [scene,setScene]=useState(()=>cloudCache.get(item.url)??null);
+  const root=useRef();
+  const x0=item.x*(mobile ? 0.80 : 1);
+  const scale=item.scale*(mobile ? 0.88 : 1);
+  const baseY=introGroundY(x0,item.z)+item.lift*(mobile ? 0.96 : 1);
+  useEffect(()=>{
+    let mounted=true;
+    loadCloud(item.url).then(source=>{if(mounted)setScene(source);});
+    return()=>{mounted=false;};
+  },[item.url]);
+  const clone=useMemo(()=>{
+    if(!scene)return null;
+    const copy=scene.clone(true);
+    copy.traverse(mesh=>{
+      if(!mesh.isMesh)return;
+      mesh.castShadow=false;
+      mesh.receiveShadow=false;
+      if(mesh.name==="Cloud"||mesh.name.startsWith("Cloud_")){
+        mesh.material=Array.isArray(mesh.material)?mesh.material.map(softFleeceMaterial):softFleeceMaterial(mesh.material);
+      }
+      // Do not alter Gems_*'s opaque PBR materials.
+    });
+    return copy;
+  },[scene]);
+  useFrame(({clock})=>{
+    if(!root.current)return;
+    const t=clock.elapsedTime;
+    // Visible, low-frequency floating movement, without ever flying in front
+    // of the castle or changing the clouds' location when PLAY is clicked.
+    root.current.position.x=x0+Math.sin(t*.31+item.phase)*item.drift*(mobile ? 0.80 : 1);
+    root.current.position.y=baseY+Math.sin(t*.47+item.phase)*item.bob;
+    root.current.rotation.y=Math.PI+Math.sin(t*.19+item.phase)*item.rotate;
+  });
+  if(!clone)return null;
+  return <group ref={root} position={[x0,baseY,item.z]} rotation={[0,Math.PI,0]}
+    scale={[scale,scale,scale]}>
+    <primitive object={clone} dispose={null}/>
+  </group>;
+}
+function StartSkyClouds({mobile}){
+  return <group>{CLOUD_LAYOUT.map(item=><StartCloud key={item.key} item={item} mobile={mobile}/>)}</group>;
+}
+
 export default function Snow64IntroCourse({mobile}){
   // The first two chunks are sufficient within the game's 138 m fog radius.
   const chunks=useMemo(()=>[getSnowChunk(0),getSnowChunk(1)],[]);
@@ -120,6 +236,7 @@ export default function Snow64IntroCourse({mobile}){
   const banners=useMemo(()=>chunks.flatMap(c=>c.banners),[chunks]);
   const ramps=useMemo(()=>chunks.flatMap(c=>c.ramps).filter(r=>r.z>-200),[chunks]);
   return <>
+    <StartSkyClouds mobile={mobile}/>
     <PreviewTerrain index={0} mobile={mobile}/>
     <PreviewTerrain index={1} mobile={mobile}/>
     <PreviewTrees trees={trees}/>

@@ -115,20 +115,20 @@ export default function Snow64StartCeremony({ mobile, phase, onComplete, groundY
     const startGround = groundY(0, 0);
     const readyAz = -Math.PI;
     const frontAz = readyAz + .92;
-    const readyRadius = mobile ? 6.45 : 5.95;
+    const readyRadius = mobile ? 7.10 : 6.35;
     const reveal = ease(t / FRONT_REVEAL);
     const returnP = ease((t - 2.05) / (INTRO_END - 2.05));
     const orbitAz = lerp(readyAz, frontAz, reveal);
-    const orbitRadius = lerp(readyRadius, mobile ? 6.35 : 5.95, reveal);
+    const orbitRadius = lerp(readyRadius, mobile ? 6.55 : 6.10, reveal);
 
-    // V7: low, gently UPWARD-TILTED starting camera. The wider vertical FOV
-    // shows the entire castle roof without cutting the bird/board off at the feet.
-    // Stay on the center lane so the left and right sidewalls remain balanced.
+    // V9: slightly wider and tilted upward to frame the *whole* castle plus
+    // enlarged gem-studded clouds. The eye stays low, the course walls stay
+    // symmetrical, and the rider/board remain the centered foreground focus.
     const centerX = lerp(.39, .10, mountP);
-    aim.set(centerX, y + lerp(1.44, 1.08, mountP), z);
+    aim.set(centerX, y + lerp(1.90, 1.08, mountP), z);
     goal.set(
       playing ? aim.x + Math.sin(orbitAz) * orbitRadius : 0,
-      y + lerp(mobile ? 1.18 : 1.22, mobile ? 1.74 : 1.88, reveal),
+      y + lerp(mobile ? 1.25 : 1.26, mobile ? 1.80 : 1.87, reveal),
       aim.z + Math.cos(orbitAz) * orbitRadius,
     );
 
@@ -139,7 +139,7 @@ export default function Snow64StartCeremony({ mobile, phase, onComplete, groundY
 
     camera.position.copy(goal);
     camera.lookAt(aim);
-    camera.fov = lerp(mobile ? 44 : 42, mobile ? 43 : 42, returnP);
+    camera.fov = lerp(mobile ? 49 : 46, mobile ? 43 : 42, returnP);
     camera.updateProjectionMatrix();
 
     if (playing && t >= INTRO_END && !finished.current) {
