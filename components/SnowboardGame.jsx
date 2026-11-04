@@ -24,6 +24,7 @@ import Snow360CloudRamp from "./Snow360CloudRamps";
 import Snow64CloudLayer from "./Snow64CloudLayer";
 import Snow64StarTokens from "./Snow64StarTokens";
 import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
+import Snow64FrostShroomGlow from "./Snow64FrostShroomGlow";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -277,9 +278,11 @@ function FrostMushroom({stateRef}) {
     g.rotation.y=clock.elapsedTime*1.4;
   });
   if (custom) return <group ref={group} visible={false} position={[0,-.30,0]}>
+    <Snow64FrostShroomGlow />
     <group position={[0,-.30,0]}><SnowGLBVisual asset={custom} type="frostShroom" dimensions={[1.8,1.65,1.8]}/></group>
   </group>;
   return <group ref={group} visible={false}>
+    <Snow64FrostShroomGlow />
     <mesh position={[0,.10,0]}><cylinderGeometry args={[.20,.28,.73,8]} /><meshLambertMaterial color="#fff9e5" /></mesh>
     <mesh position={[0,.50,0]} scale={[.68,.34,.63]}><sphereGeometry args={[1,12,8]} /><meshStandardMaterial color="#b955e5" emissive="#4e166b" emissiveIntensity={.6} roughness={.35} /></mesh>
     {[[.38,.63,.18],[-.32,.63,.13],[0,.81,0],[.16,.55,-.42],[-.25,.52,-.35]].map(([x,y,z],i)=><mesh key={i} position={[x,y,z]} scale={[.14,.055,.11]}><sphereGeometry args={[1,7,5]} /><meshBasicMaterial color="#9ffff4" /></mesh>)}
@@ -433,10 +436,10 @@ function Snowboard() {
   useEffect(()=>()=>geom.dispose(),[geom]);
   if (custom) return <group position={[0,.045,0]}>
     <SnowGLBVisual asset={custom} type="snowboard" dimensions={[.74,.25,2.43]}/>
-    <Snow64SnowboardGlow offsetX={SNOW64_SNOWBOARD_FOOT_TUNE[0]} />
+    <Snow64SnowboardGlow asset={custom} />
   </group>;
   return <group position={[0,.045,0]}>
-    <Snow64SnowboardGlow />
+    <Snow64SnowboardGlow fallbackGeometry={geom} />
     <mesh geometry={geom} position={[0,.065,0]}><meshStandardMaterial color="#252849" metalness={.18} roughness={.5} flatShading /></mesh>
     <mesh position={[0,.147,0]}><boxGeometry args={[.38,.018,1.45]} /><meshBasicMaterial color="#f6b5cc" /></mesh>
     <mesh position={[0,.159,0]}><boxGeometry args={[.09,.019,1.58]} /><meshBasicMaterial color="#fff1ce" /></mesh>

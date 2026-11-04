@@ -98,7 +98,7 @@ const ROCK_VARIANT_COLORS = {
 // V62: translucent body underneath Core Planet's holographic shell.
 // The previous 39% body was almost completely covered by the brighter film.
 // 0.58 still lets snowy scenery show through, while color motion stays legible.
-const CRYSTAL_BODY_OPACITY = 0.82; // V75: stronger crystal silhouette against holographic snow
+const CRYSTAL_BODY_OPACITY = 0.94; // V76: readable original crystal textures over light snow
 const CRYSTAL_CYCLE_SECONDS = 12.0; // Visible, continuous two-second pastel transitions.
 const CRYSTAL_BODY_PASTELS = [
   '#ffd0e9', // baby pink
@@ -295,9 +295,9 @@ const CRYSTAL_HOLO_SECOND_COLOR_BLEND = 0.50; // 0 = uniform; 1 = 0.65 step ahea
 const CORE_PLANET_HOLO = {
   flowSpeed: 1.05,
   bandScale: 1.55,
-  intensity: 2.08, // V75: clearer facets above pastel snow
-  rimGlow: 2.04,
-  reflections: 1.78,
+  intensity: 2.22, // V76 crystal overlay: brighter without losing texture
+  rimGlow: 2.36,
+  reflections: 2.05,
   gapFraction: 0.016,
 };
 const crystalKeyWorld = new THREE.Vector3(-8, 20, -30);
@@ -427,7 +427,7 @@ function makeCorePlanetCrystalFilm(geometry, variantName, partIndex) {
         float alpha = max(0.0, uIntensity) *
           (0.075 + 0.105 * flowing + 0.18 * rim +
            0.18 * strip + 0.13 * coloredGlint + 0.09 * shine);
-        alpha = clamp(alpha, 0.19, 0.76); // V75: more readable crystal film
+        alpha = clamp(alpha, 0.24, 0.81); // V76: clearer edges over plush white snow
         vec3 color = pastel * (0.90 + 0.30 * rim +
           0.32 * coloredGlint + 0.20 * strip);
         color += vec3(1.0) * (0.17 * shine + 0.10 * strip);
@@ -611,9 +611,30 @@ export function snow64ObstacleHit(from, to, rock, groundY, riderRadius=.37, powe
 function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
   const ref = useRef(null);
   const filmRef = useRef(null);
+  const crystalAuraRef = useRef(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
+  const auraDummy = useMemo(() => new THREE.Object3D(), []);
   const isCrystal = !!part.material?.userData?.isCrystal;
   const partIndex = asset.parts.indexOf(part);
+  // Only ONE glow draw per crystal variant, not one for every GLB submesh.
+  const hasAura = isCrystal &&
+    asset.parts.findIndex(p => !!p.material?.userData?.isCrystal) === partIndex;
+  const auraGeometry = useMemo(
+    () => hasAura ? new THREE.PlaneGeometry(2.65, 3.55) : null,
+    [hasAura]
+  );
+  const auraMaterial = useMemo(() => hasAura ? new THREE.MeshBasicMaterial({
+    name: "SNOW360_V76_ReadableCrystalIridescentHalo",
+    map: getV53GlowTexture(),
+    color: "#80cfff",
+    transparent: true,
+    opacity: 0.52,
+    blending: THREE.AdditiveBlending,
+    depthTest: true,
+    depthWrite: false,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+  }) : null, [hasAura]);
   const pastelColor = useMemo(() => new THREE.Color(), []);
   const nextFilmPastel = useMemo(() => new THREE.Color(), []);
   const familyPhase = useMemo(() => {
@@ -628,7 +649,11 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
     return { rock, scale: p?.scale || 1, yaw: p?.yaw || 0,
       y: getSnow64ObstacleBaseY(rock, groundY, p) };
   }), [items, groundY]);
-  useEffect(() => () => { film?.dispose(); }, [film]);
+  useEffect(() => () => {
+    film?.dispose();
+    auraGeometry?.dispose();
+    auraMaterial?.dispose();
+  }, [film, auraGeometry, auraMaterial]);
   useLayoutEffect(() => {
     if (!isCrystal) return;
     // V63: drive the visible pastel animation directly on the material color.
@@ -647,15 +672,31 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
       dummy.updateMatrix();
       ref.current.setMatrixAt(i, dummy.matrix);
       if (filmRef.current) filmRef.current.setMatrixAt(i, dummy.matrix);
+      if (crystalAuraRef.current) {
+        auraDummy.position.set(p.rock.x, p.y + 0.5 * asset.size.y * p.scale, p.rock.z);
+        auraDummy.quaternion.copy(camera.quaternion);
+        const visibleScale=Math.max(0.82,Math.min(1.6, asset.size.y * p.scale / 2.4));
+        auraDummy.scale.setScalar(hide ? 0.000001 : visibleScale);
+        auraDummy.updateMatrix();
+        crystalAuraRef.current.setMatrixAt(i, auraDummy.matrix);
+      }
     });
     ref.current.instanceMatrix.needsUpdate = true;
     if (filmRef.current) filmRef.current.instanceMatrix.needsUpdate = true;
+    if (crystalAuraRef.current) crystalAuraRef.current.instanceMatrix.needsUpdate = true;
     if (isCrystal) {
       const phase = (clock.elapsedTime / CRYSTAL_CYCLE_SECONDS)
         * CRYSTAL_BODY_PASTELS.length + familyPhase;
       // One palette drives the textured body and the two thin-film endpoints.
       // All six colors appear in the actual HOLOGRAPHIC FILM, not only behind it.
       part.material.color.copy(sampleCrystalBodyPastel(pastelColor, phase));
+      if (auraMaterial) {
+        // Preserve the crystal's rotating six-color identity but shift toward
+        // a saturated cyan/lavender rim that stays visible over white snow.
+        auraMaterial.color.copy(part.material.color)
+          .lerp(new THREE.Color("#7ec6fc"), 0.38);
+        auraMaterial.opacity = 0.49 + 0.07 * Math.sin(clock.elapsedTime * 2.1);
+      }
       if (film) {
         film.uniforms.uPink.value.copy(part.material.color);
         film.uniforms.uBlue.value.copy(sampleCrystalBodyPastel(
@@ -677,7 +718,10 @@ function ObstacleMeshInstances({ asset, part, items, stateRef, groundY }) {
       frustumCulled={false} dispose={null}/>
     {film && <instancedMesh ref={filmRef}
       args={[part.geometry, film, items.length]}
-      renderOrder={3} frustumCulled={false} dispose={null}/>} 
+      renderOrder={3} frustumCulled={false} dispose={null}/>}
+    {hasAura && <instancedMesh ref={crystalAuraRef}
+      args={[auraGeometry, auraMaterial, items.length]}
+      renderOrder={2} frustumCulled={false} dispose={null}/>}
   </>;
 }
 export function Snow64ObstacleField({rocks,stateRef,groundY,data}) {

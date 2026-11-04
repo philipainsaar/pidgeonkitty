@@ -27,10 +27,10 @@ const CORE_PLANET_HOLO = Object.freeze({
   gapMeters: 0.018,
   // Effective alpha cut from V74, including glint peaks that previously
   // saturated the clamp. Keeps original CorePlanet colors and organic flow.
-  groundAlpha: 0.74,
+  groundAlpha: 0.296, // 40% of V75 0.74
   // Snow mounds inherit the very same animated CorePlanet film,
   // softened further to keep their plush silhouette readable.
-  pileAlpha: 0.56,
+  pileAlpha: 0.224,
 });
 
 const KEY_LIGHT = new THREE.Vector3(-8, 20, -30);
@@ -236,7 +236,7 @@ export function Snow64TextureProvider({ children, mobile = false }) {
   // chunk clones its uniforms for an independent, soft texture-ready fade.
   const holoPileMaterial = useMemo(() => {
     const mat = holoMaterial.clone();
-    mat.name = "SNOW360 V75 / CorePlanet hologram on plush piles";
+    mat.name = "SNOW360 V76 / CorePlanet low-opacity hologram on plush piles";
     mat.uniforms.uOpacityMultiplier.value = CORE_PLANET_HOLO.pileAlpha;
     mat.uniforms.uPileMode.value = 1;
     return mat;
