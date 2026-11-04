@@ -1,281 +1,227 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import {
-  SNOW64_MODEL_SCALE,
-  SNOW64_SNOWBOARD_FOOT_TUNE,
-} from "./snow64ModelConfig";
+import { SNOW64_MODEL_SCALE, SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
 
 /**
- * SNOW360 V77: visible crystal-style glow on the ACTUAL snowboard.
+ * V78: One smooth halo following the ACTUAL snowboard deck silhouette.
  *
- * V76's two thin BackSide outline shells were mostly invisible from the
- * default behind-the-rider camera. These shells remain for a close-up edge
- * highlight; a NEW three-part, camera-facing, radially feathered additive
- * aura supplies the clearly visible glow seen around collectible crystals.
+ * Unlike V77's three camera-facing glow sprites, this single soft ribbon
+ * follows the fitted GLB top/bottom outline. It is transparent INSIDE
+ * the board and on its outer boundary. The pastel colors stay visible even
+ * over the white snow because this uses alpha compositing instead of a
+ * nearly invisible additive-only effect on very bright pixels.
  *
- * The glow consists of translucent textures with alpha fading to ZERO at
- * the outer boundary, NOT opaque rectangular planes.
- *
- * Nothing changes the original GLB, UVs, face texture, snowboard colors,
- * material settings, foot alignment, rider animation or collision.
+ * The true snowboard GLB, UVs, texture maps, bindings and physics are untouched.
  */
-
 const DECK_NAME = /WHITE_CLOUD_PLUSH_TOP|PINK_BLUE_PLUSH_BOTTOM/i;
+const WIDTH = 0.74;
+const LENGTH = 2.43;
+const RADII = [-0.045, 0.005, 0.065, 0.16, 0.29, 0.43];
+const WEIGHTS = [0.0, 0.54, 0.43, 0.26, 0.10, 0.0];
 
-// Center-weighted, crystal-style soft halo texture, generated only once.
-function createHaloTexture() {
-  const n = 96;
-  const pixels = new Uint8Array(n * n * 4);
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      const dx = (x + 0.5 - n * 0.5) / (n * 0.5);
-      const dy = (y + 0.5 - n * 0.5) / (n * 0.5);
-      const r2 = dx * dx + dy * dy;
-      // Same radial glow family used for crystal pickup auras.
-      // Subtract edge value so there is absolutely no visible rectangle.
-      const radius = Math.sqrt(r2);
-      const centerClear = THREE.MathUtils.smoothstep(radius, 0.17, 0.43);
-      const a = Math.max(0, Math.exp(-r2 * 3.4) - Math.exp(-3.4)) * centerClear;
-      const i = 4 * (y * n + x);
-      pixels[i] = 255;
-      pixels[i + 1] = 255;
-      pixels[i + 2] = 255;
-      pixels[i + 3] = Math.round(255 * Math.min(1, a * 1.32));
-    }
+function convexHull(points) {
+  // Monotone chain, counterclockwise, in the snowboard's local X/Z plane.
+  const sorted = points
+    .filter(p => Number.isFinite(p.x) && Number.isFinite(p.z))
+    .sort((a,b) => a.x-b.x || a.z-b.z);
+  if (sorted.length < 3) return sorted;
+  const cross=(a,b,c)=>(b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x);
+  const lower=[];
+  for(const p of sorted){
+    while(lower.length>1 && cross(lower.at(-2),lower.at(-1),p)<=0)lower.pop();
+    lower.push(p);
   }
-  const texture = new THREE.DataTexture(pixels, n, n, THREE.RGBAFormat);
-  texture.name = "SNOW360_V77_SnowboardCrystalStyleHalo";
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
-  return texture;
+  const upper=[];
+  for(let i=sorted.length-1;i>=0;i--){
+    const p=sorted[i];
+    while(upper.length>1 && cross(upper.at(-2),upper.at(-1),p)<=0)upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return [...lower,...upper];
 }
 
-const SHELL_VERTEX = [
-  "uniform float uExpansion;",
-  "varying vec3 vNormalV;",
-  "varying vec3 vViewPosition;",
-  "void main() {",
-  "  vec3 expanded = position + normalize(normal) * uExpansion;",
-  "  vec4 viewPos = modelViewMatrix * vec4(expanded,1.0);",
-  "  vNormalV = normalize(normalMatrix*normal);",
-  "  vViewPosition = viewPos.xyz;",
-  "  gl_Position = projectionMatrix * viewPos;",
-  "}",
-].join("\n");
-
-const SHELL_FRAGMENT = [
-  "uniform float uTime;",
-  "uniform float uOpacity;",
-  "varying vec3 vNormalV;",
-  "varying vec3 vViewPosition;",
-  "void main() {",
-  "  vec3 n = normalize(vNormalV);",
-  "  vec3 v = normalize(-vViewPosition);",
-  "  float edge = pow(1.0-clamp(abs(dot(n,v)),0.0,1.0),1.2);",
-  "  float sweep = 0.5+0.5*sin(uTime*1.0+vViewPosition.x*2.7);",
-  "  vec3 cyan = vec3(.47,.93,1.0);",
-  "  vec3 pink = vec3(1.0,.64,.90);",
-  "  vec3 col = mix(cyan,pink,sweep);",
-  "  float a = uOpacity * (0.26+0.74*edge);",
-  "  gl_FragColor = vec4(col,a);",
-  "  #include <colorspace_fragment>",
-  "}",
-].join("\n");
-
-function useOutlineMaterial(expansion, opacity, name) {
-  return useMemo(() => new THREE.ShaderMaterial({
-    name,
-    uniforms: {
-      uExpansion: { value: expansion },
-      uOpacity: { value: opacity },
-      uTime: { value: 0 },
-    },
-    vertexShader: SHELL_VERTEX,
-    fragmentShader: SHELL_FRAGMENT,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthTest: true,
-    depthWrite: false,
-    side: THREE.BackSide,
-    toneMapped: false,
-  }), [expansion, opacity, name]);
+function smoothLoop(outline, samples=96) {
+  // Evenly spaced samples along actual deck hull, with gently filtered
+  // turns. Convexity is preserved: no sharp corner blooms or end hotspots.
+  const len=outline.length;
+  if(len<3)return [];
+  const cumulative=[0];
+  for(let i=0;i<len;i++){
+    const a=outline[i], b=outline[(i+1)%len];
+    cumulative.push(cumulative.at(-1)+Math.hypot(b.x-a.x,b.z-a.z));
+  }
+  const perimeter=cumulative.at(-1);
+  if(perimeter<1e-6)return [];
+  const pts=[];
+  let edge=0;
+  for(let i=0;i<samples;i++){
+    const d=i*perimeter/samples;
+    while(edge<len-1 && cumulative[edge+1]<d)edge++;
+    const a=outline[edge], b=outline[(edge+1)%len];
+    const f=(d-cumulative[edge])/Math.max(1e-6,cumulative[edge+1]-cumulative[edge]);
+    pts.push({x:THREE.MathUtils.lerp(a.x,b.x,f),z:THREE.MathUtils.lerp(a.z,b.z,f)});
+  }
+  // Chaikin-like smoothing to make rounded nose/tail glow continuous.
+  return pts.map((p,i)=>{
+    const a=pts[(i-1+samples)%samples],b=pts[(i+1)%samples];
+    return {x:p.x*.64+(a.x+b.x)*.18,z:p.z*.64+(a.z+b.z)*.18};
+  });
 }
 
-function useDeckClone(asset, material) {
-  return useMemo(() => {
-    if (!asset?.scene) return null;
-    const cloned = asset.scene.clone(true);
-    let decks = 0;
-    cloned.traverse(node => {
-      if (!node.isMesh) return;
-      const isDeck = DECK_NAME.test(node.name || "");
-      node.visible = isDeck;
-      if (isDeck) {
-        ++decks;
-        node.material = material;
-        node.frustumCulled = false;
-        node.castShadow = false;
-        node.receiveShadow = false;
+function deckOutline(asset,fallbackGeometry) {
+  const pts=[];
+  if(asset?.scene){
+    asset.scene.updateMatrixWorld(true);
+    const inv=asset.scene.matrixWorld.clone().invert();
+    const fitX=WIDTH*(SNOW64_MODEL_SCALE.snowboard?.[0]||1)/Math.max(1e-5,asset.size[0]);
+    const fitZ=LENGTH*(SNOW64_MODEL_SCALE.snowboard?.[2]||1)/Math.max(1e-5,asset.size[2]);
+    const offset=SNOW64_SNOWBOARD_FOOT_TUNE;
+    const local=new THREE.Matrix4();
+    const p=new THREE.Vector3();
+    asset.scene.traverse(node=>{
+      if(!node.isMesh || !DECK_NAME.test(node.name||""))return;
+      local.multiplyMatrices(inv,node.matrixWorld);
+      const positions=node.geometry?.getAttribute("position");
+      if(!positions)return;
+      // Only run on asset load, never during the animation loop.
+      for(let i=0;i<positions.count;i++){
+        p.fromBufferAttribute(positions,i).applyMatrix4(local);
+        pts.push({
+          x:(p.x-asset.centerX)*fitX+offset[0],
+          z:(p.z-asset.centerZ)*fitZ+offset[2],
+        });
       }
     });
-    return decks ? cloned : null;
-  }, [asset, material]);
+  }else if(fallbackGeometry){
+    const a=fallbackGeometry.getAttribute("position");
+    if(a)for(let i=0;i<a.count;i++)pts.push({x:a.getX(i),z:a.getZ(i)});
+  }
+  if(pts.length<3){
+    // Fallback in case a differently named snowboard GLB is installed.
+    for(let i=0;i<80;i++){
+      const t=i/80*Math.PI*2;
+      pts.push({x:0.36*Math.cos(t),z:1.19*Math.sin(t)});
+    }
+  }
+  return smoothLoop(convexHull(pts));
 }
 
-function GlowHalo({ mobile = false }) {
-  const tex = useMemo(createHaloTexture, []);
-  const cyanRef = useRef();
-  const pinkRef = useRef();
-  const pearlRef = useRef();
-
-  const materials = useMemo(() => ([
-    new THREE.SpriteMaterial({
-      name: "SNOW360_V77_Snowboard_CyanCrystalAura",
-      map: tex,
-      color: "#5addff",
-      transparent: true,
-      opacity: mobile ? 0.30 : 0.44,
-      blending: THREE.AdditiveBlending,
-      depthTest: true,
-      depthWrite: false,
-      toneMapped: false,
-      fog: false,
-    }),
-    new THREE.SpriteMaterial({
-      name: "SNOW360_V77_Snowboard_PinkCrystalAura",
-      map: tex,
-      color: "#ff91eb",
-      transparent: true,
-      opacity: mobile ? 0.28 : 0.41,
-      blending: THREE.AdditiveBlending,
-      depthTest: true,
-      depthWrite: false,
-      toneMapped: false,
-      fog: false,
-    }),
-    new THREE.SpriteMaterial({
-      name: "SNOW360_V77_Snowboard_PearlCrystalAura",
-      map: tex,
-      color: "#faffff",
-      transparent: true,
-      opacity: mobile ? 0.09 : 0.13,
-      blending: THREE.AdditiveBlending,
-      depthTest: true,
-      depthWrite: false,
-      toneMapped: false,
-      fog: false,
-    }),
-  ]), [tex, mobile]);
-
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime;
-    const wave = Math.sin(t * 1.45);
-    materials[0].opacity = (mobile ? 0.30 : 0.44) * (0.92 + 0.08 * wave);
-    materials[1].opacity = (mobile ? 0.28 : 0.41) * (0.92 - 0.08 * wave);
-    materials[2].opacity = (mobile ? 0.09 : 0.13) * (0.93 + 0.07 * Math.sin(t * 2.0 + 1.3));
-    if (cyanRef.current) {
-      const s = 1.24 * (1 + 0.035 * Math.sin(t * 1.3));
-      cyanRef.current.scale.set(s, s, 1);
+function createBoardHaloGeometry(asset,fallbackGeometry){
+  const points=deckOutline(asset,fallbackGeometry);
+  if(points.length<3)return null;
+  const n=points.length, rings=RADII.length;
+  const position=new Float32Array(n*rings*3);
+  const strength=new Float32Array(n*rings);
+  const lengthwise=new Float32Array(n*rings);
+  const indices=[];
+  // The glow is a child of the snowboard's existing parent transform.
+  // This height is close to the deck upper edge, not a floating underlay.
+  const y=asset?0.095:0.080;
+  for(let k=0;k<rings;k++){
+    for(let i=0;i<n;i++){
+      const p=points[i],a=points[(i+n-1)%n],b=points[(i+1)%n];
+      const tx=b.x-a.x,tz=b.z-a.z;
+      const mag=Math.max(1e-6,Math.hypot(tx,tz));
+      // Convex hull is CCW, outward is (tz,-tx).
+      const nx=tz/mag,nz=-tx/mag;
+      const j=k*n+i;
+      position[j*3]=p.x+nx*RADII[k];
+      position[j*3+1]=y;
+      position[j*3+2]=p.z+nz*RADII[k];
+      strength[j]=WEIGHTS[k];
+      lengthwise[j]=Math.min(1,Math.max(0,(p.z+LENGTH*.5)/LENGTH));
     }
-    if (pinkRef.current) {
-      const s = 1.24 * (1 + 0.035 * Math.sin(t * 1.3 + 2));
-      pinkRef.current.scale.set(s, s, 1);
+  }
+  for(let k=0;k<rings-1;k++){
+    for(let i=0;i<n;i++){
+      const next=(i+1)%n;
+      const a=k*n+i,b=k*n+next,c=(k+1)*n+i,d=(k+1)*n+next;
+      indices.push(a,c,b,b,c,d);
     }
-  });
-
-  useEffect(() => () => {
-    materials.forEach(mat => mat.dispose());
-    tex.dispose();
-  }, [materials, tex]);
-
-  return (
-    // Three soft sprite halos travel with the actual board and its tricks.
-    // Their separate positions along the board create a soft pill-shaped
-    // light silhouette even at the camera's shallow snowboarding angle.
-    <group name="SNOW360_V77_VisibleCrystalStyleSnowboardGlow">
-      <sprite ref={cyanRef} material={materials[0]}
-        position={[0, 0.13, -0.69]}
-        scale={[1.24, 1.24, 1]} renderOrder={2}
-      />
-      <sprite ref={pinkRef} material={materials[1]}
-        position={[0, 0.13, 0.69]}
-        scale={[1.24, 1.24, 1]} renderOrder={2}
-      />
-      <sprite ref={pearlRef} material={materials[2]}
-        position={[0, 0.13, 0]}
-        scale={[1.06, 1.06, 1]} renderOrder={2}
-      />
-    </group>
-  );
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.BufferAttribute(position,3));
+  g.setAttribute("aStrength",new THREE.BufferAttribute(strength,1));
+  g.setAttribute("aLengthwise",new THREE.BufferAttribute(lengthwise,1));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
 }
+
+const HALO_VERTEX = [
+  "attribute float aStrength;",
+  "attribute float aLengthwise;",
+  "varying float vStrength;",
+  "varying float vLengthwise;",
+  "void main(){",
+  " vStrength=aStrength;",
+  " vLengthwise=aLengthwise;",
+  " gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);",
+  "}",
+].join("\n");
+
+const HALO_FRAGMENT = [
+  "uniform float uTime;",
+  "uniform float uOpacity;",
+  "varying float vStrength;",
+  "varying float vLengthwise;",
+  "void main(){",
+  " float flow=0.5+0.5*sin(6.2831853*vLengthwise*1.15+uTime*.44);",
+  " vec3 cyan=vec3(.30,.83,1.0);",
+  " vec3 pink=vec3(1.0,.49,.85);",
+  " vec3 col=mix(cyan,pink,flow);",
+  " col=mix(col,vec3(1.0,.98,1.0),.10);",
+  " float breathe=.93+.07*sin(uTime*1.15);",
+  " float a=clamp(vStrength*uOpacity*breathe,0.0,.60);",
+  " if(a<.001)discard;",
+  " gl_FragColor=vec4(col,a);",
+  " #include <colorspace_fragment>",
+  "}",
+].join("\n");
 
 export default function Snow64SnowboardGlow({
-  asset = null,
-  fallbackGeometry = null,
-  mobile = false,
-}) {
-  const width = asset?.size?.[0] || .255;
-  const innerMat = useOutlineMaterial(
-    asset ? width * 0.085 : 0.05,
-    mobile ? .28 : .36,
-    "SNOW360_V77_BoardMeshEdgeHighlight"
+  asset=null,
+  fallbackGeometry=null,
+  mobile=false,
+}){
+  const geometry=useMemo(
+    ()=>createBoardHaloGeometry(asset,fallbackGeometry),
+    [asset,fallbackGeometry]
   );
-  const outerMat = useOutlineMaterial(
-    asset ? width * 0.15 : .10,
-    mobile ? .11 : .15,
-    "SNOW360_V77_BoardMeshOuterHighlight"
-  );
-  const inner = useDeckClone(asset, innerMat);
-  const outer = useDeckClone(asset, outerMat);
+  const material=useMemo(()=>new THREE.ShaderMaterial({
+    name:"SNOW360_V78_ActualSnowboardSilhouetteHologlow",
+    uniforms:{
+      uTime:{value:0},
+      uOpacity:{value:mobile?.90:1.0},
+    },
+    vertexShader:HALO_VERTEX,
+    fragmentShader:HALO_FRAGMENT,
+    transparent:true,
+    blending:THREE.NormalBlending,
+    depthTest:true,
+    depthWrite:false,
+    side:THREE.DoubleSide,
+    toneMapped:false,
+  }),[mobile]);
 
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime;
-    innerMat.uniforms.uTime.value = t;
-    outerMat.uniforms.uTime.value = t;
-  });
+  useFrame(({clock})=>{material.uniforms.uTime.value=clock.elapsedTime});
+  useEffect(()=>()=>{geometry?.dispose();},[geometry]);
+  useEffect(()=>()=>material.dispose(),[material]);
 
-  useEffect(() => () => {
-    innerMat.dispose();
-    outerMat.dispose();
-  }, [innerMat, outerMat]);
-
-  if (asset && inner && outer) {
-    const fit = [0.74, 0.25, 2.43].map((v, i) =>
-      v * (SNOW64_MODEL_SCALE.snowboard?.[i] || 1) /
-      Math.max(.0001, asset.size[i])
-    );
-    return (
-      <group name="SNOW360_V77_GLBBoardGlow" position={SNOW64_SNOWBOARD_FOOT_TUNE}>
-        <GlowHalo mobile={mobile}/>
-        <group scale={fit}>
-          <group position={[-asset.centerX, -asset.bottom, -asset.centerZ]}>
-            <primitive object={inner} dispose={null}/>
-            <primitive object={outer} dispose={null}/>
-          </group>
-        </group>
-      </group>
-    );
-  }
-
-  if (fallbackGeometry) {
-    return (
-      <group>
-        <GlowHalo mobile={mobile}/>
-        <mesh geometry={fallbackGeometry} material={innerMat}
-          position={[0,.065,0]} castShadow={false} receiveShadow={false}
-          frustumCulled={false}/>
-        <mesh geometry={fallbackGeometry} material={outerMat}
-          position={[0,.065,0]} castShadow={false} receiveShadow={false}
-          frustumCulled={false}/>
-      </group>
-    );
-  }
-  return null;
+  if(!geometry)return null;
+  return <mesh
+    name="SNOW360 V78 - even feathered glow around the actual snowboard outline"
+    geometry={geometry}
+    material={material}
+    renderOrder={3}
+    frustumCulled={false}
+    castShadow={false}
+    receiveShadow={false}
+  />;
 }
