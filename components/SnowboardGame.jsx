@@ -16,7 +16,7 @@ import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider, rid
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
 import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
-import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture } from "./snow64VisualMaterials";
+import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
 import { snow360Drift } from "./snow64SnowDrifts";
 import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
@@ -103,6 +103,7 @@ function snowGroundAndSlope(x, z) {
 }
 
 function Terrain({index, mobile=false}) {
+  const corePlanetFilm=useSnow64CorePlanetFilmMaterial();
   // One shared snow shader and one continuous world-space UV field for the
   // entire center and both banks. No separate material boundary is visible.
   const material = useSnow64TerrainMaterials();
@@ -160,7 +161,12 @@ function Terrain({index, mobile=false}) {
     return g;
   }, [index, mobile]);
   useEffect(() => () => geometry.dispose(), [geometry]);
-  return <mesh geometry={geometry} material={material} receiveShadow={false}/>;
+  return <>
+    <mesh geometry={geometry} material={material} receiveShadow={false}/>
+    <mesh geometry={geometry} material={corePlanetFilm}
+      renderOrder={1} castShadow={false} receiveShadow={false}
+      frustumCulled={false}/>
+  </>;
 }
 
 function Forest({trees}) {

@@ -5,7 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useSnowModel, SnowGLBInstances } from "./snow64VisualModels";
-import { useSnow64TerrainMaterials } from "./snow64VisualMaterials";
+import { useSnow64TerrainMaterials, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { getSnowChunk, SNOW_CHUNK_LENGTH } from "./snow64Endless";
 import { snow360Drift } from "./snow64SnowDrifts";
@@ -31,6 +31,7 @@ function terrainNormal(x,z){
 }
 function PreviewTerrain({index,mobile}) {
   const material=useSnow64TerrainMaterials();
+  const corePlanetFilm=useSnow64CorePlanetFilmMaterial();
   const geometry=useMemo(()=>{
     const halfWidth=34, stepsX=mobile?50:68,stepsZ=mobile?88:120;
     const positions=[],normals=[],uvs=[],colors=[],indices=[];
@@ -64,7 +65,12 @@ function PreviewTerrain({index,mobile}) {
     return g;
   },[index,mobile]);
   useEffect(()=>()=>geometry.dispose(),[geometry]);
-  return <mesh geometry={geometry} material={material} receiveShadow={false}/>;
+  return <>
+    <mesh geometry={geometry} material={material} receiveShadow={false}/>
+    <mesh geometry={geometry} material={corePlanetFilm}
+      renderOrder={1} castShadow={false} receiveShadow={false}
+      frustumCulled={false}/>
+  </>;
 }
 function PreviewTrees({trees}){
   const model=useSnowModel("tree");

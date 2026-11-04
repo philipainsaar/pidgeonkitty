@@ -1,120 +1,237 @@
 "use client";
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { SNOW64_TEXTURE_PATHS } from "./snow64Appearance";
 
-const TextureContext = createContext({textures:{},material:null});
+const TextureContext = createContext({
+  textures: {},
+  material: null,
+  holoMaterial: null,
+});
 
-/**
- * SNOW360 V73: 2-3x stronger center-lane pastel thin-film shader.
- * The existing texture is untouched and the extra effect is masked by
- * WORLD-space X, so it never breaks the course or sidebank seams.
- */
-const SNOW_HOLOGRAPHIC_FILM = [
-  "vec3 p = vSnowWorldPosition;",
-  "float t = uSnowFilmTime;",
-  "float lane = 1.0 - smoothstep(8.7,17.3,abs(p.x));",
-  "vec3 n = normalize(vSnowNormalWorld);",
-  "vec3 viewDir = normalize(cameraPosition-p);",
-  "float fresnel = pow(1.0-clamp(abs(dot(n,viewDir)),0.0,1.0),2.15);",
-  "float phaseA = sin(1.55*(p.x*0.46+p.z*0.34)+t*0.72);",
-  "float phaseB = sin(1.55*(p.z*0.72-p.x*0.37)-t*0.52);",
-  "float interference = clamp(0.52+0.34*phaseA+0.18*phaseB,0.0,1.0);",
-  "float cycle = 0.5+0.5*sin(t*0.45+p.z*0.055);",
-  "float hue = 0.5+0.5*sin(t*0.33-p.x*0.21+p.z*0.10);",
-  "vec3 cyan = vec3(0.60,0.90,1.00);",
-  "vec3 lavender = vec3(0.84,0.70,1.00);",
-  "vec3 pink = vec3(1.00,0.72,0.88);",
-  "vec3 yellow = vec3(1.00,0.94,0.68);",
-  "vec3 mint = vec3(0.70,1.00,0.90);",
-  "vec3 film = mix(cyan,lavender,interference);",
-  "film = mix(film,pink,cycle*0.62);",
-  "film = mix(film,mix(yellow,mint,hue),0.20);",
-  "float sweep = exp(-pow(sin(p.x*0.39+p.z*0.055-t*0.55)/0.16,2.0));",
-  "float filmWeight = lane*(0.55+0.30*fresnel+0.15*sweep);",
-  "filmWeight=clamp(filmWeight,0.0,0.86);",
-  "diffuseColor.rgb=mix(diffuseColor.rgb,film,filmWeight);",
-  "diffuseColor.rgb+=vec3(0.032,0.030,0.045)*lane*sweep;"
+// Adapted from winter-catlien/components/CorePlanet.jsx,
+// createShellHologram: original colors, reflection/rim equation, looped
+// studio sweep, NormalBlending transparency, surface-normal offset.
+// Terrain changes: projection into world-space, gentle center-lane mask.
+const CORE_PLANET_HOLO = Object.freeze({
+  pink: "#ff54d4",
+  blue: "#49c9ff",
+  intensity: 1.7,
+  rimGlow: 1.75,
+  reflections: 2.65,
+  flowSpeed: 0.7,
+  bandScale: 1.15,
+  gapMeters: 0.018,
+});
+
+const KEY_LIGHT = new THREE.Vector3(-8, 20, -30);
+const FILL_LIGHT = new THREE.Vector3(13, 14, 8);
+
+const CORE_VERTEX = [
+  "uniform float uGap;",
+  "varying vec3 vPosition;",
+  "varying vec3 vNormalView;",
+  "varying vec3 vPositionView;",
+  "varying vec3 vWorldPosition;",
+  "#include <fog_pars_vertex>",
+  "void main() {",
+  "  vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;",
+  // CorePlanet uses position / globe radius. Map terrain WORLD coords
+  // onto the same phase domain, so its hologram never seams.
+  "  vPosition = vec3(vWorldPosition.x * 0.115,",
+  "                   vWorldPosition.y * 0.082,",
+  "                   vWorldPosition.z * 0.088);",
+  "  vec3 outer = position + normalize(normal) * uGap;",
+  "  vec4 mvPosition = modelViewMatrix * vec4(outer, 1.0);",
+  "  vPositionView = mvPosition.xyz;",
+  "  vNormalView = normalize(normalMatrix * normal);",
+  "  gl_Position = projectionMatrix * mvPosition;",
+  "  #include <fog_vertex>",
+  "}",
 ].join("\n");
 
-/**
- * The V63 world-space snow material layout with a bright white fleece finish.
- * Snow is deliberately unlit so the game's high-key arcade lighting cannot
- * turn pearl-white fabric gray or wash out its subtle soft fibers.
- * Puffs have soft geometry-derived color shading in Snow64CloudLayer.jsx.
- */
-export function Snow64TextureProvider({children,mobile=false}) {
-  const [textures,setTextures]=useState({});
-  const filmShader=useRef(null);
-  useEffect(()=>{
-    let alive=true;
-    const loaded=[];
-    const loader=new THREE.TextureLoader();
-    for(const [kind,path] of Object.entries(SNOW64_TEXTURE_PATHS)){
-      if(!path)continue;
-      loader.load(path,texture=>{
-        if(!alive){texture.dispose();return;}
-        const isNormal=kind==="snowNormal"||kind==="bankNormal";
-        texture.colorSpace=isNormal?THREE.NoColorSpace:THREE.SRGBColorSpace;
-        if(["snowGround","snowBanks","snowNormal","bankNormal","snowPile"].includes(kind)){
-          texture.wrapS=THREE.RepeatWrapping;
-          texture.wrapT=THREE.RepeatWrapping;
-          texture.anisotropy=mobile?2:4;
-        }
-        texture.needsUpdate=true;
-        loaded.push(texture);
-        setTextures(old=>({...old,[kind]:texture}));
-      },undefined,()=>{});
-    }
-    return()=>{alive=false;loaded.forEach(t=>t.dispose());};
-  },[mobile]);
+const CORE_FRAGMENT = [
+  "uniform float uTime;",
+  "uniform float uIntensity;",
+  "uniform float uRimGlow;",
+  "uniform float uReflections;",
+  "uniform float uFlowSpeed;",
+  "uniform float uBandScale;",
+  "uniform vec3 uPink;",
+  "uniform vec3 uBlue;",
+  "uniform vec3 uKeyViewPosition;",
+  "uniform vec3 uFillViewPosition;",
+  "varying vec3 vPosition;",
+  "varying vec3 vNormalView;",
+  "varying vec3 vPositionView;",
+  "varying vec3 vWorldPosition;",
+  "#include <fog_pars_fragment>",
+  "void main() {",
+  "  float lane = 1.0 - smoothstep(8.5, 18.0, abs(vWorldPosition.x));",
+  "  if (lane < 0.001) discard;",
+  "  vec3 n = normalize(vNormalView);",
+  "  vec3 v = normalize(-vPositionView);",
+  "  float facing = clamp(dot(n, v), 0.0, 1.0);",
+  "  float fresnel = pow(1.0 - facing, 2.15);",
+  "  vec3 p = vPosition;",
+  "  float scale = max(0.05, uBandScale);",
+  "  float t = uTime * uFlowSpeed;",
+  // The CorePlanet sphere curves the two linear waves into organic bands.",
+  // Snow is nearly flat: re-map those phases through two moving curl fields.",
+  // This keeps the CorePlanet film and colors, without repetitive diagonal lines.",
+  "  vec2 uv = p.xz;",
+  "  float slow = t * 0.38;",
+  "  float curlA = sin(uv.y * 1.13 + 1.33 * sin(uv.x * 1.52 + slow * 0.72) + slow * 0.45);",
+  "  float curlB = cos(uv.x * 1.24 + 1.24 * cos(uv.y * 0.91 - slow * 0.57) - slow * 0.34);",
+  "  vec2 bent = uv + vec2(0.83 * curlA + 0.37 * curlB, 0.78 * curlB - 0.39 * curlA);",
+  "  vec2 center = vec2(0.91 * sin(slow * 0.31), 0.76 * cos(slow * 0.27));",
+  "  float eddy = sin(length(bent - center) * 3.25 + 0.9 * curlA - 0.45 * curlB);",
+  "  float phaseA = sin(scale * (2.3 * curlA + 1.5 * curlB + 1.15 * eddy) + slow * 0.31);",
+  "  float phaseB = sin(scale * (1.60 * cos(bent.x * 0.78 + 0.81 * curlB)",
+  "                 + 1.50 * sin(bent.y * 0.71 + 0.76 * curlA) + 0.95 * eddy) - slow * 0.25);",
+  "  float mixFactor = clamp(0.52 + 0.34 * phaseA + 0.18 * phaseB, 0.0, 1.0);",
+  "  vec3 film = mix(uBlue, uPink, mixFactor);",
+  "  film = mix(film, vec3(0.95, 0.95, 1.0), 0.11);",
+  "  vec3 lightKey = normalize(uKeyViewPosition - vPositionView);",
+  "  vec3 lightFill = normalize(uFillViewPosition - vPositionView);",
+  "  float keyGlint = pow(max(dot(n, normalize(v + lightKey)), 0.0), 112.0);",
+  "  float fillGlint = pow(max(dot(n, normalize(v + lightFill)), 0.0), 76.0);",
+  "  float sweepPeriod = 2.4;",
+  "  float sweepCenter = mod(t * 0.75, sweepPeriod) - 0.5 * sweepPeriod;",
+  "  float stripPosition = 0.54 * curlA + 0.43 * curlB + 0.26 * eddy + 0.08 * phaseB;",
+  "  float stripDistance = abs(stripPosition - sweepCenter);",
+  "  stripDistance = min(stripDistance, abs(stripPosition - sweepCenter + sweepPeriod));",
+  "  stripDistance = min(stripDistance, abs(stripPosition - sweepCenter - sweepPeriod));",
+  "  float strip = exp(-pow(stripDistance / 0.145, 2.0));",
+  "  strip *= 0.35 + 0.65 * fresnel;",
+  "  float shine = max(0.0, uReflections) *",
+  "    (0.80 * keyGlint + 0.48 * fillGlint + 0.20 * strip);",
+  "  float flowing = 0.5 + 0.5 * sin(scale * (1.95 * curlA + 1.55 * curlB + 0.88 * eddy) - slow * 0.60);",
+  "  float rim = fresnel * max(0.0, uRimGlow);",
+  "  float alpha = max(0.0, uIntensity) *",
+  "    (0.038 + 0.075 * flowing + 0.29 * rim + 0.22 * shine);",
+  "  alpha = clamp(alpha, 0.0, 0.75);",
+  // The only terrain-specific change: center-only, white snowbanks.
+  "  alpha *= lane;",
+  "  vec3 color = film * (0.88 + 0.45 * rim) + vec3(1.0) * (1.40 * shine);",
+  "  gl_FragColor = vec4(color, alpha);",
+  "  #include <fog_fragment>",
+  "  #include <colorspace_fragment>",
+  "}",
+].join("\n");
 
-  const snow=textures.snowGround || null;
-  const pile=textures.snowPile || null;
-  const material=useMemo(()=>{
-    const m=new THREE.MeshBasicMaterial({
-      map:snow, color:"#fffefd", vertexColors:true,
-      side:THREE.DoubleSide, toneMapped:false, fog:true
+export function Snow64TextureProvider({ children, mobile = false }) {
+  const [textures, setTextures] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const loaded = [];
+    const loader = new THREE.TextureLoader();
+    for (const [kind, path] of Object.entries(SNOW64_TEXTURE_PATHS)) {
+      if (!path) continue;
+      loader.load(path, texture => {
+        if (!alive) { texture.dispose(); return; }
+        const isNormal = kind === "snowNormal" || kind === "bankNormal";
+        texture.colorSpace = isNormal ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+        if (["snowGround", "snowBanks", "snowNormal", "bankNormal", "snowPile"].includes(kind)) {
+          texture.wrapS = THREE.RepeatWrapping;
+          texture.wrapT = THREE.RepeatWrapping;
+          texture.anisotropy = mobile ? 2 : 4;
+        }
+        texture.needsUpdate = true;
+        loaded.push(texture);
+        setTextures(old => ({ ...old, [kind]: texture }));
+      }, undefined, () => {});
+    }
+    return () => { alive = false; loaded.forEach(t => t.dispose()); };
+  }, [mobile]);
+  const snow = textures.snowGround || null;
+  const pile = textures.snowPile || null;
+
+  // Original pearl-white fleece base. No color-tint hologram: the
+  // CorePlanet shell is its own transparent overlay mesh above it.
+  const material = useMemo(() => {
+    const m = new THREE.MeshBasicMaterial({
+      map: snow, color: "#fffefd", vertexColors: true,
+      side: THREE.DoubleSide, toneMapped: false, fog: true,
     });
-    if(snow&&pile){
-      m.onBeforeCompile=shader=>{
-        shader.uniforms.uSnowPile={value:pile};
-        shader.uniforms.uSnowFilmTime={value:0};
-        filmShader.current=shader;
-        shader.vertexShader="varying vec2 vSnowWorldXZ;\nvarying vec3 vSnowWorldPosition;\nvarying vec3 vSnowNormalWorld;\n"+shader.vertexShader;
-        shader.vertexShader=shader.vertexShader.replace(
+    if (snow && pile) {
+      m.onBeforeCompile = shader => {
+        shader.uniforms.uSnowPile = { value: pile };
+        shader.vertexShader = "varying vec2 vSnowWorldXZ;\n" + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace(
           "#include <begin_vertex>",
-          "#include <begin_vertex>\n vSnowWorldXZ = position.xz;\n vSnowWorldPosition=(modelMatrix*vec4(position,1.0)).xyz;\n vSnowNormalWorld=normalize(mat3(modelMatrix)*normal);"
+          "#include <begin_vertex>\n vSnowWorldXZ=position.xz;"
         );
-        shader.fragmentShader=
-          "uniform sampler2D uSnowPile;\nuniform float uSnowFilmTime;\nvarying vec2 vSnowWorldXZ;\nvarying vec3 vSnowWorldPosition;\nvarying vec3 vSnowNormalWorld;\n"+
+        shader.fragmentShader =
+          "uniform sampler2D uSnowPile;\nvarying vec2 vSnowWorldXZ;\n" +
           shader.fragmentShader;
-        shader.fragmentShader=shader.fragmentShader.replace(
+        shader.fragmentShader = shader.fragmentShader.replace(
           "#include <map_fragment>",
-          "#include <map_fragment>\n"+
-          "float plushBank = smoothstep(10.2, 19.0, abs(vSnowWorldXZ.x));\n"+
-          "float finePile = texture2D(uSnowPile, vec2(vSnowWorldXZ.x,-vSnowWorldXZ.y)/0.90).r;\n"+
-          "diffuseColor.rgb *= mix(0.992,0.972+0.053*finePile,plushBank);\n" + SNOW_HOLOGRAPHIC_FILM
+          "#include <map_fragment>\n" +
+          "float plushBank=smoothstep(10.2,19.0,abs(vSnowWorldXZ.x));\n" +
+          "float finePile=texture2D(uSnowPile,vec2(vSnowWorldXZ.x,-vSnowWorldXZ.y)/0.90).r;\n" +
+          "diffuseColor.rgb *= mix(0.992,0.972+0.053*finePile,plushBank);\n"
         );
       };
-      m.customProgramCacheKey=()=>"snow360-v73-strong-holographic-film";
+      m.customProgramCacheKey = () => "snow360-v74-white-plush-base";
     }
     return m;
-  },[snow,pile]);
-  useFrame(({clock})=>{
-    if(filmShader.current?.uniforms?.uSnowFilmTime){
-      filmShader.current.uniforms.uSnowFilmTime.value=clock.elapsedTime;
-    }
+  }, [snow, pile]);
+
+  const holoMaterial = useMemo(() => new THREE.ShaderMaterial({
+    name: "SNOW360 / CorePlanet transparent outer hologram on snow",
+    transparent: true,
+    blending: THREE.NormalBlending,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+    toneMapped: false,
+    fog: true,
+    uniforms: {
+      ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+      uTime: { value: 0 },
+      uKeyViewPosition: { value: new THREE.Vector3() },
+      uFillViewPosition: { value: new THREE.Vector3() },
+      uGap: { value: CORE_PLANET_HOLO.gapMeters },
+      uIntensity: { value: CORE_PLANET_HOLO.intensity },
+      uRimGlow: { value: CORE_PLANET_HOLO.rimGlow },
+      uReflections: { value: CORE_PLANET_HOLO.reflections },
+      uFlowSpeed: { value: CORE_PLANET_HOLO.flowSpeed },
+      uBandScale: { value: CORE_PLANET_HOLO.bandScale },
+      uPink: { value: new THREE.Color(CORE_PLANET_HOLO.pink) },
+      uBlue: { value: new THREE.Color(CORE_PLANET_HOLO.blue) },
+    },
+    vertexShader: CORE_VERTEX,
+    fragmentShader: CORE_FRAGMENT,
+  }), []);
+
+  const keyView = useMemo(() => new THREE.Vector3(), []);
+  const fillView = useMemo(() => new THREE.Vector3(), []);
+  useFrame(({clock,camera}) => {
+    const uniforms = holoMaterial.uniforms;
+    uniforms.uTime.value = clock.elapsedTime;
+    keyView.copy(KEY_LIGHT).applyMatrix4(camera.matrixWorldInverse);
+    fillView.copy(FILL_LIGHT).applyMatrix4(camera.matrixWorldInverse);
+    uniforms.uKeyViewPosition.value.copy(keyView);
+    uniforms.uFillViewPosition.value.copy(fillView);
   });
-  useEffect(()=>()=>material.dispose(),[material]);
-  const shared=useMemo(()=>({textures,material}),[textures,material]);
+  useEffect(() => () => material.dispose(), [material]);
+  useEffect(() => () => holoMaterial.dispose(), [holoMaterial]);
+  const shared = useMemo(
+    () => ({ textures, material, holoMaterial }),
+    [textures, material, holoMaterial]
+  );
   return <TextureContext.Provider value={shared}>{children}</TextureContext.Provider>;
 }
 
-export function useSnow64Texture(kind){
-  return useContext(TextureContext).textures[kind]??null;
+export function useSnow64Texture(kind) {
+  return useContext(TextureContext).textures[kind] ?? null;
 }
-export function useSnow64TerrainMaterials(){
+export function useSnow64TerrainMaterials() {
   return useContext(TextureContext).material;
+}
+export function useSnow64CorePlanetFilmMaterial() {
+  return useContext(TextureContext).holoMaterial;
 }
