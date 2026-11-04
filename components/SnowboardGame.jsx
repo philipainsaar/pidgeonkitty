@@ -22,6 +22,7 @@ import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
 import Snow360CloudRamp from "./Snow360CloudRamps";
 import Snow64CloudLayer from "./Snow64CloudLayer";
+import Snow64StarTokens from "./Snow64StarTokens";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -280,20 +281,6 @@ function FrostMushroom({stateRef}) {
   </group>;
 }
 
-function Coin({ x, z, id, collectedRef }) {
-  const custom=useSnowModel("token");
-  const ref = useRef();
-  useFrame(({ clock }) => {
-    if (!ref.current) return;
-    ref.current.visible = !collectedRef.current.has(id);
-    ref.current.rotation.y = clock.elapsedTime * 2.3;
-    ref.current.position.y = groundY(x, z) + 1.3 + Math.sin(clock.elapsedTime * 4 + z) * .14;
-  });
-  if (custom) return <group ref={ref} position={[x,groundY(x,z)+1.3,z]}>
-    <group position={[0,-.47,0]}><SnowGLBVisual asset={custom} type="token" dimensions={[.95,.94,.22]}/></group>
-  </group>;
-  return <group ref={ref} position={[x, groundY(x, z) + 1.3, z]}><mesh><torusGeometry args={[.38,.095,5,9]} /><meshBasicMaterial color="#ffdd67" /></mesh><mesh><octahedronGeometry args={[.13,0]} /><meshBasicMaterial color="#fff5bd" /></mesh></group>;
-}
 function CourseMarker({ z, side }) {
   const custom=useSnowModel("courseMarker");
   const x = side * 12.25;
@@ -311,7 +298,6 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
   const data = useMemo(() => getSnowChunk(index), [index]);
   const rockModel=useSnowModel("rock");
   const obstacleLibrary=useSnow64Obstacles();
-  const tokenModel=useSnowModel("token");
   return <>
     <Terrain index={index} mobile={mobile} />
     <Snow64CloudLayer index={index} mobile={mobile} groundY={groundY} ramps={data.ramps} />
@@ -323,11 +309,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
         dimensions:[r.size*2,r.size*1.6,r.size*2.2]})}/>
       : data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
     {data.ramps.map(r=><Snow360CloudRamp key={r.id} {...r} groundHeight={groundY(r.x,r.z)} />)}
-    {tokenModel ? <SnowGLBInstances asset={tokenModel} type="token" items={data.coins}
-      hidden={c=>collectedRef.current.has(c.id)} animated
-      pose={(c,i,t)=>({position:[c.x,groundY(c.x,c.z)+.83+Math.sin(t*4+c.z)*.14,c.z],
-        rotation:[0,t*2.3,0], dimensions:[.95,.94,.22]})}/>
-      : data.coins.map(c=><Coin key={c.id} {...c} collectedRef={collectedRef} />)}
+    <Snow64StarTokens items={data.coins} groundY={groundY} collectedRef={collectedRef} />
     {data.banners.map(c=><CourseMarker key={c.id} {...c} />)}
   </>;
 });

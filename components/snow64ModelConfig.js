@@ -19,7 +19,7 @@ export const SNOW64_MODEL_PATHS = Object.freeze({
   ramp: null,
   ramp2: null,
   superRamp: null,
-  token: "/models/snow64-token.glb",
+  token: null, // V72 stars are GPU-instanced geometry, not an optional GLB.
   frostShroom: "/models/snow64-frost-shroom.glb",
   snowboard: "/models/snow64-snowboard.glb",
   courseMarker: "/models/snow64-course-marker.glb",

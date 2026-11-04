@@ -1,0 +1,26 @@
+/* SNOW360 font update
+   All HTML UI text: Fredoka Bold
+   Live trick / air-combo line: Lilita One
+   This overrides inline font shorthands used by the current game,
+   while leaving sizing, positioning, colors, and animation unchanged.
+*/
+
+html,
+body,
+body * {
+  font-family: var(--snow360-fredoka), "Arial Rounded MT Bold", sans-serif !important;
+  font-weight: 700 !important;
+}
+
+/* Existing SnowboardGame.jsx renders the active trick notice here. */
+body .snow64-trick,
+body .snow64-trick * {
+  font-family: var(--snow360-lilita), Impact, sans-serif !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  -webkit-text-stroke: clamp(1.25px, 0.18vw, 2.3px) #16283a;
+  paint-order: stroke fill;
+  text-shadow: 2px 3px 0 #122a3b, 0 4px 9px #17374e88 !important;
+}
+
+/* Avoid altering custom icon glyphs / SVG content: fonts apply only to text nodes. */

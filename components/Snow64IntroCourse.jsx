@@ -10,6 +10,7 @@ import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { getSnowChunk, SNOW_CHUNK_LENGTH } from "./snow64Endless";
 import { snow360Drift } from "./snow64SnowDrifts";
 import Snow360CloudRamp from "./Snow360CloudRamps";
+import Snow64StarTokens from "./Snow64StarTokens";
 
 // Same world coordinates, snowdrift function, UVs and lights as SnowboardGame.
 // This is only a preview of the first course chunks; the full game is already
@@ -83,14 +84,8 @@ function PreviewTrees({trees}){
   </group>)}</group>;
 }
 function PreviewTokens({coins}){
-  const model=useSnowModel("token");
   const visible=useMemo(()=>coins.filter(c=>c.z>-175),[coins]);
-  if(model)return <SnowGLBInstances asset={model} type="token" items={visible}
-    pose={c=>({position:[c.x,introGroundY(c.x,c.z)+.83,c.z],
-      rotation:[0,0,0],dimensions:[.95,.94,.22]})}/>;
-  return <group>{visible.map(c=><mesh key={c.id} position={[c.x,introGroundY(c.x,c.z)+1.3,c.z]}>
-    <torusGeometry args={[.43,.10,7,14]}/><meshBasicMaterial color="#fff2a9"/>
-  </mesh>)}</group>;
+  return <Snow64StarTokens items={visible} groundY={introGroundY} preview />;
 }
 function PreviewRocks({rocks}){
   const model=useSnowModel("rock");
