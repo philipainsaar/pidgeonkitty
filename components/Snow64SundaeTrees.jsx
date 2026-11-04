@@ -1,62 +1,73 @@
 "use client";
 
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
+import * as THREE from "three";
 import { useSnowModel, SnowGLBInstances } from "./snow64VisualModels";
+import { useSnow64Texture } from "./snow64VisualMaterials";
 
 /**
- * SNOW360 V81 | Dense front-facing Sundae Dream forest.
+ * SNOW360 V83 | Lower, layered forest with a soft near-to-far transition.
  *
- * Goals from latest feedback:
- * - keep the same downhill bowl / corridor shape
- * - make the forest feel fuller like a real downhill lined with trees
- * - keep the decorated front of the GLB trees facing the rider corridor
- * - fix the Pink tree orientation only
- * - reduce top-part collisions between neighboring trees
- * - add more trees, but keep the center ride line open
+ * Full replacement for components/Snow64SundaeTrees.jsx.
  *
- * This file only changes visual tree placement. It does not change physics,
- * collisions, ramps, terrain generation, score, mobile controls, or effects.
+ * Same four textured GLBs, same downhill shape, existing terrain groundY,
+ * original gameplay and physics. No model, UV or PBR material changes.
+ *
+ * The nearest row sits on the lower snowbanks, while middle and upper rows
+ * become progressively less populated. The game's existing atmospheric fog
+ * then softens trees toward the distant horizon.
  */
 
-const VARIANTS = Object.freeze([
+const TREE_KEYS = Object.freeze([
   "treeLavender",
   "treeMint",
   "treePeach",
   "treePink",
 ]);
 
-// Pink tree's modeled "front" faces the opposite way from the others.
-const VARIANT_YAW_OFFSET = [0, 0, 0, Math.PI];
+// Pink's authored front faces the opposite direction to the other GLBs.
+const FRONT_CORRECTION = [0, 0, 0, Math.PI];
 
-const MIN_BANK_X = 15.8;
-const PRIMARY_HEIGHT_BASE = 8.8;
-const PRIMARY_HEIGHT_PER_SIZE = 1.95;
-const MOBILE_HEIGHT_SCALE = 0.98;
+const RIDE_LANE_EDGE = 12.0;
+const NEAR_BANK_MIN_X = 14.6;
+const SNOWBANK_OUTER_X = 33.1;
+const TREE_HEIGHT_BASE = 9.4;
+const TREE_HEIGHT_PER_SIZE = 1.85;
 
-// Extra forest rows. These create the packed real-forest feeling while staying
-// on the sidewalls, not in the playable center corridor.
-const EXTRA_ROWS = [
+// Full near-bank tree coverage. Each deeper row becomes less dense and a bit
+// smaller, giving a layered forest rather than overlapping tree-top clusters.
+const ROWS = Object.freeze([
   {
-    probabilityDesktop: 0.97,
-    probabilityMobile: 0.58,
-    outwardMin: 3.8,
-    outwardMax: 7.0,
-    zOffsetBase: -6.6,
-    zOffsetJitter: 2.2,
-    heightMin: 0.82,
-    heightMax: 0.96,
+    name: "lower-bank",
+    xMin: 14.6, xMax: 18.8,
+    zShift: 0.0, zJitter: 3.6,
+    desktopChance: 1.00, mobileChance: 0.86,
+    minHeightFactor: 0.96, maxHeightFactor: 1.06,
   },
   {
-    probabilityDesktop: 0.82,
-    probabilityMobile: 0.34,
-    outwardMin: 7.6,
-    outwardMax: 12.4,
-    zOffsetBase: 1.8,
-    zOffsetJitter: 3.2,
-    heightMin: 0.92,
-    heightMax: 1.08,
+    name: "middle-bank",
+    xMin: 19.1, xMax: 25.6,
+    zShift: -4.7, zJitter: 5.2,
+    desktopChance: 0.90, mobileChance: 0.55,
+    minHeightFactor: 0.83, maxHeightFactor: 0.98,
   },
-];
+  {
+    name: "upper-bank",
+    xMin: 25.0, xMax: 30.6,
+    zShift: 3.9, zJitter: 6.5,
+    desktopChance: 0.34, mobileChance: 0.17,
+    minHeightFactor: 0.73, maxHeightFactor: 0.90,
+  },
+  {
+    name: "back-bank",
+    xMin: 29.0, xMax: 32.5,
+    zShift: -6.5, zJitter: 7.3,
+    desktopChance: 0.16, mobileChance: 0.065,
+    minHeightFactor: 0.66, maxHeightFactor: 0.82,
+  },
+]);
+
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 function hashTree(tree, salt = 0) {
   let h = Math.imul(Math.round(tree.x * 113) | 0, 374761393);
@@ -66,99 +77,165 @@ function hashTree(tree, salt = 0) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
+function between(a, b, t) {
+  return a + (b - a) * t;
 }
 
-function faceTheCorridor(x, variation = 0) {
-  const bankSide = Math.sign(x) || 1;
-  // Trees should present their decorated front to the rider corridor.
-  // Keep the turn subtle so they still look naturally planted.
-  return -bankSide * 0.15 + (variation - 0.5) * 0.12;
+function faceCorridor(x, variation) {
+  // The four models are generally aimed toward the rider rather than spun
+  // randomly. The pink tree's separate 180° correction is kept below.
+  const side = Math.sign(x) || 1;
+  return -side * 0.16 + (variation - 0.5) * 0.11;
 }
 
-function treeHeight(tree, mobile) {
-  return (PRIMARY_HEIGHT_BASE + tree.size * PRIMARY_HEIGHT_PER_SIZE)
-    * (0.95 + hashTree(tree, 31) * 0.14)
-    * (mobile ? MOBILE_HEIGHT_SCALE : 1);
+function separationDistance(a, b) {
+  // Leave a little natural canopy overlap, but not huge merged tops.
+  // Nearest row receives slightly more breathing room.
+  return (a.height + b.height) * 0.23 +
+    (a.rowIndex === 0 && b.rowIndex === 0 ? 1.0 : 0.25);
 }
 
-function minSpacingFor(heightA, heightB, rowIndexA, rowIndexB) {
-  const base = (heightA + heightB) * 0.18;
-  const extra = rowIndexA === rowIndexB ? 0.75 : 0.2;
-  return base + extra;
-}
-
-function overlapsCandidate(candidate, placedForSide) {
-  for (const placed of placedForSide) {
-    const dx = candidate.x - placed.x;
-    const dz = candidate.z - placed.z;
-    const dist = Math.hypot(dx, dz);
-    const minDist = minSpacingFor(candidate.height, placed.height, candidate.rowIndex, placed.rowIndex);
-    if (dist < minDist) return true;
+function clearOfOtherTrees(tree, existing) {
+  for (const t of existing) {
+    const dx = tree.x - t.x;
+    const dz = tree.z - t.z;
+    if (dx * dx + dz * dz < separationDistance(tree, t) ** 2) {
+      return false;
+    }
   }
-  return false;
+  return true;
 }
 
-function pushTree(forest, sidePlaced, tree, variantSalt) {
-  const variantIndex = Math.min(3, Math.floor(hashTree(tree, variantSalt) * 4));
-  forest[variantIndex].push(tree);
-  sidePlaced.push(tree);
-}
+function createForest(anchors, mobile) {
+  const variants = [[], [], [], []];
+  const snowPiles = [];
+  const seen = [-1, 1].map(() => []);
+  const sorted = [...anchors]
+    .filter((t) => t && Number.isFinite(t.x) && Number.isFinite(t.z))
+    .sort((a, b) => a.z - b.z || a.x - b.x);
 
-function createForest(trees, mobile) {
-  const forest = [[], [], [], []];
-  const placedLeft = [];
-  const placedRight = [];
-
-  for (const anchor of trees) {
-    if (Math.abs(anchor.x) < MIN_BANK_X) continue;
-    if (mobile && hashTree(anchor, 17) < 0.12) continue;
-
+  for (const anchor of sorted) {
     const side = Math.sign(anchor.x) || 1;
-    const sidePlaced = side < 0 ? placedLeft : placedRight;
-    const anchorHeight = treeHeight(anchor, mobile);
+    const sideTrees = seen[side === -1 ? 0 : 1];
+    const baseHeight = TREE_HEIGHT_BASE + anchor.size * TREE_HEIGHT_PER_SIZE;
 
-    const primary = {
-      ...anchor,
-      rowIndex: 0,
-      height: anchorHeight,
-      yaw: faceTheCorridor(anchor.x, hashTree(anchor, 11)),
-    };
-    pushTree(forest, sidePlaced, primary, 0);
+    ROWS.forEach((row, rowIndex) => {
+      const chance = mobile ? row.mobileChance : row.desktopChance;
+      if (hashTree(anchor, 70 + rowIndex) >= chance) return;
 
-    EXTRA_ROWS.forEach((row, rowIndex) => {
-      const chance = mobile ? row.probabilityMobile : row.probabilityDesktop;
-      if (hashTree(anchor, 100 + rowIndex) >= chance) return;
+      // Try a few different deterministic positions to fit each additional
+      // tree between its neighbors without excessive overlapping tops.
+      const attempts = rowIndex === 0 ? 6 : 4;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        const salt = rowIndex * 67 + attempt * 9;
+        const x = side * between(
+          row.xMin, row.xMax, hashTree(anchor, 101 + salt)
+        );
+        const z = anchor.z + row.zShift +
+          (hashTree(anchor, 102 + salt) - 0.5) * row.zJitter;
+        const height = baseHeight *
+          between(row.minHeightFactor, row.maxHeightFactor,
+            hashTree(anchor, 103 + salt)) *
+          (mobile ? 0.97 : 1);
 
-      let accepted = null;
-      for (let attempt = 0; attempt < 4 && !accepted; attempt++) {
-        const outward = row.outwardMin + hashTree(anchor, 110 + rowIndex * 10 + attempt) * (row.outwardMax - row.outwardMin);
-        const x = side * clamp(Math.abs(anchor.x) + outward, MIN_BANK_X + 1.2, 34.5);
-        const z = anchor.z + row.zOffsetBase + (hashTree(anchor, 120 + rowIndex * 10 + attempt) - 0.5) * row.zOffsetJitter;
-        const scaleFactor = row.heightMin + hashTree(anchor, 130 + rowIndex * 10 + attempt) * (row.heightMax - row.heightMin);
         const candidate = {
-          id: `${anchor.id}-forest-${rowIndex}-${attempt}`,
+          id: `${anchor.id || `${anchor.x}/${anchor.z}`}-r${rowIndex}-a${attempt}`,
           x,
           z,
-          size: anchor.size,
-          rowIndex: rowIndex + 1,
-          height: anchorHeight * scaleFactor,
-          yaw: faceTheCorridor(x, hashTree(anchor, 140 + rowIndex * 10 + attempt)),
+          height,
+          rowIndex,
+          yaw: faceCorridor(x, hashTree(anchor, 104 + salt)),
         };
 
-        if (!overlapsCandidate(candidate, sidePlaced)) {
-          accepted = candidate;
+        if (Math.abs(candidate.x) <= RIDE_LANE_EDGE + 2.3 ||
+            Math.abs(candidate.x) > SNOWBANK_OUTER_X) {
+          continue;
         }
-      }
+        if (!clearOfOtherTrees(candidate, sideTrees)) continue;
 
-      if (accepted) {
-        pushTree(forest, sidePlaced, accepted, 200 + rowIndex);
+        sideTrees.push(candidate);
+        const variant = Math.min(
+          3, Math.floor(hashTree(anchor, 105 + salt) * 4)
+        );
+        variants[variant].push(candidate);
+
+        // Blend the trunk into the very same snow texture as the ground.
+        // A low dome is mostly buried instead of sitting on top like a ball.
+        snowPiles.push({
+          id: `${candidate.id}-snow`,
+          x, z,
+          height,
+          rx: height * between(0.135, 0.178, hashTree(anchor, 106 + salt)),
+          ry: height * between(0.042, 0.059, hashTree(anchor, 107 + salt)),
+          rz: height * between(0.120, 0.155, hashTree(anchor, 108 + salt)),
+          yaw: hashTree(anchor, 109 + salt) * Math.PI * 2,
+        });
+        break;
       }
     });
   }
 
-  return forest;
+  return { variants, snowPiles };
+}
+
+function SnowAtTreeRoots({ items, groundY }) {
+  const meshRef = useRef(null);
+  const map = useSnow64Texture("snowGround");
+  const scratch = useMemo(() => new THREE.Object3D(), []);
+
+  useLayoutEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || !map) return;
+
+    const normal = new THREE.Vector3();
+    const orientation = new THREE.Quaternion();
+    const twist = new THREE.Quaternion();
+    const step = 0.45;
+
+    items.forEach((p, i) => {
+      const slopeX = (groundY(p.x + step, p.z) -
+        groundY(p.x - step, p.z)) / (2 * step);
+      const slopeZ = (groundY(p.x, p.z + step) -
+        groundY(p.x, p.z - step)) / (2 * step);
+
+      normal.set(-slopeX, 1, -slopeZ).normalize();
+      orientation.setFromUnitVectors(WORLD_UP, normal);
+      twist.setFromAxisAngle(WORLD_UP, p.yaw);
+
+      scratch.position.set(
+        p.x,
+        groundY(p.x, p.z) - p.ry * 0.72,
+        p.z
+      );
+      scratch.quaternion.copy(orientation).multiply(twist);
+      scratch.scale.set(p.rx, p.ry, p.rz);
+      scratch.updateMatrix();
+      mesh.setMatrixAt(i, scratch.matrix);
+    });
+
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [items, groundY, scratch, map]);
+
+  if (!map || !items.length) return null;
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[null, null, items.length]}
+      frustumCulled={false}
+      castShadow={false}
+      receiveShadow={false}
+    >
+      <sphereGeometry args={[1, 16, 10]} />
+      <meshBasicMaterial
+        map={map}
+        color="#fffdfd"
+        fog
+        toneMapped={false}
+        depthWrite
+      />
+    </instancedMesh>
+  );
 }
 
 export default function Snow64SundaeTrees({
@@ -172,18 +249,27 @@ export default function Snow64SundaeTrees({
   const pink = useSnowModel("treePink");
   const models = [lavender, mint, peach, pink];
 
-  const grouped = useMemo(() => createForest(trees, mobile), [trees, mobile]);
-  if (!models.every(Boolean) || typeof groundY !== "function") return null;
+  const { variants, snowPiles } = useMemo(
+    () => createForest(trees, mobile),
+    [trees, mobile]
+  );
+
+  if (!models.every(Boolean) || typeof groundY !== "function") {
+    return null;
+  }
 
   return (
-    <group name="SNOW360 V81 · Dense Front-Facing Sundae Forest">
-      {VARIANTS.map((key, index) => {
-        const asset = models[index];
-        const items = grouped[index];
+    <group name="SNOW360 V83 · Lower Bank / Atmospheric Sundae Forest">
+      <SnowAtTreeRoots items={snowPiles} groundY={groundY} />
+
+      {TREE_KEYS.map((key, variantIndex) => {
+        const asset = models[variantIndex];
+        const items = variants[variantIndex];
         if (!items.length) return null;
-        const sizeY = Math.max(0.0001, asset.size[1]);
-        const ratioX = asset.size[0] / sizeY;
-        const ratioZ = asset.size[2] / sizeY;
+
+        const safeHeight = Math.max(0.0001, asset.size[1]);
+        const widthRatio = asset.size[0] / safeHeight;
+        const depthRatio = asset.size[2] / safeHeight;
 
         return (
           <SnowGLBInstances
@@ -194,11 +280,19 @@ export default function Snow64SundaeTrees({
             pose={(tree) => ({
               position: [
                 tree.x,
-                groundY(tree.x, tree.z) - tree.height * 0.065,
+                groundY(tree.x, tree.z) - tree.height * 0.072,
                 tree.z,
               ],
-              rotation: [0, tree.yaw + VARIANT_YAW_OFFSET[index], 0],
-              dimensions: [tree.height * ratioX, tree.height, tree.height * ratioZ],
+              rotation: [
+                0,
+                tree.yaw + FRONT_CORRECTION[variantIndex],
+                0,
+              ],
+              dimensions: [
+                tree.height * widthRatio,
+                tree.height,
+                tree.height * depthRatio,
+              ],
             })}
           />
         );
