@@ -14,7 +14,7 @@ import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, sn
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider, riderRecoveryGroundLift } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
-import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
+import { SNOW64_MODEL_PATHS, SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
 import { snow360Drift } from "./snow64SnowDrifts";
@@ -23,6 +23,7 @@ import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getS
 import Snow360CloudRamp from "./Snow360CloudRamps";
 import Snow64CloudLayer from "./Snow64CloudLayer";
 import Snow64StarTokens from "./Snow64StarTokens";
+import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
 import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -432,8 +433,10 @@ function Snowboard() {
   useEffect(()=>()=>geom.dispose(),[geom]);
   if (custom) return <group position={[0,.045,0]}>
     <SnowGLBVisual asset={custom} type="snowboard" dimensions={[.74,.25,2.43]}/>
+    <Snow64SnowboardGlow offsetX={SNOW64_SNOWBOARD_FOOT_TUNE[0]} />
   </group>;
   return <group position={[0,.045,0]}>
+    <Snow64SnowboardGlow />
     <mesh geometry={geom} position={[0,.065,0]}><meshStandardMaterial color="#252849" metalness={.18} roughness={.5} flatShading /></mesh>
     <mesh position={[0,.147,0]}><boxGeometry args={[.38,.018,1.45]} /><meshBasicMaterial color="#f6b5cc" /></mesh>
     <mesh position={[0,.159,0]}><boxGeometry args={[.09,.019,1.58]} /><meshBasicMaterial color="#fff1ce" /></mesh>

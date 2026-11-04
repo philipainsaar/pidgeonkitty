@@ -9,6 +9,7 @@ const TextureContext = createContext({
   textures: {},
   material: null,
   holoMaterial: null,
+  holoPileMaterial: null,
 });
 
 // Adapted from winter-catlien/components/CorePlanet.jsx,
@@ -24,6 +25,12 @@ const CORE_PLANET_HOLO = Object.freeze({
   flowSpeed: 0.7,
   bandScale: 1.15,
   gapMeters: 0.018,
+  // Effective alpha cut from V74, including glint peaks that previously
+  // saturated the clamp. Keeps original CorePlanet colors and organic flow.
+  groundAlpha: 0.74,
+  // Snow mounds inherit the very same animated CorePlanet film,
+  // softened further to keep their plush silhouette readable.
+  pileAlpha: 0.56,
 });
 
 const KEY_LIGHT = new THREE.Vector3(-8, 20, -30);
@@ -37,16 +44,25 @@ const CORE_VERTEX = [
   "varying vec3 vWorldPosition;",
   "#include <fog_pars_vertex>",
   "void main() {",
-  "  vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;",
-  // CorePlanet uses position / globe radius. Map terrain WORLD coords
-  // onto the same phase domain, so its hologram never seams.
+  // Three.js InstancedMesh transforms: the ground has no instanceMatrix,
+  // while every decorative snow pile does. Apply the instance transform
+  // BEFORE world-position sampling so both surfaces share identical flow.
+  "  vec3 outer = position + normalize(normal) * uGap;",
+  "  vec4 localPosition = vec4(outer, 1.0);",
+  "  vec3 localNormal = normal;",
+  "  #ifdef USE_INSTANCING",
+  "    localPosition = instanceMatrix * localPosition;",
+  "    localNormal = mat3(instanceMatrix) * normal;",
+  "  #endif",
+  "  vWorldPosition = (modelMatrix * localPosition).xyz;",
+  // CorePlanet uses position / globe radius. Map WORLD coordinates so
+  // the flow remains seamless across chunks and rounded snowbanks.
   "  vPosition = vec3(vWorldPosition.x * 0.115,",
   "                   vWorldPosition.y * 0.082,",
   "                   vWorldPosition.z * 0.088);",
-  "  vec3 outer = position + normalize(normal) * uGap;",
-  "  vec4 mvPosition = modelViewMatrix * vec4(outer, 1.0);",
+  "  vec4 mvPosition = modelViewMatrix * localPosition;",
   "  vPositionView = mvPosition.xyz;",
-  "  vNormalView = normalize(normalMatrix * normal);",
+  "  vNormalView = normalize(normalMatrix * normalize(localNormal));",
   "  gl_Position = projectionMatrix * mvPosition;",
   "  #include <fog_vertex>",
   "}",
@@ -59,6 +75,8 @@ const CORE_FRAGMENT = [
   "uniform float uReflections;",
   "uniform float uFlowSpeed;",
   "uniform float uBandScale;",
+  "uniform float uOpacityMultiplier;",
+  "uniform float uPileMode;",
   "uniform vec3 uPink;",
   "uniform vec3 uBlue;",
   "uniform vec3 uKeyViewPosition;",
@@ -70,6 +88,11 @@ const CORE_FRAGMENT = [
   "#include <fog_pars_fragment>",
   "void main() {",
   "  float lane = 1.0 - smoothstep(8.5, 18.0, abs(vWorldPosition.x));",
+  "  if (uPileMode > 0.5) {",
+  // Puffs exist on both banks. Keep them gently holographic everywhere;
+  // the center is brighter but neither side turns into a plain white blob.
+  "    lane = mix(0.55, 0.88, 1.0 - smoothstep(8.5, 23.0, abs(vWorldPosition.x)));",
+  "  }",
   "  if (lane < 0.001) discard;",
   "  vec3 n = normalize(vNormalView);",
   "  vec3 v = normalize(-vPositionView);",
@@ -114,7 +137,7 @@ const CORE_FRAGMENT = [
   "    (0.038 + 0.075 * flowing + 0.29 * rim + 0.22 * shine);",
   "  alpha = clamp(alpha, 0.0, 0.75);",
   // The only terrain-specific change: center-only, white snowbanks.
-  "  alpha *= lane;",
+  "  alpha *= lane * uOpacityMultiplier;",
   "  vec3 color = film * (0.88 + 0.45 * rim) + vec3(1.0) * (1.40 * shine);",
   "  gl_FragColor = vec4(color, alpha);",
   "  #include <fog_fragment>",
@@ -196,6 +219,8 @@ export function Snow64TextureProvider({ children, mobile = false }) {
       uFillViewPosition: { value: new THREE.Vector3() },
       uGap: { value: CORE_PLANET_HOLO.gapMeters },
       uIntensity: { value: CORE_PLANET_HOLO.intensity },
+      uOpacityMultiplier: { value: CORE_PLANET_HOLO.groundAlpha },
+      uPileMode: { value: 0 },
       uRimGlow: { value: CORE_PLANET_HOLO.rimGlow },
       uReflections: { value: CORE_PLANET_HOLO.reflections },
       uFlowSpeed: { value: CORE_PLANET_HOLO.flowSpeed },
@@ -207,6 +232,16 @@ export function Snow64TextureProvider({ children, mobile = false }) {
     fragmentShader: CORE_FRAGMENT,
   }), []);
 
+  // One reusable overlay material for the pile shader variant. Each active
+  // chunk clones its uniforms for an independent, soft texture-ready fade.
+  const holoPileMaterial = useMemo(() => {
+    const mat = holoMaterial.clone();
+    mat.name = "SNOW360 V75 / CorePlanet hologram on plush piles";
+    mat.uniforms.uOpacityMultiplier.value = CORE_PLANET_HOLO.pileAlpha;
+    mat.uniforms.uPileMode.value = 1;
+    return mat;
+  }, [holoMaterial]);
+
   const keyView = useMemo(() => new THREE.Vector3(), []);
   const fillView = useMemo(() => new THREE.Vector3(), []);
   useFrame(({clock,camera}) => {
@@ -216,12 +251,18 @@ export function Snow64TextureProvider({ children, mobile = false }) {
     fillView.copy(FILL_LIGHT).applyMatrix4(camera.matrixWorldInverse);
     uniforms.uKeyViewPosition.value.copy(keyView);
     uniforms.uFillViewPosition.value.copy(fillView);
+    // The exact same time and camera lights drive both ground and mounds.
+    const pileUniforms = holoPileMaterial.uniforms;
+    pileUniforms.uTime.value = uniforms.uTime.value;
+    pileUniforms.uKeyViewPosition.value.copy(keyView);
+    pileUniforms.uFillViewPosition.value.copy(fillView);
   });
   useEffect(() => () => material.dispose(), [material]);
   useEffect(() => () => holoMaterial.dispose(), [holoMaterial]);
+  useEffect(() => () => holoPileMaterial.dispose(), [holoPileMaterial]);
   const shared = useMemo(
-    () => ({ textures, material, holoMaterial }),
-    [textures, material, holoMaterial]
+    () => ({ textures, material, holoMaterial, holoPileMaterial }),
+    [textures, material, holoMaterial, holoPileMaterial]
   );
   return <TextureContext.Provider value={shared}>{children}</TextureContext.Provider>;
 }
@@ -234,4 +275,7 @@ export function useSnow64TerrainMaterials() {
 }
 export function useSnow64CorePlanetFilmMaterial() {
   return useContext(TextureContext).holoMaterial;
+}
+export function useSnow64CorePlanetPileFilmMaterial() {
+  return useContext(TextureContext).holoPileMaterial;
 }

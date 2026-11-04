@@ -98,7 +98,7 @@ const ROCK_VARIANT_COLORS = {
 // V62: translucent body underneath Core Planet's holographic shell.
 // The previous 39% body was almost completely covered by the brighter film.
 // 0.58 still lets snowy scenery show through, while color motion stays legible.
-const CRYSTAL_BODY_OPACITY = 0.68;
+const CRYSTAL_BODY_OPACITY = 0.82; // V75: stronger crystal silhouette against holographic snow
 const CRYSTAL_CYCLE_SECONDS = 12.0; // Visible, continuous two-second pastel transitions.
 const CRYSTAL_BODY_PASTELS = [
   '#ffd0e9', // baby pink
@@ -295,9 +295,9 @@ const CRYSTAL_HOLO_SECOND_COLOR_BLEND = 0.50; // 0 = uniform; 1 = 0.65 step ahea
 const CORE_PLANET_HOLO = {
   flowSpeed: 1.05,
   bandScale: 1.55,
-  intensity: 1.90,
-  rimGlow: 1.80,
-  reflections: 1.60,
+  intensity: 2.08, // V75: clearer facets above pastel snow
+  rimGlow: 2.04,
+  reflections: 1.78,
   gapFraction: 0.016,
 };
 const crystalKeyWorld = new THREE.Vector3(-8, 20, -30);
@@ -427,7 +427,7 @@ function makeCorePlanetCrystalFilm(geometry, variantName, partIndex) {
         float alpha = max(0.0, uIntensity) *
           (0.075 + 0.105 * flowing + 0.18 * rim +
            0.18 * strip + 0.13 * coloredGlint + 0.09 * shine);
-        alpha = clamp(alpha, 0.13, 0.68);
+        alpha = clamp(alpha, 0.19, 0.76); // V75: more readable crystal film
         vec3 color = pastel * (0.90 + 0.30 * rim +
           0.32 * coloredGlint + 0.20 * strip);
         color += vec3(1.0) * (0.17 * shine + 0.10 * strip);

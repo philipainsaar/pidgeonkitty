@@ -4,7 +4,10 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { SNOW_CHUNK_LENGTH } from "./snow64Endless";
-import { useSnow64Texture } from "./snow64VisualMaterials";
+import {
+  useSnow64Texture,
+  useSnow64CorePlanetPileFilmMaterial
+} from "./snow64VisualMaterials";
 
 /**
  * SNOW360 V70 | Plush, rounded snowdrifts that follow the sidebank slope.
@@ -163,7 +166,17 @@ export default function Snow64CloudLayer({
   ramps = [],
 }) {
   const puffMap = useSnow64Texture("snowGround");
+  const sharedPileFilm = useSnow64CorePlanetPileFilmMaterial();
+  // Per chunk clone keeps the normal V68 texture-load fade smooth even for
+  // the hologram. The world-space flow/time comes from the shared provider.
+  const localPileFilm = useMemo(() => {
+    if (!sharedPileFilm) return null;
+    const mat = sharedPileFilm.clone();
+    mat.uniforms.uOpacityMultiplier.value = 0;
+    return mat;
+  }, [sharedPileFilm]);
   const meshRef = useRef(null);
+  const filmMeshRef = useRef(null);
   const materialRef = useRef(null);
   const reveal = useRef(0);
 
@@ -174,10 +187,12 @@ export default function Snow64CloudLayer({
   );
 
   useEffect(() => () => geometry.dispose(), [geometry]);
+  useEffect(() => () => localPileFilm?.dispose(), [localPileFilm]);
 
   useEffect(() => {
     const mesh = meshRef.current;
-    if (!mesh || !puffMap) return;
+    const filmMesh = filmMeshRef.current;
+    if (!mesh || !filmMesh || !puffMap || !localPileFilm) return;
     const m = new THREE.Matrix4();
     const surfaceQ = new THREE.Quaternion();
     const yawQ = new THREE.Quaternion();
@@ -198,34 +213,48 @@ export default function Snow64CloudLayer({
       s.set(item.sx, item.sy, item.sz);
       m.compose(p, rotation, s);
       mesh.setMatrixAt(i, m);
+      filmMesh.setMatrixAt(i, m);
       tint.set(CLOUD_COLORS[item.color]);
       mesh.setColorAt(i, tint);
     });
     mesh.instanceMatrix.needsUpdate = true;
+    filmMesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
+    filmMesh.computeBoundingSphere();
     reveal.current = 0;
     if (materialRef.current) materialRef.current.opacity = 0;
-  }, [placements, puffMap]);
+    localPileFilm.uniforms.uOpacityMultiplier.value = 0;
+  }, [placements, puffMap, localPileFilm]);
 
   useFrame((_, dt) => {
     const material = materialRef.current;
-    if (!material || !puffMap) return;
+    if (!material || !puffMap || !localPileFilm || !sharedPileFilm) return;
     if (reveal.current < 1) {
       reveal.current = Math.min(1, reveal.current + Math.min(dt, 0.08) * 1.75);
       material.opacity = reveal.current;
     }
+    // Keep the same swirling CorePlanet flow and reflections on piles.
+    // A separate uniform fade prevents white/blinking piles on load.
+    localPileFilm.uniforms.uTime.value = sharedPileFilm.uniforms.uTime.value;
+    localPileFilm.uniforms.uKeyViewPosition.value.copy(sharedPileFilm.uniforms.uKeyViewPosition.value);
+    localPileFilm.uniforms.uFillViewPosition.value.copy(sharedPileFilm.uniforms.uFillViewPosition.value);
+    localPileFilm.uniforms.uOpacityMultiplier.value =
+      sharedPileFilm.uniforms.uOpacityMultiplier.value * reveal.current;
   });
 
   // V68 loading guard: never show untextured white placeholder domes.
-  if (!puffMap || placements.length === 0) return null;
+  if (!puffMap || !localPileFilm || placements.length === 0) return null;
 
   return (
+    <>
     <instancedMesh
       ref={meshRef}
       args={[geometry, null, placements.length]}
       castShadow={false}
       receiveShadow={false}
+      renderOrder={1}
+      dispose={null}
     >
       <meshBasicMaterial
         ref={materialRef}
@@ -239,5 +268,15 @@ export default function Snow64CloudLayer({
         opacity={0}
       />
     </instancedMesh>
+    <instancedMesh
+      ref={filmMeshRef}
+      args={[geometry, localPileFilm, placements.length]}
+      renderOrder={2}
+      castShadow={false}
+      receiveShadow={false}
+      frustumCulled={false}
+      dispose={null}
+    />
+    </>
   );
 }
