@@ -1,10 +1,8 @@
-/* SNOW360 font update
-   All HTML UI text: Fredoka Bold
-   Live trick / air-combo line: Lilita One
-   This overrides inline font shorthands used by the current game,
-   while leaving sizing, positioning, colors, and animation unchanged.
+/* SNOW360 x THPS4-inspired pastel arcade trick typography.
+   Keeps the original Fredoka Bold UI and Lilita One trick font.
+   The overlay is visual only: original .snow64-trick DOM text remains intact
+   for React and the reactive audio listener.
 */
-
 html,
 body,
 body * {
@@ -12,15 +10,80 @@ body * {
   font-weight: 700 !important;
 }
 
-/* Existing SnowboardGame.jsx renders the active trick notice here. */
-body .snow64-trick,
-body .snow64-trick * {
+body .snow64-trick {
   font-family: var(--snow360-lilita), Impact, sans-serif !important;
   font-weight: 400 !important;
   font-style: normal !important;
-  -webkit-text-stroke: clamp(1.25px, 0.18vw, 2.3px) #16283a;
+  -webkit-text-stroke: clamp(1.5px, .23vw, 2.7px) #18283b;
   paint-order: stroke fill;
-  text-shadow: 2px 3px 0 #122a3b, 0 4px 9px #17374e88 !important;
+  text-shadow: 2px 3px 0 #17293c, 0 4px 9px #10283f88 !important;
 }
 
-/* Avoid altering custom icon glyphs / SVG content: fonts apply only to text nodes. */
+/* Only hide the old rendering when the replacement is running.
+   Preserve the original text node and layout for gameplay/music. */
+html.snow360-trick-overlay-ready body main .snow64-trick {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  -webkit-text-stroke: 0 transparent !important;
+  text-shadow: none !important;
+}
+
+.snow360-trick-overlay {
+  position: fixed;
+  display: none;
+  z-index: 42;
+  pointer-events: none;
+  user-select: none;
+  text-align: center;
+  line-height: 1.13;
+  letter-spacing: .01em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  width: max-content;
+  max-width: min(92vw, 900px);
+  transform: translateX(-50%);
+  color: #f4fcff;
+  font-family: var(--snow360-lilita), Impact, sans-serif !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  -webkit-text-stroke: clamp(1.5px, .22vw, 2.7px) #192d42;
+  paint-order: stroke fill;
+  text-shadow: 2px 3px 0 #132c42, 0 4px 9px #10283f88;
+}
+.snow360-trick-overlay * {
+  font-family: inherit !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  -webkit-text-stroke: inherit;
+  paint-order: stroke fill;
+  text-shadow: inherit;
+}
+.snow360-trick-overlay .snow360-trick-plain { color: #f7fdff; }
+.snow360-trick-overlay .snow360-trick-points { color: #ffe5a3; }
+.snow360-trick-overlay .snow360-trick-name {
+  color: #abeafb;
+  animation: snow360TrickPastel 12s ease-in-out infinite;
+}
+@keyframes snow360TrickPastel {
+  0%, 100% { color: #aeeaff; }
+  20% { color: #ffc4df; }
+  40% { color: #c1f5e0; }
+  60% { color: #e1caff; }
+  80% { color: #ffe7b5; }
+}
+@media (max-width: 680px) {
+  .snow360-trick-overlay {
+    font-size: clamp(16px, 4.4vw, 23px) !important;
+    line-height: 1.17;
+    letter-spacing: 0;
+    max-width: 92vw;
+    -webkit-text-stroke-width: 1.5px;
+    text-shadow: 1px 2px 0 #14283a, 0 3px 6px #12283980;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .snow360-trick-overlay .snow360-trick-name {
+    animation: none !important;
+    color: #bcecff;
+  }
+}

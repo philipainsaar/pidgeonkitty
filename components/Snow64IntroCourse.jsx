@@ -11,6 +11,7 @@ import { getSnowChunk, SNOW_CHUNK_LENGTH } from "./snow64Endless";
 import { snow360Drift } from "./snow64SnowDrifts";
 import Snow360CloudRamp from "./Snow360CloudRamps";
 import Snow64StarTokens from "./Snow64StarTokens";
+import Snow64SundaeTrees from "./Snow64SundaeTrees";
 
 // Same world coordinates, snowdrift function, UVs and lights as SnowboardGame.
 // This is only a preview of the first course chunks; the full game is already
@@ -72,22 +73,14 @@ function PreviewTerrain({index,mobile}) {
       frustumCulled={false}/>
   </>;
 }
-function PreviewTrees({trees}){
-  const model=useSnowModel("tree");
-  // Opening lane stays uncluttered. Deliberately hide the closest tree props
-  // from the preview (not the game) to prevent a giant tree popping in when
-  // textures/GLBs finish loading or when the camera begins its orbit.
-  // More distant trees remain visible when looking down the course.
-  const visible=useMemo(()=>trees.filter(t=>t.z>-185 && t.z<-25 && Math.abs(t.x)>19.5),[trees]);
-  if(model)return <SnowGLBInstances asset={model} type="tree" items={visible}
-    pose={tree=>({position:[tree.x,introGroundY(tree.x,tree.z),tree.z],
-      rotation:[0,0,0],dimensions:[1.38*tree.size,2.42*tree.size,1.38*tree.size]})}/>;
-  return <group>{visible.map(t=><group key={t.id}
-    position={[t.x,introGroundY(t.x,t.z),t.z]} scale={t.size}>
-    <mesh position={[0,.55,0]}><cylinderGeometry args={[.09,.15,1.1,5]}/><meshLambertMaterial color="#dba3c1"/></mesh>
-    <mesh position={[0,1.08,0]}><coneGeometry args={[.69,1.85,6]}/><meshLambertMaterial color="#eff9ff"/></mesh>
-    <mesh position={[0,1.70,0]}><coneGeometry args={[.5,1.35,6]}/><meshLambertMaterial color="#f6f0fc"/></mesh>
-  </group>)}</group>;
+function PreviewTrees({trees, mobile}){
+  // Same sidewall GLBs and deterministic colors as the actual game.
+  // Hide the closest trees here only so the castle intro stays uncluttered.
+  const visible = useMemo(
+    () => trees.filter(t => t.z > -185 && t.z < -25 && Math.abs(t.x) > 19.5),
+    [trees]
+  );
+  return <Snow64SundaeTrees trees={visible} groundY={introGroundY} mobile={mobile}/>;
 }
 function PreviewTokens({coins}){
   const visible=useMemo(()=>coins.filter(c=>c.z>-175),[coins]);
@@ -240,7 +233,7 @@ export default function Snow64IntroCourse({mobile}){
     <StartSkyClouds mobile={mobile}/>
     <PreviewTerrain index={0} mobile={mobile}/>
     <PreviewTerrain index={1} mobile={mobile}/>
-    <PreviewTrees trees={trees}/>
+    <PreviewTrees trees={trees} mobile={mobile}/>
     <PreviewTokens coins={coins}/>
     <PreviewRocks rocks={rocks}/>
     <PreviewMarkers banners={banners}/>

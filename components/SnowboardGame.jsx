@@ -22,6 +22,7 @@ import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
 import Snow360CloudRamp from "./Snow360CloudRamps";
 import Snow64CloudLayer from "./Snow64CloudLayer";
+import Snow64SundaeTrees from "./Snow64SundaeTrees";
 import Snow64StarTokens from "./Snow64StarTokens";
 import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
 import Snow64FrostShroomGlow from "./Snow64FrostShroomGlow";
@@ -171,40 +172,6 @@ function Terrain({index, mobile=false}) {
   </>;
 }
 
-function Forest({trees}) {
-  const custom = useSnowModel("tree");
-  // Instancing keeps the forest cheap on mobile for both built-in and GLB trees.
-  const trunks=useRef(),bottoms=useRef(),tops=useRef(),caps=useRef();
-  useEffect(()=>{
-    if (custom) return;
-    const matrices=[trunks.current,bottoms.current,tops.current,caps.current];
-    const dims=[
-      [0,.55,0], [0,1.08,0], [0,1.70,0], [0,2.13,0],
-    ];
-    const obj=new THREE.Object3D();
-    trees.forEach((tree,i)=>{
-      matrices.forEach((inst,j)=>{
-        obj.position.set(tree.x,groundY(tree.x,tree.z)+dims[j][1]*tree.size,tree.z);
-        obj.scale.setScalar(tree.size);obj.rotation.set(0,(i*1.37)%6.28,0);obj.updateMatrix();
-        inst.setMatrixAt(i,obj.matrix);
-      });
-    });
-    matrices.forEach(inst=>{inst.instanceMatrix.needsUpdate=true;inst.computeBoundingSphere();});
-  },[trees,custom]);
-  const n=trees.length;
-  if (custom) return <SnowGLBInstances asset={custom} type="tree" items={trees}
-    pose={(tree,i) => ({
-      position:[tree.x,groundY(tree.x,tree.z),tree.z],
-      rotation:[0,(i*1.37)%6.28,0],
-      dimensions:[1.38*tree.size,2.42*tree.size,1.38*tree.size],
-    })}/>;
-  return <>
-    <instancedMesh ref={trunks} args={[null,null,n]}><cylinderGeometry args={[.09,.15,1.1,5]}/><meshLambertMaterial color="#64506f"/></instancedMesh>
-    <instancedMesh ref={bottoms} args={[null,null,n]}><coneGeometry args={[.69,1.85,6]}/><meshLambertMaterial color="#17646e" flatShading/></instancedMesh>
-    <instancedMesh ref={tops} args={[null,null,n]}><coneGeometry args={[.5,1.35,6]}/><meshLambertMaterial color="#26868d" flatShading/></instancedMesh>
-    <instancedMesh ref={caps} args={[null,null,n]}><coneGeometry args={[.17,.35,6]}/><meshLambertMaterial color="#e7fbfc" flatShading/></instancedMesh>
-  </>;
-}
 /** Hide destroyed rocks immediately without React updates for each rock. */
 function Rock({ id, x, z, size, stateRef }) {
   const custom=useSnowModel("rock");
@@ -311,7 +278,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
   return <>
     <Terrain index={index} mobile={mobile} />
     <Snow64CloudLayer index={index} mobile={mobile} groundY={groundY} ramps={data.ramps} />
-    <Forest trees={data.trees} />
+    <Snow64SundaeTrees trees={data.trees} groundY={groundY} mobile={mobile} />
     {obstacleLibrary ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
       : rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
       hidden={r=>stateRef.current.consumedRocks.has(r.id)}

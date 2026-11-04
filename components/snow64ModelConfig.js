@@ -14,7 +14,14 @@ export const SNOW64_MODEL_PATHS = Object.freeze({
   // Animated riders must preserve SnowboardIdle, SnowboardWipeout, Run, etc. clips.
   riderDesktop: "/models/pidgeonkitty-snowboard-v2.glb",
   riderMobile: "/models/pidgeonkitty-snowboard-v2-mobile.glb",
-  tree: "/models/snow64-tree.glb",
+  // V79: replace legacy single-tree model with four baked/UV-safe GLBs.
+  // Snow64ModelProvider already loads the static keys and shares them across
+  // the intro and endless-course GPU-instancing layers.
+  tree: null,
+  treeLavender: "/models/snow64-sundae-tree-lavender.glb",
+  treeMint: "/models/snow64-sundae-tree-mint.glb",
+  treePeach: "/models/snow64-sundae-tree-peach.glb",
+  treePink: "/models/snow64-sundae-tree-pink.glb",
   rock: "/models/snow64-rock.glb",
   ramp: null,
   ramp2: null,
