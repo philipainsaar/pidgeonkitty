@@ -4,10 +4,12 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { SNOW64_TEXTURE_PATHS } from "./snow64Appearance";
+import { SNOWBANK_FADE_START, SNOWBANK_FADE_END } from "./snow64SkylineFade";
 
 const TextureContext = createContext({
   textures: {},
   material: null,
+  skylineMaterial: null,
   holoMaterial: null,
   holoPileMaterial: null,
 });
@@ -203,6 +205,46 @@ export function Snow64TextureProvider({ children, mobile = false }) {
     return m;
   }, [snow, pile]);
 
+  // V84: the steep OUTER bank dissolves into the scene's blue sky.
+  // This material is used ONLY for the upper-bank triangle groups.
+  // The full middle downhill and lower banks remain unchanged and opaque.
+  // Reuse the original white-plush shader injection, so the fading section
+  // retains the exact same snow detail, UVs and procedural pile modulation.
+  const skylineMaterial = useMemo(() => {
+    const edge = material.clone();
+    const baseCompile = material.onBeforeCompile;
+    edge.name = "SNOW360 V84 / Snowbanks dissolve into sky";
+    edge.transparent = true;
+    edge.depthWrite = false;
+    edge.depthTest = true;
+    edge.onBeforeCompile = shader => {
+      if (baseCompile) baseCompile(shader);
+      shader.vertexShader = "varying vec2 vSkylineBankXZ;\n" + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\n vSkylineBankXZ = position.xz;"
+      );
+      shader.fragmentShader =
+        "varying vec2 vSkylineBankXZ;\n" + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <alphamap_fragment>",
+        "#include <alphamap_fragment>\n" +
+        // Vary the fade boundary gently in world-space Z to avoid a straight
+        // horizontal cut while never showing a repeating tiled pattern.
+        "float skyMeander = 0.23*sin(vSkylineBankXZ.y*0.052)" +
+        " + 0.13*sin(vSkylineBankXZ.y*0.137 + vSkylineBankXZ.x*0.17);\n" +
+        "float skyFade = 1.0 - smoothstep(" +
+        SNOWBANK_FADE_START.toFixed(3) + ", " +
+        SNOWBANK_FADE_END.toFixed(3) +
+        ", abs(vSkylineBankXZ.x) + skyMeander);\n" +
+        "diffuseColor.a *= skyFade;\n"
+      );
+    };
+    edge.customProgramCacheKey = () =>
+      "snow360-v84-skyline-edge-v2-" + (pile && snow ? "plush" : "basic");
+    return edge;
+  }, [material, pile, snow]);
+
   const holoMaterial = useMemo(() => new THREE.ShaderMaterial({
     name: "SNOW360 / CorePlanet transparent outer hologram on snow",
     transparent: true,
@@ -258,11 +300,12 @@ export function Snow64TextureProvider({ children, mobile = false }) {
     pileUniforms.uFillViewPosition.value.copy(fillView);
   });
   useEffect(() => () => material.dispose(), [material]);
+  useEffect(() => () => skylineMaterial.dispose(), [skylineMaterial]);
   useEffect(() => () => holoMaterial.dispose(), [holoMaterial]);
   useEffect(() => () => holoPileMaterial.dispose(), [holoPileMaterial]);
   const shared = useMemo(
-    () => ({ textures, material, holoMaterial, holoPileMaterial }),
-    [textures, material, holoMaterial, holoPileMaterial]
+    () => ({ textures, material, skylineMaterial, holoMaterial, holoPileMaterial }),
+    [textures, material, skylineMaterial, holoMaterial, holoPileMaterial]
   );
   return <TextureContext.Provider value={shared}>{children}</TextureContext.Provider>;
 }
@@ -272,6 +315,9 @@ export function useSnow64Texture(kind) {
 }
 export function useSnow64TerrainMaterials() {
   return useContext(TextureContext).material;
+}
+export function useSnow64SkylineMaterial() {
+  return useContext(TextureContext).skylineMaterial;
 }
 export function useSnow64CorePlanetFilmMaterial() {
   return useContext(TextureContext).holoMaterial;

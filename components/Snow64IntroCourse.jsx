@@ -5,10 +5,11 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useSnowModel, SnowGLBInstances } from "./snow64VisualModels";
-import { useSnow64TerrainMaterials, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
+import { useSnow64TerrainMaterials, useSnow64SkylineMaterial, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { getSnowChunk, SNOW_CHUNK_LENGTH } from "./snow64Endless";
 import { snow360Drift } from "./snow64SnowDrifts";
+import { applySnowbankSkylineGroups } from "./snow64SkylineFade";
 import Snow360CloudRamp from "./Snow360CloudRamps";
 import Snow64StarTokens from "./Snow64StarTokens";
 import Snow64SundaeTrees from "./Snow64SundaeTrees";
@@ -32,6 +33,7 @@ function terrainNormal(x,z){
 }
 function PreviewTerrain({index,mobile}) {
   const material=useSnow64TerrainMaterials();
+  const skylineMaterial=useSnow64SkylineMaterial();
   const corePlanetFilm=useSnow64CorePlanetFilmMaterial();
   const geometry=useMemo(()=>{
     const halfWidth=34, stepsX=mobile?50:68,stepsZ=mobile?88:120;
@@ -61,13 +63,13 @@ function PreviewTerrain({index,mobile}) {
     g.setAttribute("normal",new THREE.Float32BufferAttribute(normals,3));
     g.setAttribute("uv",new THREE.Float32BufferAttribute(uvs,2));
     g.setAttribute("color",new THREE.Float32BufferAttribute(colors,3));
-    g.setIndex(indices);
+    applySnowbankSkylineGroups(g, positions, indices);
     g.computeBoundingSphere();
     return g;
   },[index,mobile]);
   useEffect(()=>()=>geometry.dispose(),[geometry]);
   return <>
-    <mesh geometry={geometry} material={material} receiveShadow={false}/>
+    <mesh geometry={geometry} material={[material,skylineMaterial]} receiveShadow={false}/>
     <mesh geometry={geometry} material={corePlanetFilm}
       renderOrder={1} castShadow={false} receiveShadow={false}
       frustumCulled={false}/>

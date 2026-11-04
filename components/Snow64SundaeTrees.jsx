@@ -4,9 +4,10 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useSnowModel, SnowGLBInstances } from "./snow64VisualModels";
 import { useSnow64Texture } from "./snow64VisualMaterials";
+import { hasSolidSnowUnderDecoration } from "./snow64SkylineFade";
 
 /**
- * SNOW360 V83 | Lower, layered forest with a soft near-to-far transition.
+ * SNOW360 V85 | Rooted forest below open sky with a soft near-to-far transition.
  *
  * Full replacement for components/Snow64SundaeTrees.jsx.
  *
@@ -30,7 +31,7 @@ const FRONT_CORRECTION = [0, 0, 0, Math.PI];
 
 const RIDE_LANE_EDGE = 12.0;
 const NEAR_BANK_MIN_X = 14.6;
-const SNOWBANK_OUTER_X = 33.1;
+const SNOWBANK_OUTER_X = 21.65; // V85: forest roots stay below sky fade
 const TREE_HEIGHT_BASE = 9.4;
 const TREE_HEIGHT_PER_SIZE = 1.85;
 
@@ -39,28 +40,28 @@ const TREE_HEIGHT_PER_SIZE = 1.85;
 const ROWS = Object.freeze([
   {
     name: "lower-bank",
-    xMin: 14.6, xMax: 18.8,
+    xMin: 14.6, xMax: 17.5,
     zShift: 0.0, zJitter: 3.6,
     desktopChance: 1.00, mobileChance: 0.86,
     minHeightFactor: 0.96, maxHeightFactor: 1.06,
   },
   {
     name: "middle-bank",
-    xMin: 19.1, xMax: 25.6,
+    xMin: 17.2, xMax: 19.7,
     zShift: -4.7, zJitter: 5.2,
     desktopChance: 0.90, mobileChance: 0.55,
     minHeightFactor: 0.83, maxHeightFactor: 0.98,
   },
   {
     name: "upper-bank",
-    xMin: 25.0, xMax: 30.6,
+    xMin: 19.1, xMax: 21.15,
     zShift: 3.9, zJitter: 6.5,
     desktopChance: 0.34, mobileChance: 0.17,
     minHeightFactor: 0.73, maxHeightFactor: 0.90,
   },
   {
     name: "back-bank",
-    xMin: 29.0, xMax: 32.5,
+    xMin: 20.0, xMax: 21.55,
     zShift: -6.5, zJitter: 7.3,
     desktopChance: 0.16, mobileChance: 0.065,
     minHeightFactor: 0.66, maxHeightFactor: 0.82,
@@ -151,8 +152,21 @@ function createForest(anchors, mobile) {
             Math.abs(candidate.x) > SNOWBANK_OUTER_X) {
           continue;
         }
-        if (!clearOfOtherTrees(candidate, sideTrees)) continue;
+        // Match the V84 terrain's fade, including its Z-dependent waviness.
+        // Check the ENTIRE snow-root footprint: never keep a tree whose
+        // trunk pile would appear suspended over a transparent snowbank.
+        const rootHalfWidth = height * between(
+          0.135, 0.178, hashTree(anchor, 106 + salt)
+        );
+        if (!hasSolidSnowUnderDecoration(x, z, rootHalfWidth)) continue;
 
+        // Deterministic density falloff as the tree line approaches open sky.
+        // No shader/material changes to the original PBR Sundae Dream GLBs.
+        const upperBank = THREE.MathUtils.smoothstep(Math.abs(x), 18.3, 21.5);
+        const visibility = 1 - upperBank * (mobile ? 0.62 : 0.48);
+        if (hashTree(anchor, 209 + salt) > visibility) continue;
+
+        if (!clearOfOtherTrees(candidate, sideTrees)) continue;
         sideTrees.push(candidate);
         const variant = Math.min(
           3, Math.floor(hashTree(anchor, 105 + salt) * 4)
@@ -165,7 +179,7 @@ function createForest(anchors, mobile) {
           id: `${candidate.id}-snow`,
           x, z,
           height,
-          rx: height * between(0.135, 0.178, hashTree(anchor, 106 + salt)),
+          rx: rootHalfWidth,
           ry: height * between(0.042, 0.059, hashTree(anchor, 107 + salt)),
           rz: height * between(0.120, 0.155, hashTree(anchor, 108 + salt)),
           yaw: hashTree(anchor, 109 + salt) * Math.PI * 2,
@@ -259,7 +273,7 @@ export default function Snow64SundaeTrees({
   }
 
   return (
-    <group name="SNOW360 V83 · Lower Bank / Atmospheric Sundae Forest">
+    <group name="SNOW360 V85 · Solid-Bank Forest & Root Snow">
       <SnowAtTreeRoots items={snowPiles} groundY={groundY} />
 
       {TREE_KEYS.map((key, variantIndex) => {

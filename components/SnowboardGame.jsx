@@ -16,8 +16,9 @@ import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider, rid
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
 import { SNOW64_MODEL_PATHS, SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
-import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64Texture, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
+import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64SkylineMaterial, useSnow64Texture, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
 import { snow360Drift } from "./snow64SnowDrifts";
+import { applySnowbankSkylineGroups } from "./snow64SkylineFade";
 import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
 import Snow360CloudRamp from "./Snow360CloudRamps";
@@ -110,6 +111,7 @@ function Terrain({index, mobile=false}) {
   // One shared snow shader and one continuous world-space UV field for the
   // entire center and both banks. No separate material boundary is visible.
   const material = useSnow64TerrainMaterials();
+  const skylineMaterial = useSnow64SkylineMaterial();
   const geometry = useMemo(() => {
     const vertices = [], uvs = [], normals = [], colors = [], indices = [];
     // More triangles where the drift silhouettes need them, but cheaper on mobile.
@@ -159,13 +161,13 @@ function Terrain({index, mobile=false}) {
     g.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-    g.setIndex(indices);
+    applySnowbankSkylineGroups(g, vertices, indices);
     g.computeBoundingSphere();
     return g;
   }, [index, mobile]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   return <>
-    <mesh geometry={geometry} material={material} receiveShadow={false}/>
+    <mesh geometry={geometry} material={[material, skylineMaterial]} receiveShadow={false}/>
     <mesh geometry={geometry} material={corePlanetFilm}
       renderOrder={1} castShadow={false} receiveShadow={false}
       frustumCulled={false}/>
@@ -1661,7 +1663,7 @@ function Loading() {
 function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
   return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
     <color attach="background" args={["#bfd9e6"]}/>
-    <fog attach="fog" args={["#c1dce9",30,138]}/>
+    <fog attach="fog" args={["#bfd9e6",30,138]}/>
     <ambientLight intensity={1.7}/>
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>

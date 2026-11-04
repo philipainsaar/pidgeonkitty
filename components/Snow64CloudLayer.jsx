@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { SNOW_CHUNK_LENGTH } from "./snow64Endless";
+import { hasSolidSnowUnderDecoration } from "./snow64SkylineFade";
 import {
   useSnow64Texture,
   useSnow64CorePlanetPileFilmMaterial
@@ -136,6 +137,11 @@ function buildPlacements(index, mobile, groundY, ramps) {
         const sx = sy * (1.12 + random2(ix, iz, 60 + j) * 0.48);
         const sz = sy * (1.13 + random2(ix, iz, 80 + j) * 0.60);
         const bury = sy * (0.20 + random2(ix, iz, 120 + j) * 0.13);
+
+        // V85: do not create solid snow puff clusters beyond the faded
+        // sky boundary. Check their OUTER footprint, not only the centre.
+        // The same filter removes BOTH the plush mesh and its holographic film.
+        if (!hasSolidSnowUnderDecoration(x, z, sx)) continue;
 
         // Align each dome to the TRUE terrain normal so it merges smoothly
         // with angled sidewalls rather than floating as horizontal shelves.
