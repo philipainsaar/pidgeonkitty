@@ -6,8 +6,8 @@ import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import * as THREE from "three";
 
 /**
- * SNOW360 V86: real floating-point RGBE (.hdr) equirectangular sky.
- * Original 1024x512 cotton-cloud daylight and starry night panoramas.
+ * SNOW360 V87: clearly visible HDR cotton clouds at snowboard camera angles.
+ * New 1536x768 RGBE panoramas with distinct horizon cloud formations.
  *
  * 360-degree rotation per 300 GAMEPLAY seconds, full revolution every 5:00.
  * After 5:00, a 45-second gradual transition into night (complete 5:45).
@@ -18,8 +18,8 @@ export const SNOW360_SKY_ROTATION_SECONDS = 300;
 export const SNOW360_NIGHT_START_SECONDS = 300;
 export const SNOW360_NIGHT_FADE_SECONDS = 45;
 
-const DAY_URL = "/sky/snow360-cotton-sky-day.hdr";
-const NIGHT_URL = "/sky/snow360-cotton-sky-night.hdr";
+const DAY_URL = "/sky/snow360-cotton-sky-day-v87.hdr";
+const NIGHT_URL = "/sky/snow360-cotton-sky-night-v87.hdr";
 const DAY_FOG = new THREE.Color("#bfd9e6");
 const NIGHT_FOG = new THREE.Color("#2b3b5d");
 
@@ -42,7 +42,11 @@ const FRAGMENT = [
   "}",
   "void main() {",
   "  vec2 coord = vec2(fract(vSkyUv.x), clamp(vSkyUv.y, 0.001, 0.999));",
-  "  vec3 day = hdrDisplay(texture2D(uDaySky, coord).rgb, 1.05);",
+  "  vec3 dayHdr = texture2D(uDaySky, coord).rgb;",
+  "  vec3 day = hdrDisplay(dayHdr, 0.92);",
+  "  // Bright cumulus clouds remain defined against the blue HDR sky.",
+  "  float cloudShape = smoothstep(1.6, 3.8, max(dayHdr.r, max(dayHdr.g, dayHdr.b)));",
+  "  day = mix(day, vec3(.995, .993, 1.0), cloudShape * .095);",
   "  vec3 night = hdrDisplay(texture2D(uNightSky, coord).rgb, 1.27);",
   "  vec3 color = mix(day, night, smoothstep(0.0, 1.0, uNightMix));",
   "  gl_FragColor = vec4(color, 1.0);",
@@ -63,13 +67,13 @@ export default function Snow64HDRSky({ stateRef, mobile = false }) {
   const mesh = useRef(null);
 
   const geometry = useMemo(
-    () => new THREE.SphereGeometry(195, mobile ? 36 : 64, mobile ? 20 : 32),
+    () => new THREE.SphereGeometry(172, mobile ? 36 : 64, mobile ? 20 : 32),
     [mobile]
   );
 
   const material = useMemo(
     () => new THREE.ShaderMaterial({
-      name: "SNOW360 V86 / Rotating Day and Night HDRI Sky",
+      name: "SNOW360 V87 / High-Contrast Cotton HDR Sky",
       uniforms: {
         uDaySky: { value: day },
         uNightSky: { value: night },
@@ -111,7 +115,7 @@ export default function Snow64HDRSky({ stateRef, mobile = false }) {
   return (
     <mesh
       ref={mesh}
-      name="SNOW360 V86 Rotating HDRI Sky"
+      name="SNOW360 V87 Rotating HDRI Sky"
       geometry={geometry}
       material={material}
       renderOrder={-1000}
