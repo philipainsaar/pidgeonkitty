@@ -87,3 +87,13 @@ html.snow360-trick-overlay-ready body main .snow64-trick {
     color: #bcecff;
   }
 }
+
+/* In-game HUD: keep only the clean heart logo, with no surrounding labels or shadow.
+   Targets only the logo container adjacent to the .snow64-hud stats block. */
+body div:has(> .snow64-hud) > div:first-child {
+  filter: none !important;
+}
+body div:has(> .snow64-hud) > div:first-child > div:first-child,
+body div:has(> .snow64-hud) > div:first-child > div:last-child {
+  display: none !important;
+}
