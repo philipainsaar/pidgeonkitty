@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { useProgress } from "@react-three/drei";
 import SnowboardGame from "./SnowboardGame";
 import Snow64StartCeremony from "./Snow64StartCeremony";
@@ -10,15 +10,30 @@ import { unlockSnow64Audio, setSnow64AudioEnabled } from "./snow64Audio";
 import { startSnow64Music } from "./snow64Music";
 import { Snow64TextureProvider } from "./snow64VisualMaterials";
 import Snow64IntroCourse, { introGroundY } from "./Snow64IntroCourse";
+import Snow64HDRSky from "./Snow64HDRSky";
 
 // The real game is mounted and loaded behind the welcome scene. During the
 // cinematic we render an opaque, camera-controlled preview using the SAME
 // world-space snow function, textures, GLB trees, ramps and cloud components.
 // This avoids the two-character double-exposure from the old transparent Canvas.
+// V88: the title/intro sky is the SAME GLB-derived panorama as gameplay.
+ // Keep the title screen gently rotating in daylight; the night timer
+ // belongs to the actual run, which begins at 0 on PLAY.
+function WelcomeHDRSky({ mobile }) {
+  const skyTime = useRef({ t: 0 });
+  useFrame((_, dt) => {
+    skyTime.current.t = Math.min(240, skyTime.current.t + Math.min(0.06, Math.max(0, dt)));
+  });
+  return <Suspense fallback={null}>
+    <Snow64HDRSky stateRef={skyTime} mobile={mobile}/>
+  </Suspense>;
+}
+
 function WelcomeScene({mobile,stage,onComplete}) {
   return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
     <color attach="background" args={["#bfd9e6"]}/>
-    <fog attach="fog" args={["#c1dce9",30,138]}/>
+    <fog attach="fog" args={["#bfd9e6",30,138]}/>
+    <WelcomeHDRSky mobile={mobile}/>
     <ambientLight intensity={1.7}/>
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>

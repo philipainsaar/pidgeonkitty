@@ -6,8 +6,9 @@ import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import * as THREE from "three";
 
 /**
- * SNOW360 V87: clearly visible HDR cotton clouds at snowboard camera angles.
- * New 1536x768 RGBE panoramas with distinct horizon cloud formations.
+ * SNOW360 V88: 360-degree HDR sky using renders of the four actual
+ * Big Air PBR/UV cloud GLBs. Pearl, star and fleece details preserved.
+ * Original 2048x1024 RGBE day/night panoramas with realistic 3D cloud textures.
  *
  * 360-degree rotation per 300 GAMEPLAY seconds, full revolution every 5:00.
  * After 5:00, a 45-second gradual transition into night (complete 5:45).
@@ -18,8 +19,10 @@ export const SNOW360_SKY_ROTATION_SECONDS = 300;
 export const SNOW360_NIGHT_START_SECONDS = 300;
 export const SNOW360_NIGHT_FADE_SECONDS = 45;
 
-const DAY_URL = "/sky/snow360-cotton-sky-day-v87.hdr";
-const NIGHT_URL = "/sky/snow360-cotton-sky-night-v87.hdr";
+const DAY_URL = "/sky/snow360-sundae-cloud-sky-day-v88.hdr";
+const NIGHT_URL = "/sky/snow360-sundae-cloud-sky-night-v88.hdr";
+const MOBILE_DAY_URL = "/sky/snow360-sundae-cloud-sky-day-v88-mobile.hdr";
+const MOBILE_NIGHT_URL = "/sky/snow360-sundae-cloud-sky-night-v88-mobile.hdr";
 const DAY_FOG = new THREE.Color("#bfd9e6");
 const NIGHT_FOG = new THREE.Color("#2b3b5d");
 
@@ -42,11 +45,8 @@ const FRAGMENT = [
   "}",
   "void main() {",
   "  vec2 coord = vec2(fract(vSkyUv.x), clamp(vSkyUv.y, 0.001, 0.999));",
-  "  vec3 dayHdr = texture2D(uDaySky, coord).rgb;",
-  "  vec3 day = hdrDisplay(dayHdr, 0.92);",
-  "  // Bright cumulus clouds remain defined against the blue HDR sky.",
-  "  float cloudShape = smoothstep(1.6, 3.8, max(dayHdr.r, max(dayHdr.g, dayHdr.b)));",
-  "  day = mix(day, vec3(.995, .993, 1.0), cloudShape * .095);",
+  // Preserve pearl/star pastel hues exactly as baked from the PBR cloud GLBs.",
+  "  vec3 day = hdrDisplay(texture2D(uDaySky, coord).rgb, 0.92);",
   "  vec3 night = hdrDisplay(texture2D(uNightSky, coord).rgb, 1.27);",
   "  vec3 color = mix(day, night, smoothstep(0.0, 1.0, uNightMix));",
   "  gl_FragColor = vec4(color, 1.0);",
@@ -62,7 +62,13 @@ function fadeValue(time) {
 }
 
 export default function Snow64HDRSky({ stateRef, mobile = false }) {
-  const [day, night] = useLoader(HDRLoader, [DAY_URL, NIGHT_URL]);
+  // Half-resolution mobile maps retain the same exact sky composition,
+  // while lowering the pair's GPU texture memory by approximately 75%.
+  const urls = useMemo(
+    () => mobile ? [MOBILE_DAY_URL, MOBILE_NIGHT_URL] : [DAY_URL, NIGHT_URL],
+    [mobile]
+  );
+  const [day, night] = useLoader(HDRLoader, urls);
   const { camera, scene } = useThree();
   const mesh = useRef(null);
 
@@ -73,7 +79,7 @@ export default function Snow64HDRSky({ stateRef, mobile = false }) {
 
   const material = useMemo(
     () => new THREE.ShaderMaterial({
-      name: "SNOW360 V87 / High-Contrast Cotton HDR Sky",
+      name: "SNOW360 V88 / Big Air PBR Cloud HDR Sky",
       uniforms: {
         uDaySky: { value: day },
         uNightSky: { value: night },
@@ -115,7 +121,7 @@ export default function Snow64HDRSky({ stateRef, mobile = false }) {
   return (
     <mesh
       ref={mesh}
-      name="SNOW360 V87 Rotating HDRI Sky"
+      name="SNOW360 V88 Rotating Sundae HDRI Sky"
       geometry={geometry}
       material={material}
       renderOrder={-1000}
@@ -126,5 +132,5 @@ export default function Snow64HDRSky({ stateRef, mobile = false }) {
   );
 }
 
-// The original blue background stays visible while these load.
-useLoader.preload(HDRLoader, [DAY_URL, NIGHT_URL]);
+// The original blue background stays visible while loading.
+// No unconditional preload: mobile should NOT fetch desktop HDR textures.
