@@ -14,12 +14,16 @@ import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, sn
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider, riderRecoveryGroundLift } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
-import { SNOW64_MODEL_PATHS, SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
+import { SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { Snow64TextureProvider, useSnow64TerrainMaterials, useSnow64SkylineMaterial, useSnow64Texture, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
 import { snow360Drift } from "./snow64SnowDrifts";
 import { applySnowbankSkylineGroups } from "./snow64SkylineFade";
 import Snow64HDRSky from "./Snow64HDRSky";
+import Snow360RiderSecret from "./Snow360RiderSecret";
+import Snow360RiderBoundary from "./Snow360RiderBoundary";
+import { getSnow360Rider, assertSnow360Clips, snow360CarvePose } from "./snow360RiderConfig";
+import { createSnow360RiderAnimator } from "./snow360RiderAnimator";
 import { Snow64ExplosionVFX } from "./snow64ExplosionVFX";
 import { useSnow64Obstacles, Snow64ObstacleField, Snow64ObstacleShatterVFX, getSnow64ObstacleParams, getSnow64ObstacleBaseY, snow64ObstacleHit } from "./snow64Obstacles";
 import Snow360CloudRamp from "./Snow360CloudRamps";
@@ -37,13 +41,10 @@ import { playSnow64Sound, playSnow64FrostMusic, unlockSnow64Audio, setSnow64Audi
 const SNOW360_LOGO = "/images/Snow360Logo.png";
 const SNOW360_LOGO_BACKGROUND = "/images/Snow360Logo-background.png";
 
-const WEB_MODEL = SNOW64_MODEL_PATHS.riderDesktop;
-const MOBILE_MODEL = SNOW64_MODEL_PATHS.riderMobile;
 const SLOPE = 0.077;
 const LANES = [-7.4, -3.8, 0, 3.8, 7.4];
 const DEG = Math.PI / 180;
 const TOKEN_POINTS = 360;
-const RIDER_BINDING_HEIGHT = 0.33; // Keep feet just above the raised board bindings.
 const FROST_HOVER_HEIGHT = 1.28; // Snowboard floats above actual snow/ramp surfaces.
 const FROST_HOVER_BOB = 0.12;
 const FROST_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-safe after Frost Shroom.
@@ -400,13 +401,16 @@ function buildBoardGeometry() {
   return g;
 }
 
-function Snowboard() {
+function Snowboard({plush=false}) {
   const custom=useSnowModel("snowboard");
   const geom=useMemo(buildBoardGeometry,[]);
   useEffect(()=>()=>geom.dispose(),[geom]);
   if (custom) return <group position={[0,.045,0]}>
     <SnowGLBVisual asset={custom} type="snowboard" dimensions={[.74,.25,2.43]}/>
     <Snow64SnowboardGlow asset={custom} />
+    {plush && [-.16,.16].map(z=><mesh key={z} position={[.212,.131,z]}>
+      <boxGeometry args={[.28,.025,.22]}/><meshStandardMaterial color="#725589" roughness={.8}/>
+    </mesh>)}
   </group>;
   return <group position={[0,.045,0]}>
     <Snow64SnowboardGlow fallbackGeometry={geom} />
@@ -767,11 +771,12 @@ function activateArmedTrick(s) {
   }
 }
 
-function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef, cameraOrbitRef, onHud, onFinish, onSound }) {
-  const {scene, animations}=useGLTF(mobile?MOBILE_MODEL:WEB_MODEL);
+function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef, cameraOrbitRef, onHud, onFinish, onSound }) {
+  const profile=getSnow360Rider(rider);
+  const {scene, animations}=useGLTF(mobile?profile.mobile:profile.desktop);
+  useMemo(()=>assertSnow360Clips(animations),[animations]);
   const character=useMemo(()=>cloneSkinned(scene),[scene]);
-  const mixer=useMemo(()=>new THREE.AnimationMixer(character),[character]);
-  const actions=useMemo(()=>Object.fromEntries(animations.map(a=>[a.name,mixer.clipAction(a)])),[animations,mixer]);
+  const animator=useMemo(()=>createSnow360RiderAnimator(character,animations),[character,animations]);
   const riderBones=useMemo(()=>{
     const bones=[];
     character.traverse(o=>{if(o.isBone)bones.push(o);});
@@ -779,7 +784,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
   },[character]);
   const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
   const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), kickSnow=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
-  const active=useRef(null),frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
+  const frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
   const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null,actionFocus:null});
   const frostBoardAnchor=useMemo(()=>new THREE.Vector3(),[]);
   const nearby=useRef({index:-1,chunks:[]});
@@ -791,11 +796,16 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     frostCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null,actionFocus:null};
     nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
-    mixer.stopAllAction();active.current=null;
+    animator.reset();
     if (root.current) root.current.position.set(0,.1,0);
     if (crashBoard.current) crashBoard.current.visible=false;
-  },[runKey,stateRef,collectedRef,queueRef,camera]);
-  useEffect(()=>()=>mixer.stopAllAction(),[mixer]);
+  },[runKey,stateRef,collectedRef,queueRef,camera,animator,mobile]);
+  useEffect(()=>{
+    animator.setPose("SnowboardIdle","initial",{fadeSeconds:0});
+    animator.update(0);
+    onReady(`${rider}:${mobile}`);
+    return ()=>animator.dispose();
+  },[animator,onReady,rider,mobile]);
 
   useFrame((_, rawDt)=>{
     const dt=Math.min(rawDt,0.043),s=stateRef.current;
@@ -821,7 +831,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         : frostAutoCarveVelocity(s,localChunks);
       steerWanted=clamp(frostDesiredVelX/13.2,-1,1);
     }
-    s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*(frostDesiredVelX!==null?9:6)));
+    if(phaseRef.current!=="paused")s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*(frostDesiredVelX!==null?9:6)));
     const queue=queueRef.current.splice(0);
     for (const command of queue) {
       if (command.type === "camera") s.cameraMode = (s.cameraMode + 1) % 3;
@@ -1171,41 +1181,30 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     const recoveryMode = recoveryStage(s.recovery);
     const remountP=s.recovery && recoveryMode==="remounting"
       ? clamp((s.recovery.t-(s.recovery.kind==="wipeout"?2.57:1.97))/Math.max(.35,s.recovery.duration-(s.recovery.kind==="wipeout"?2.57:1.97)),0,1) : 0;
-    const desired = recoveryMode === "falling" ? "SnowboardWipeout" :
+    const desired = phaseRef.current==="paused" ? s.currentPose : recoveryMode === "falling" ? "SnowboardWipeout" :
       recoveryMode === "chasing" ? "Run" :
       recoveryMode === "remounting" ? (remountP < .49 ? "SnowboardRemount" : remountP < .71 ? "SnowboardLanding" : remountP < .90 ? "Run" : "SnowboardCruise") :
       s.inAir ? (s.trick?.pose || (s.flightTime < .3 ? "SnowboardOllie" : "SnowboardCruise")) :
       s.impact > 0 ? "SnowboardLanding" : tuck ? "SnowboardTuck" :
-      s.steer < -.16 ? "SnowboardCarveLeft" : s.steer > .16 ? "SnowboardCarveRight" :
-      playing ? "SnowboardCruise" : "SnowboardIdle";
+      playing ? snow360CarvePose(s.steer,s.currentPose) : "SnowboardIdle";
     s.currentPose=desired;
     const poseIdentity=`${desired}:${s.inAir && s.trick ? s.trick.id : "base"}`;
-    if(active.current?.id !== poseIdentity){
-      const prev=active.current?.action, next=actions[desired]||actions.SnowboardIdle;
-      if(next){
-        // Same clip can be queued twice. Restarting its AnimationAction is
-        // required; comparing only the clip name used to silently skip it.
-        if(prev===next)next.stop();
-        next.reset();
-        next.enabled=true;
-        const oneShot=!!s.trick && s.inAir || recoveryMode==="falling" || (recoveryMode==="remounting" && desired!=="SnowboardCruise");
-        next.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, oneShot?1:Infinity);
-        next.clampWhenFinished=oneShot;
-        next.timeScale=s.trick ? next.getClip().duration / Math.max(.15,s.trick.duration) :
-          recoveryMode==="remounting" && desired==="SnowboardRemount" ? next.getClip().duration/.78 :
-          recoveryMode==="remounting" && desired==="Run" ? next.getClip().duration/.36 : 1;
-        next.fadeIn(prev===next ? .06 : .13).play();
-        if(prev && prev!==next)prev.fadeOut(.13);
+    if(phaseRef.current!=="paused"){
+      const oneShot=!!s.trick && s.inAir || desired==="SnowboardOllie" || desired==="SnowboardLanding" ||
+        recoveryMode==="falling" || (recoveryMode==="remounting" && desired!=="SnowboardCruise");
+      const clip=animations.find(a=>a.name===desired);
+      const duration=recoveryMode==="falling" && profile.plush ? (s.recovery.kind==="wipeout"?.95:.72) : s.trick && s.inAir ? Math.max(.15,s.trick.duration) :
+        desired==="SnowboardLanding" ? .45 :
+        recoveryMode==="remounting" && desired==="SnowboardRemount" ? .78 :
+        recoveryMode==="remounting" && desired==="Run" ? .36 : null;
+      animator.setPose(desired,poseIdentity,{oneShot,timeScale:duration?clip.duration/duration:1,fadeSeconds:recoveryMode==="falling"?.06:.13});
+      if(recoveryMode==="chasing" && s.recovery){
+        const end=s.recovery.kind==="wipeout"?2.57:1.97;
+        const approach=smoothstep((s.recovery.t-(end-.40))/.40);
+        animator.setSpeed("Run",1-.70*approach);
       }
-      active.current={id:poseIdentity,action:next};
+      animator.update(dt);
     }
-    if(recoveryMode==="chasing" && s.recovery && actions.Run){
-      // Brake before the board instead of running full-speed into its edge.
-      const end=s.recovery.kind==="wipeout"?2.57:1.97;
-      const approach=smoothstep((s.recovery.t-(end-.40))/.40);
-      actions.Run.timeScale=1-.70*approach;
-    }
-    if(phaseRef.current!=="paused")mixer.update(dt);
 
     const cy = groundY(s.x, s.z);
     const deck=snowSurfaceAt(s.x,s.z,localChunks,groundY);
@@ -1288,12 +1287,20 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
           Math.sin(approachFacing-initialBoardYaw),
           Math.cos(approachFacing-initialBoardYaw)
         );
-        riderModel.current.rotation.y=Math.PI/2 + (chasing ? approachFacing*getUp :
-          falling ? (fallen?.modelTurn||0) :
-          motion.boardYaw+facingOffset*(1-motion.turnP));
+        if(profile.plush){
+          const travelYaw=Math.atan2(motion.approachDX,motion.approachDZ);
+          const boardFacing=Math.PI/2+motion.boardYaw;
+          const turnDelta=Math.atan2(Math.sin(travelYaw-boardFacing),Math.cos(travelYaw-boardFacing));
+          riderModel.current.rotation.y=falling ? Math.PI/2+(fallen?.modelTurn||0) :
+            chasing ? Math.PI/2+Math.atan2(Math.sin(travelYaw-Math.PI/2),Math.cos(travelYaw-Math.PI/2))*getUp :
+            boardFacing+turnDelta*(1-motion.turnP);
+        }else{
+          riderModel.current.rotation.y=Math.PI/2 + (chasing ? approachFacing*getUp :
+            falling ? (fallen?.modelTurn||0) : motion.boardYaw+facingOffset*(1-motion.turnP));
+        }
         // The board stays put while the rider hops on. Move both together only
         // for the last push-off, restoring the normal snowboard binding height.
-        riderModel.current.position.y=lerp(.06,RIDER_BINDING_HEIGHT,hopP)
+        riderModel.current.position.y=lerp(.06,profile.bindingHeight,hopP)
           + (mountP>.71 && mountP<.90 ? .10*Math.sin(Math.PI*(mountP-.71)/.19) : 0);
         // Capsule-like pose/ground collision for the skinned rider. A sideways
         // fall rotates its broad head/body below the feet; simply putting the
@@ -1329,10 +1336,12 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
         }
         riderCarrier.current.position.y += Math.max(0,skeletonLift);
       } else {
-        riderCarrier.current.position.set(0, 0, 0);
-        riderCarrier.current.rotation.set(0, 0, 0);
+        riderCarrier.current.position.set(0, profile.plush ? board.current.position.y : 0, 0);
+        // Both soles follow the deck on slopes and grabs, not just the world root.
+        if(profile.plush)riderCarrier.current.rotation.copy(board.current.rotation);
+        else riderCarrier.current.rotation.set(0, 0, 0);
         riderModel.current.rotation.y = Math.PI / 2;
-        riderModel.current.position.y = RIDER_BINDING_HEIGHT;
+        riderModel.current.position.y = profile.bindingHeight;
       }
     }
     if (crashBoard.current) {
@@ -1649,8 +1658,8 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
     <group ref={stance}>
       <group ref={board}><Snowboard /></group>
       <group ref={riderCarrier}>
-        <group ref={riderModel}>
-          <primitive object={character} dispose={null} scale={.86} />
+        <group ref={riderModel} position-x={profile.offsetX}>
+          <primitive object={character} dispose={null} scale={profile.scale} />
         </group>
       </group>
     </group>
@@ -1661,7 +1670,7 @@ function Rider({ mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef
 function Loading() {
   return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
 }
-function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
+function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
   return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
     <color attach="background" args={["#bfd9e6"]}/>
     <fog attach="fog" args={["#bfd9e6",30,138]}/>
@@ -1677,9 +1686,11 @@ function Scene({mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinis
     <Snow64ObstacleShatterVFX stateRef={stateRef} groundY={groundY} mobile={mobile}/>
     <FrostMushroom stateRef={stateRef}/>
     <Mountains stateRef={stateRef}/>
+    <Snow360RiderBoundary key={`${rider}:${mobile}:${assetAttempt}`} onError={onRiderError}>
     <Suspense fallback={<Loading/>}>
-      <Rider mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
+      <Rider rider={rider} onReady={onRiderReady} mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
     </Suspense>
+    </Snow360RiderBoundary>
     <Snowfall mobile={mobile} stateRef={stateRef}/>
     <BoardTrail mobile={mobile} stateRef={stateRef}/>
   </Snow64TextureProvider></Snow64ModelProvider>;
@@ -2153,10 +2164,23 @@ function Snow360Logo({ startScreen = false, mobile = false }) {
   </div>;
 }
 
-export default function SnowboardGame(){
+export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderStatus}){
   const [phase,setPhase]=useState("ready");
   const [runKey,setRunKey]=useState(0);
   const [mobile,setMobile]=useState(null);
+  const [loadedRider,setLoadedRider]=useState(null);
+  const [riderError,setRiderError]=useState(null);
+  const [assetAttempt,setAssetAttempt]=useState(0);
+  const riderReady=loadedRider===`${rider}:${mobile}` && !riderError;
+  const onRiderReady=useCallback(token=>{setLoadedRider(token);setRiderError(null);},[]);
+  const onRiderError=useCallback(message=>{setRiderError(message);setLoadedRider(null);},[]);
+  useEffect(()=>{setRiderError(null);},[rider,mobile]);
+  useEffect(()=>{onRiderStatus?.({ready:riderReady,error:riderError});},[riderReady,riderError,onRiderStatus]);
+  const retryRider=()=>{
+    const profile=getSnow360Rider(rider);
+    useGLTF.clear(mobile?profile.mobile:profile.desktop);
+    setRiderError(null);setLoadedRider(null);setAssetAttempt(n=>n+1);
+  };
   // Default to clean HD. The retro filter is opt-in on the title screen only.
   const [retro,setRetro]=useState(false);
   // Default to classic drawing; selectable on the start / new-run screen.
@@ -2201,13 +2225,14 @@ export default function SnowboardGame(){
     return()=>m.removeEventListener?.("change",update);
   },[]);
   const start=useCallback(()=>{
+    if(!riderReady)return;
     input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;
     queue.current.length=0;collected.current.clear();state.current=initialState(mobile?1:0);
     cameraOrbit.current.yaw=0;cameraOrbit.current.pitch=0;cameraOrbit.current.dragging=false;
     // Start audio only on this user gesture (required by mobile browsers).
     if(soundRef.current)unlockSnow64Audio();
     setHud(safeHud(state.current));setRunKey(k=>k+1);setPhase("playing");sound("start");
-  },[sound,mobile]);
+  },[sound,mobile,riderReady]);
   const onFinish=useCallback(h=>{
     setHud(h);setPhase("finished");
     setBest(b=>{const v=Math.max(b,h.peakScore);try{localStorage.setItem("pidgeonkitty-snow-64-best",String(v));}catch{}return v;});
@@ -2251,7 +2276,7 @@ export default function SnowboardGame(){
     return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",blur);};
   },[act,start,pause]);
   const currentBest=Math.max(best,hud.peakScore);
-  return <main onContextMenu={e=>{if(mobile)e.preventDefault();}} style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif",touchAction:mobile?"none":"auto",overscrollBehavior:"none",userSelect:mobile?"none":"auto",WebkitUserSelect:mobile?"none":"auto"}}>
+  return <main data-rider={rider} data-rider-ready={riderReady} data-game-phase={phase} onContextMenu={e=>{if(mobile)e.preventDefault();}} style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif",touchAction:mobile?"none":"auto",overscrollBehavior:"none",userSelect:mobile?"none":"auto",WebkitUserSelect:mobile?"none":"auto"}}>
     <style>{`
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
       @keyframes snowboardFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
@@ -2276,7 +2301,7 @@ export default function SnowboardGame(){
     `}</style>
     <div style={{position:"absolute",inset:0,zIndex:0}}>
       {mobile!==null && <Canvas key={retro ? "retro" : "hd"} dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.1:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
-        <Scene mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
+        <Scene rider={rider} assetAttempt={assetAttempt} onRiderReady={onRiderReady} onRiderError={onRiderError} mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>
     <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
@@ -2385,8 +2410,10 @@ export default function SnowboardGame(){
               font:"900 11px system-ui,sans-serif",letterSpacing:".055em",cursor:"pointer",touchAction:"manipulation"}}>
             N64 FILTER: {retro?"ON":"OFF"}
           </button>
+          {onRiderChange && <Snow360RiderSecret rider={rider} onChange={onRiderChange}/>}
+          {riderError && <div role="alert">The rider could not load. <button type="button" onClick={retryRider}>Retry rider</button></div>}
         </div>}
-        <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RIDE AGAIN"}</div>
+        <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{!riderReady?"LOADING RIDER…":phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RIDE AGAIN"}</div>
         <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>{trickMode==="draw"?"RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS":"RIGHT HALF: TAP TO JUMP · USE THE ICONS FOR ALL TRICKS"}</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>{trickMode==="draw"?"1–0 / F = TRICKS":"TAP ICON BUTTONS OR USE 1–0 / F FOR TRICKS"} &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}

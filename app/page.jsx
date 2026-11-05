@@ -3,8 +3,8 @@ import Snow64ReactiveMusic from "../components/Snow64ReactiveMusic";
 import Snow360TrickOverlay from "../components/Snow360TrickOverlay";
 
 export const metadata = {
-  title: "PidgeonKitty Snow 64 | Downhill Freestyle",
-  description: "Pidgeon Kitty snowboarding arcade game with carving, jumping, spins and tricks.",
+  title: "SNOW360 | Alien Cat Downhill Freestyle",
+  description: "Ride with the plush Alien Cat in SNOW360: carving, jumps, spins and tricks on an endless snowy course.",
 };
 
 export default function HomePage() {

@@ -5,6 +5,10 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useProgress } from "@react-three/drei";
 import SnowboardGame from "./SnowboardGame";
 import Snow64StartCeremony from "./Snow64StartCeremony";
+import Snow360RiderSecret from "./Snow360RiderSecret";
+import Snow360RiderBoundary from "./Snow360RiderBoundary";
+import { useSnow360RiderPreference } from "./snow360RiderSettings";
+import { getSnow360Rider } from "./snow360RiderConfig";
 import { Snow64ModelProvider } from "./snow64VisualModels";
 import { unlockSnow64Audio, setSnow64AudioEnabled } from "./snow64Audio";
 import { startSnow64Music } from "./snow64Music";
@@ -29,7 +33,7 @@ function WelcomeHDRSky({ mobile }) {
   </Suspense>;
 }
 
-function WelcomeScene({mobile,stage,onComplete}) {
+function WelcomeScene({rider,onError,mobile,stage,onComplete}) {
   return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
     <color attach="background" args={["#bfd9e6"]}/>
     <fog attach="fog" args={["#bfd9e6",30,138]}/>
@@ -39,8 +43,10 @@ function WelcomeScene({mobile,stage,onComplete}) {
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
     <Suspense fallback={null}>
       <Snow64IntroCourse mobile={mobile}/>
-      <Snow64StartCeremony mobile={mobile} phase={stage === "ready" ? "ready" : "intro"}
+      <Snow360RiderBoundary key={`${rider}:${mobile}`} onError={onError}>
+      <Snow64StartCeremony riderId={rider} mobile={mobile} phase={stage === "ready" ? "ready" : "intro"}
         onComplete={onComplete} groundY={introGroundY}/>
+      </Snow360RiderBoundary>
     </Suspense>
   </Snow64TextureProvider></Snow64ModelProvider>;
 }
@@ -56,6 +62,9 @@ function WelcomeToggle({label,checked,onClick}) {
 }
 
 export default function Snow64Welcome(){
+  const [rider,setRider]=useSnow360RiderPreference();
+  const [riderStatus,setRiderStatus]=useState({ready:false,error:null});
+  const [introError,setIntroError]=useState(null);
   const [stage,setStage]=useState("ready");
   const [mobile,setMobile]=useState(null);
   const [trickButtons,setTrickButtons]=useState(false);
@@ -66,11 +75,13 @@ export default function Snow64Welcome(){
   const [assetsReady,setAssetsReady]=useState(false);
   const {active: loadingActive, progress: loadingProgress, total: loadTotal} = useProgress();
   const committed=useRef(false);
+  const canPlay=assetsReady && riderStatus.ready && !introError;
+  useEffect(()=>{setAssetsReady(false);setIntroError(null);},[rider,mobile]);
   const onComplete=useCallback(()=>setStage(s=>s === "intro" ? "handoff" : s),[]);
   // Wait until the actual game Canvas AND shared Three.js loader have finished
   // their initial jobs. Optional endless-course items are loaded on demand.
   useEffect(()=>{
-    if(stage!=="ready" || assetsReady)return;
+    if(stage!=="ready" || assetsReady || !riderStatus.ready || introError)return;
     const check=()=>{
       const gameCanvas=document.querySelector('main canvas');
       const readyMenu=document.querySelector('[data-snow64-settings="true"]');
@@ -81,7 +92,7 @@ export default function Snow64Welcome(){
     check();
     const poll=setInterval(check,160);
     return()=>clearInterval(poll);
-  },[stage,assetsReady,loadingActive,loadingProgress,loadTotal]);
+  },[stage,assetsReady,loadingActive,loadingProgress,loadTotal,riderStatus.ready,introError]);
   useEffect(()=>{
     if(stage!=="fade")return;
     const timer=setTimeout(()=>setStage("done"),650);
@@ -94,7 +105,7 @@ export default function Snow64Welcome(){
     return()=>media.removeEventListener?.("change",update);
   },[]);
   const play=useCallback(()=>{
-    if(stage!=="ready" || !assetsReady)return;
+    if(stage!=="ready" || !canPlay)return;
     // Must happen in this actual pointer/key gesture for mobile audio access.
     setSnow64AudioEnabled(soundOn);
     if(soundOn) unlockSnow64Audio();
@@ -102,7 +113,7 @@ export default function Snow64Welcome(){
     // unlocks playback on mobile, before the gameplay scene is mounted.
     if(musicOn) void startSnow64Music();
     setStage("intro");
-  },[stage,soundOn,musicOn,assetsReady]);
+  },[stage,soundOn,musicOn,canPlay]);
   useEffect(()=>{
     if(stage!=="ready")return;
     const down=e=>{
@@ -164,7 +175,7 @@ export default function Snow64Welcome(){
 
   return <>
     {/* The real game loads, creates all its geometry and starts rendering NOW. */}
-    <SnowboardGame/>
+    <SnowboardGame rider={rider} onRiderChange={setRider} onRiderStatus={setRiderStatus}/>
     {stage!=="done" && <style>{`
       main > div:has([data-snow64-settings="true"]) {visibility:hidden!important;pointer-events:none!important;}
       main > div:has(.snow64-hud) {visibility:hidden!important;pointer-events:none!important;}
@@ -178,7 +189,7 @@ export default function Snow64Welcome(){
         gl={{antialias:true,alpha:false,powerPreference:"high-performance"}}
         style={{position:"absolute",inset:0,pointerEvents:"none",
           opacity:assetsReady?1:0,transition:"opacity .72s ease-out"}}>
-        <WelcomeScene mobile={mobile} stage={stage} onComplete={onComplete}/>
+        <WelcomeScene rider={rider} onError={setIntroError} mobile={mobile} stage={stage} onComplete={onComplete}/>
       </Canvas>}
       {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,zIndex:1,
         pointerEvents:"none",background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#23546833 4px)",
@@ -233,16 +244,16 @@ export default function Snow64Welcome(){
       }}>
         {/* The resting menu contains only these two controls. */}
         <div style={{display:"flex",gap:8,alignItems:"stretch"}}>
-          <button type="button" onClick={play} disabled={!assetsReady}
-            aria-label={assetsReady?"Play Snow360":"Loading course"}
+          <button type="button" onClick={play} disabled={!canPlay}
+            aria-label={canPlay?"Play Snow360":"Loading course"}
             style={{minWidth:0,flex:1,padding:"12px 12px",borderRadius:15,
               background:"linear-gradient(125deg,#ffe9a9,#ffd4dd 47%,#cebaff 100%)",
               color:"#255273",border:"1.6px solid #fff9f0",
               boxShadow:"0 3px 0 #c8a9b8,0 5px 12px #a57d9d38",
-              font:"1000 21px system-ui,sans-serif",letterSpacing:".12em",cursor:assetsReady?"pointer":"wait",
-              opacity:assetsReady?1:.65,touchAction:"manipulation",
+              font:"1000 21px system-ui,sans-serif",letterSpacing:".12em",cursor:canPlay?"pointer":"wait",
+              opacity:canPlay?1:.65,touchAction:"manipulation",
               textShadow:"0 1px 0 #ffffff9c",transition:"transform .18s ease,box-shadow .18s ease",
-            }}>{assetsReady?"▶ PLAY":"LOADING…"}</button>
+            }}>{canPlay?"▶ PLAY":"LOADING…"}</button>
           <button type="button" aria-label={settingsOpen?"Close settings":"Open settings"}
             aria-expanded={settingsOpen} aria-controls="snow360-intro-settings"
             onClick={()=>setSettingsOpen(v=>!v)}
@@ -261,6 +272,9 @@ export default function Snow64Welcome(){
             <span style={{font:"850 7px system-ui,sans-serif",letterSpacing:".045em",lineHeight:1}}>SETTINGS</span>
           </button>
         </div>
+        {(riderStatus.error || introError) && <p role="alert" style={{color:"#873350",fontSize:12}}>
+          The rider could not load. <button type="button" onClick={()=>window.location.reload()}>Retry</button> or choose the original rider in Settings.
+        </p>}
         <div id="snow360-intro-settings" inert={!settingsOpen} aria-hidden={!settingsOpen}
           style={{display:"grid",gridTemplateRows:settingsOpen?"1fr":"0fr",
             opacity:settingsOpen?1:0,transition:"grid-template-rows .32s ease,opacity .25s ease"}}>
@@ -273,7 +287,7 @@ export default function Snow64Welcome(){
                 PIDGEONKITTY PRESENTS · DOWNHILL FREESTYLE
               </p>
               <p style={{margin:"0 0 13px",font:"650 11px/1.45 system-ui",color:"#3c6080"}}>
-                WAVE HELLO! PidgeonKitty is waiting at the start.
+                WAVE HELLO! {getSnow360Rider(rider).name} is waiting at the start.
                 Press PLAY to wave, walk onto the snowboard, and ride!
               </p>
               <div role="group" aria-label="Trick controls" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:9}}>
@@ -291,6 +305,7 @@ export default function Snow64Welcome(){
                 <WelcomeToggle label="MUSIC" checked={musicOn} onClick={()=>setMusicOn(v=>!v)}/>
                 <WelcomeToggle label="N64 FILTER" checked={retro} onClick={()=>setRetro(v=>!v)}/>
               </div>
+              <Snow360RiderSecret rider={rider} onChange={setRider} tone="light"/>
               <p style={{margin:"7px 1px 0",color:"#3e6685",font:"750 10px/1.55 system-ui"}}>
                 {mobile?"LEFT: CARVE / TUCK · RIGHT: JUMP / TRICKS":"A/D: CARVE · W: TUCK · SPACE: JUMP · P: PAUSE"}
               </p>

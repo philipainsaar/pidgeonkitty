@@ -6,7 +6,8 @@ import { useGLTF } from "@react-three/drei";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import * as THREE from "three";
 import { useSnowModel, SnowGLBVisual } from "./snow64VisualModels";
-import { SNOW64_MODEL_PATHS } from "./snow64ModelConfig";
+import { getSnow360Rider, assertSnow360Clips } from "./snow360RiderConfig";
+import { createSnow360RiderAnimator } from "./snow360RiderAnimator";
 
 const FRONT_REVEAL = 1.15;
 const WALK_END = 2.18;
@@ -29,43 +30,27 @@ function findWaveBone(root) {
   return score >= 6 ? best : null;
 }
 
-export default function Snow64StartCeremony({ mobile, phase, onComplete, groundY }) {
-  const { scene, animations } = useGLTF(mobile ? SNOW64_MODEL_PATHS.riderMobile : SNOW64_MODEL_PATHS.riderDesktop);
+export default function Snow64StartCeremony({ riderId="alien-cat", mobile, phase, onComplete, groundY }) {
+  const profile=getSnow360Rider(riderId);
+  const { scene, animations } = useGLTF(mobile ? profile.mobile : profile.desktop);
+  useMemo(()=>assertSnow360Clips(animations),[animations]);
   const character = useMemo(() => cloneSkinned(scene), [scene]);
-  const mixer = useMemo(() => new THREE.AnimationMixer(character), [character]);
-  const actions = useMemo(
-    () => Object.fromEntries(animations.map(clip => [clip.name, mixer.clipAction(clip)])),
-    [animations, mixer],
-  );
+  const animator=useMemo(()=>createSnow360RiderAnimator(character,animations),[character,animations]);
+  const clips=useMemo(()=>Object.fromEntries(animations.map(c=>[c.name,c])),[animations]);
   const waveBone = useMemo(() => findWaveBone(character), [character]);
   const root = useRef(), rider = useRef(), board = useRef(), dust = useRef();
-  const previousPhase = useRef(null), elapsed = useRef(0), finished = useRef(false), active = useRef(null);
+  const previousPhase = useRef(null), elapsed = useRef(0), finished = useRef(false);
   const asset = useSnowModel("snowboard"), { camera } = useThree();
   const aim = useMemo(() => new THREE.Vector3(), []), goal = useMemo(() => new THREE.Vector3(), []);
   const matchingGameCamera = useMemo(() => new THREE.Vector3(), []), gameAim = useMemo(() => new THREE.Vector3(), []);
 
-  useEffect(() => () => {
-    mixer.stopAllAction();
-    active.current = null;
-    previousPhase.current = null;
-  }, [mixer]);
-
+  useEffect(() => {
+    animator.reset();
+    return () => {animator.dispose();previousPhase.current = null;};
+  }, [animator]);
   const animate = (name, speed = 1) => {
-    const action = actions[name] || actions.SnowboardIdle || actions.Idle || Object.values(actions)[0];
-    if (!action) return;
-    if (active.current !== action) {
-      const old = active.current;
-      const oneShot = name === "SnowboardRemount" && !!actions.SnowboardRemount;
-      action.reset();
-      action.enabled = true;
-      action.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, oneShot ? 1 : Infinity);
-      action.clampWhenFinished = oneShot;
-      action.setEffectiveWeight(1);
-      action.fadeIn(.18).play();
-      if (old && old !== action) old.fadeOut(.18);
-      active.current = action;
-    }
-    action.timeScale = speed;
+    animator.setPose(name,name,{oneShot:name==="SnowboardRemount",timeScale:speed,fadeSeconds:.18});
+    animator.setSpeed(name,speed);
   };
 
   useFrame(({ clock }, delta) => {
@@ -74,7 +59,7 @@ export default function Snow64StartCeremony({ mobile, phase, onComplete, groundY
       previousPhase.current = phase;
       elapsed.current = 0;
       finished.current = false;
-      if (phase === "ready") { mixer.stopAllAction(); active.current = null; }
+      if (phase === "ready") { animator.reset(); }
     }
 
     const playing = phase === "intro";
@@ -85,13 +70,13 @@ export default function Snow64StartCeremony({ mobile, phase, onComplete, groundY
     const z = lerp(1.80, 0, walkP);
     const y = groundY(0, z);
 
-    if (!playing || t < .95) animate(actions.Wave ? "Wave" : actions.SnowboardIdle ? "SnowboardIdle" : "Idle", .75);
-    else if (t < WALK_END) animate(actions.Walk ? "Walk" : "Run", .9);
-    else animate(actions.SnowboardRemount ? "SnowboardRemount" : "SnowboardIdle",
-      actions.SnowboardRemount ? actions.SnowboardRemount.getClip().duration / (MOUNT_END - WALK_END) : 1);
-
-    mixer.update(dt);
-    if (waveBone && !actions.Wave) {
+    const waveName=clips[profile.wave] ? profile.wave : "SnowboardIdle";
+    if (!playing || t < .95) animate(waveName, .9);
+    else if (t < WALK_END) animate(clips.Walk ? "Walk" : "Run", .9);
+    else if(t < MOUNT_END) animate("SnowboardRemount",clips.SnowboardRemount.duration/(MOUNT_END-WALK_END));
+    else animate("SnowboardCruise");
+    animator.update(dt);
+    if (waveBone && !clips[profile.wave]) {
       const waveAmount = playing ? 1 - ease((t - .45) / .60) : 1;
       waveBone.rotation.x += waveAmount * (.22 + .15 * Math.sin(clock.elapsedTime * 5.5));
       waveBone.rotation.z += waveAmount * (.25 + .31 * Math.sin(clock.elapsedTime * 5.5));
@@ -99,8 +84,11 @@ export default function Snow64StartCeremony({ mobile, phase, onComplete, groundY
 
     if (root.current) root.current.position.set(0, y + .12, z);
     if (rider.current) {
-      rider.current.rotation.y = Math.PI / 2;
-      rider.current.position.y = lerp(.10, .33, mountP) + (!playing ? .026 * Math.sin(clock.elapsedTime * 2.3) : 0);
+      rider.current.rotation.y = profile.plush ? lerp(Math.PI,Math.PI/2,mountP) : Math.PI/2;
+      rider.current.position.x = profile.offsetX*mountP;
+      rider.current.position.y = profile.plush
+        ? lerp(-.12-.013*profile.scale,profile.bindingHeight,mountP)
+        : lerp(.10, profile.bindingHeight, mountP) + (!playing ? .026 * Math.sin(clock.elapsedTime * 2.3) : 0);
     }
     if (board.current) {
       board.current.position.set(lerp(.80, 0, mountP), lerp(1.16, .04, mountP), .09 * (1 - mountP));
@@ -151,7 +139,7 @@ export default function Snow64StartCeremony({ mobile, phase, onComplete, groundY
   return <>
     <group ref={root}>
       <group ref={rider}>
-        <primitive object={character} dispose={null} scale={.86} />
+        <primitive object={character} dispose={null} scale={profile.scale} />
       </group>
       <group ref={board}>
         {asset ? <SnowGLBVisual asset={asset} type="snowboard" dimensions={[.74, .25, 2.43]} />

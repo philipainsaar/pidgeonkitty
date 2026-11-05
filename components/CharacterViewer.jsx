@@ -1,79 +1,31 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
-import { Html, OrbitControls, useAnimations, useGLTF } from "@react-three/drei";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { Html, OrbitControls, useGLTF } from "@react-three/drei";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import * as THREE from "three";
+import { getSnow360Rider, SNOW360_GAME_CLIPS } from "./snow360RiderConfig";
+import { createSnow360RiderAnimator } from "./snow360RiderAnimator";
+import Snow360RiderBoundary from "./Snow360RiderBoundary";
 
-/** Both GLBs contain the same 16-bone rig and the same named animations. */
-export const CHARACTER_MODEL_WEB = "/models/character-animated.glb";
-export const CHARACTER_MODEL_MOBILE = "/models/character-animated-mobile.glb";
-export const CHARACTER_ANIMATIONS = [
-  "Idle",
-  "Walk",
-  "Run",
-  "Hop",
-  "Dance",
-  "LookAround",
-  "Sleep",
-  "Celebrate",
-];
+export const CHARACTER_MODEL_WEB = getSnow360Rider("alien-cat").desktop;
+export const CHARACTER_MODEL_MOBILE = getSnow360Rider("alien-cat").mobile;
+export const CHARACTER_ANIMATIONS = [...SNOW360_GAME_CLIPS,
+  "Idle_Breathe", "Wave_Hello", "Hop_Soft", "HeadTilt_Curious", "Dance_Happy",
+  "Antenna_Wiggle", "Tail_Swish", "Blink_Natural"];
 
-/**
- * Drop-in skinned character for any existing <Canvas>.
- *
- * <AnimatedCharacter animation="Walk" />
- * <AnimatedCharacter animation="Celebrate" modelUrl={CHARACTER_MODEL_MOBILE} />
- *
- * You can also pass position, rotation, scale, onClick, etc.
- * All motions are stored inside the GLB; they don't require procedural updates.
- */
-export function AnimatedCharacter({
-  animation = "Idle",
-  modelUrl = CHARACTER_MODEL_WEB,
-  playing = true,
-  speed = 1,
-  fadeDuration = 0.25,
-  ...props
-}) {
-  const { scene, animations } = useGLTF(modelUrl);
-
-  // Important: SkeletonUtils.clone preserves the relationship between each
-  // SkinnedMesh, its bones, and its skin. scene.clone() alone may break it.
-  const character = useMemo(() => cloneSkeleton(scene), [scene]);
-  const { actions } = useAnimations(animations, character);
-  const activeAction = useRef(null);
-
-  useEffect(() => {
-    const next = actions[animation] ?? actions.Idle;
-    if (!next) return;
-
-    const previous = activeAction.current;
-    if (previous === next) return;
-
-    // The poses blend seamlessly between all eight embedded skeletal clips.
-    next.reset();
-    next.enabled = true;
-    next.setLoop(THREE.LoopRepeat, Infinity);
-    next.setEffectiveWeight(1);
-    next.fadeIn(fadeDuration);
-    next.play();
-
-    if (previous) previous.fadeOut(fadeDuration);
-    activeAction.current = next;
-  }, [actions, animation, fadeDuration]);
-
-  useEffect(() => {
-    // Apply pause/speed to all actions, including a fading-out previous action.
-    for (const action of Object.values(actions)) {
-      if (!action) continue;
-      action.paused = !playing;
-      action.timeScale = Math.max(0.05, Number(speed) || 1);
-    }
-  }, [actions, playing, speed, animation]);
-
-  return <primitive object={character} dispose={null} {...props} />;
+/** The same exported model and animation controller used in the game. */
+export function AnimatedCharacter({animation="SnowboardIdle",modelUrl=CHARACTER_MODEL_WEB,playing=true,speed=1,...props}){
+  const {scene,animations}=useGLTF(modelUrl);
+  const character=useMemo(()=>cloneSkeleton(scene),[scene]);
+  const animator=useMemo(()=>createSnow360RiderAnimator(character,animations),[character,animations]);
+  useEffect(()=>{animator.reset();return ()=>animator.dispose();},[animator]);
+  useEffect(()=>{
+    animator.setPose(animation,animation,{fadeSeconds:playing?.18:0});
+    animator.update(0);
+  },[animator,animation,playing]);
+  useFrame((_,dt)=>{if(playing)animator.update(Math.min(dt,.05)*speed);});
+  return <primitive object={character} dispose={null} {...props}/>;
 }
 
 function LoadingModel() {
@@ -91,7 +43,7 @@ function LoadingModel() {
  * In an existing R3F scene, use <AnimatedCharacter /> instead.
  */
 export default function CharacterViewer({
-  initialAnimation = "Idle",
+  initialAnimation = "SnowboardIdle",
   showControls = true,
   height = "min(75vh, 680px)",
   background = "#0b1222",
@@ -151,14 +103,15 @@ export default function CharacterViewer({
           <Canvas
             dpr={[1, isMobile ? 1.25 : 1.6]}
             shadows={false}
-            camera={{ position: [2.2, 1.5, -3.4], fov: 37, near: 0.08, far: 50 }}
+            camera={{ position: [2.2, 1.5, 3.4], fov: 37, near: 0.08, far: 50 }}
             gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
             style={{ position: "absolute", inset: 0 }}
           >
             <ambientLight intensity={1.45} />
             <hemisphereLight args={["#e5f1ff", "#34445c", 1.3]} />
-            <directionalLight position={[-3, 5, -4]} intensity={2.1} />
+            <directionalLight position={[-3, 5, 4]} intensity={2.1} />
             <directionalLight position={[3, 2.5, 3]} intensity={1.0} color="#b3c9ff" />
+            <Snow360RiderBoundary key={modelUrl}>
             <Suspense fallback={<LoadingModel />}>
               <AnimatedCharacter
                 animation={animation}
@@ -167,10 +120,11 @@ export default function CharacterViewer({
                 speed={speed}
                 onClick={(e) => {
                   e.stopPropagation();
-                  chooseAnimation("Celebrate");
+                  chooseAnimation("Wave_Hello");
                 }}
               />
             </Suspense>
+            </Snow360RiderBoundary>
             <OrbitControls
               target={[0, 0.84, 0]}
               minDistance={1.4}
@@ -184,7 +138,7 @@ export default function CharacterViewer({
           </Canvas>
         )}
         <div style={{ position: "absolute", bottom: 14, left: 16, opacity: 0.7, fontSize: 12, pointerEvents: "none" }}>
-          Drag to rotate · Scroll to zoom · Tap character to celebrate
+          Drag to rotate · Scroll to zoom · Tap character to wave
         </div>
       </div>
 
@@ -192,8 +146,8 @@ export default function CharacterViewer({
         <div style={{ padding: "18px 18px 20px", display: "grid", gap: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <strong style={{ fontSize: 16 }}>Animated character</strong>
-              <div style={{ fontSize: 12, color: "#9eafc9", marginTop: 4 }}>16-bone rig · 8 embedded GLB animations</div>
+              <strong style={{ fontSize: 16 }}>Alien Cat</strong>
+              <div style={{ fontSize: 12, color: "#9eafc9", marginTop: 4 }}>15 riding motions · 8 character animations</div>
             </div>
             <select
               aria-label="Model quality"
