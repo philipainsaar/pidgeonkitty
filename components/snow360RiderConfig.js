@@ -12,7 +12,7 @@ const riders = Object.freeze({
     id: "alien-cat", name: "Alien Cat",
     desktop: "/models/alien-cat-snow360.glb",
     mobile: "/models/alien-cat-snow360-mobile.glb",
-    scale: .86, bindingHeight: .169, offsetX: .16,
+    scale: 1.36, bindingHeight: .169, offsetX: .16,
     wave: "Wave_Hello", plush: true,
   }),
   pidgeonkitty: Object.freeze({
