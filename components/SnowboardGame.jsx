@@ -2169,7 +2169,7 @@ function Snow360Logo({ startScreen = false, mobile = false }) {
   </div>;
 }
 
-export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderStatus}){
+export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderStatus,renderActive=true}){
   const [phase,setPhase]=useState("ready");
   const [runKey,setRunKey]=useState(0);
   const [mobile,setMobile]=useState(null);
@@ -2305,7 +2305,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       @media(max-width:680px){.snow64-label{font-size:8px}.snow64-panel{padding:5px 8px}.snow64-hud{gap:5px!important}}
     `}</style>
     <div style={{position:"absolute",inset:0,zIndex:0}}>
-      {mobile!==null && <Canvas key={retro ? "retro" : "hd"} dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.1:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
+      {mobile!==null && <Canvas frameloop={renderActive?"always":"demand"} key={retro ? "retro" : "hd"} dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.1:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
         <Scene rider={rider} assetAttempt={assetAttempt} onRiderReady={onRiderReady} onRiderError={onRiderError} mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>

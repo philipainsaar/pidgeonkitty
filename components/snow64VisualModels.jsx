@@ -47,19 +47,30 @@ export function describeSnowModel(gltf) {
   };
 }
 
+// Welcome and gameplay share immutable geometry/materials. Cache the pending
+// load as well as the result so two mounted scenes do not decode each GLB twice.
+const staticModelLoads = new Map();
+function loadStaticModel(path) {
+  if (!staticModelLoads.has(path)) {
+    const pending = new GLTFLoader().loadAsync(path).then(describeSnowModel).catch(() => {
+      staticModelLoads.delete(path); return null;
+    });
+    staticModelLoads.set(path, pending);
+  }
+  return staticModelLoads.get(path);
+}
+
 /** Failure is nonfatal: any missing GLB simply keeps the default scenery. */
 export function Snow64ModelProvider({children}) {
   const [models, setModels] = useState({});
   useEffect(() => {
     let cancelled = false;
-    const loader = new GLTFLoader();
     for (const [name, path] of Object.entries(SNOW64_MODEL_PATHS)) {
       // The animated rider is managed by useGLTF, not this static prop loader.
       if (!path || name === "riderDesktop" || name === "riderMobile") continue;
-      loader.load(path, gltf => {
-        const model = describeSnowModel(gltf);
+      loadStaticModel(path).then(model => {
         if (model && !cancelled) setModels(prev => ({...prev, [name]: model}));
-      }, undefined, () => { /* Optional file not found: use built-in model. */ });
+      });
     }
     return () => { cancelled = true; };
   }, []);

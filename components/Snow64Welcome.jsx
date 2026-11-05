@@ -175,7 +175,7 @@ export default function Snow64Welcome(){
 
   return <>
     {/* The real game loads, creates all its geometry and starts rendering NOW. */}
-    <SnowboardGame rider={rider} onRiderChange={setRider} onRiderStatus={setRiderStatus}/>
+    <SnowboardGame renderActive={stage!=="ready" && stage!=="intro"} rider={rider} onRiderChange={setRider} onRiderStatus={setRiderStatus}/>
     {stage!=="done" && <style>{`
       main > div:has([data-snow64-settings="true"]) {visibility:hidden!important;pointer-events:none!important;}
       main > div:has(.snow64-hud) {visibility:hidden!important;pointer-events:none!important;}
