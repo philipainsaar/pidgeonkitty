@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { useSnowModel, SnowGLBInstances } from "./snow64VisualModels";
+import { useSnowModel, SnowGLBInstances, SnowGLBVisual } from "./snow64VisualModels";
 import { useSnow64TerrainMaterials, useSnow64SkylineMaterial, useSnow64CorePlanetFilmMaterial } from "./snow64VisualMaterials";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
 import { getSnowChunk, SNOW_CHUNK_LENGTH } from "./snow64Endless";
@@ -100,14 +100,37 @@ function PreviewRocks({rocks}){
     <dodecahedronGeometry args={[1,0]}/><meshLambertMaterial color="#a1b5c1" flatShading/>
   </mesh>)}</group>;
 }
-function PreviewMarkers({banners}){
-  return <group>{banners.filter(b=>b.z>-170).map(b=><group key={b.id}
-    position={[b.side*12.8,introGroundY(b.side*12.8,b.z),b.z]}>
-    <mesh position={[0,2.3,0]}><cylinderGeometry args={[.06,.09,4.6,5]}/>
-      <meshLambertMaterial color="#d4f9ff"/></mesh>
-    <mesh position={[b.side*.62,3.55,0]}><boxGeometry args={[1.25,.65,.08]}/>
-      <meshBasicMaterial color={b.side>0?"#ff77ab":"#f8bb66"} side={THREE.DoubleSide}/></mesh>
-  </group>)}</group>;
+// V93: The intro markers use the same inner shoulder placement as the
+// real downhill, safely clear of the V92 Sundae trees. They also accept
+// the editable course-marker GLB when the artist adds it to public/models.
+const INTRO_MARKER_SIDE_X = 8.6;
+const INTRO_MARKER_MOBILE_X = 5.5;
+const INTRO_MARKER_UPHILL_SHIFT = 12.0;
+function PreviewMarkers({banners,mobile}){
+  const custom=useSnowModel("courseMarker");
+  return <group name="SNOW360 Intro Course Markers">
+    {banners.filter(b=>b.z>-170).map(b=>{
+      // Mobile's trees move inward for the portrait framing; keep the
+      // signs farther inward too, well outside their near-side canopies.
+      const x=b.side*(mobile ? INTRO_MARKER_MOBILE_X : INTRO_MARKER_SIDE_X);
+      const z=b.z+INTRO_MARKER_UPHILL_SHIFT;
+      return <group key={b.id} position={[x,introGroundY(x,z),z]}>
+        {custom ? (
+          <SnowGLBVisual asset={custom} type="courseMarker" dimensions={[2.0,4.6,.45]}/>
+        ) : <>
+          <mesh position={[0,2.3,0]}>
+            <cylinderGeometry args={[.06,.09,4.6,5]}/>
+            <meshLambertMaterial color="#d4f9ff"/>
+          </mesh>
+          <mesh position={[b.side*.62,3.55,0]}>
+            <boxGeometry args={[1.25,.65,.08]}/>
+            <meshBasicMaterial color={b.side>0?"#ff77ab":"#f8bb66"}
+              side={THREE.DoubleSide}/>
+          </mesh>
+        </>}
+      </group>;
+    })}
+  </group>;
 }
 
 // SNOW360 V9: all four existing Big Air GLBs become permanent intro scenery.
@@ -238,7 +261,7 @@ export default function Snow64IntroCourse({mobile}){
     <PreviewTrees trees={trees} mobile={mobile}/>
     <PreviewTokens coins={coins}/>
     <PreviewRocks rocks={rocks}/>
-    <PreviewMarkers banners={banners}/>
+    <PreviewMarkers banners={banners} mobile={mobile}/>
     {ramps.map(r=><Snow360CloudRamp key={r.id} {...r} groundHeight={introGroundY(r.x,r.z)}/>)}
   </>;
 }

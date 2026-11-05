@@ -262,14 +262,19 @@ function FrostMushroom({stateRef}) {
   </group>;
 }
 
+// V93: Put the markers on the open inside shoulder rather than beneath
+// the Sundae tree canopies. Visual-only: no rider physics are changed.
+const COURSE_MARKER_SIDE_X = 8.6;
+const COURSE_MARKER_UPHILL_SHIFT = 12.0;
 function CourseMarker({ z, side }) {
   const custom=useSnowModel("courseMarker");
-  const x = side * 12.25;
-  if (custom) return <group position={[x,groundY(x,z),z]}>
+  const x = side * COURSE_MARKER_SIDE_X;
+  const markerZ = z + COURSE_MARKER_UPHILL_SHIFT;
+  if (custom) return <group position={[x,groundY(x,markerZ),markerZ]}>
     <SnowGLBVisual asset={custom} type="courseMarker" dimensions={[2.0,4.6,.45]}/>
   </group>;
   return (
-    <group position={[x, groundY(x,z), z]}>
+    <group position={[x, groundY(x,markerZ), markerZ]}>
       <mesh position={[0,2.3,0]}><cylinderGeometry args={[.06,.09,4.6,5]} /><meshLambertMaterial color="#d4f9ff" /></mesh>
       <mesh position={[side*.62,3.55,0]}><boxGeometry args={[1.25,.65,.08]} /><meshBasicMaterial color={side>0?"#ff77ab":"#f8bb66"} side={THREE.DoubleSide} /></mesh>
     </group>
