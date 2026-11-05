@@ -1,0 +1,1040 @@
+{
+  "clips": [
+    {
+      "name": "SnowboardWipeout",
+      "samples": [
+        {
+          "frame": 1,
+          "soleMin": 0.012951252982020378,
+          "footMaxDisplacement": 2.567281262599863e-05,
+          "intersections": 0,
+          "maxDihedral": 29.091583343821267,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.091583343821267,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2757694274187088,
+                -0.133552851776282,
+                1.2733114560445151
+              ]
+            },
+            {
+              "degrees": 28.412953547698265,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.4561117192109426,
+                -0.07216186014314493,
+                0.49680364628632867
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 2,
+          "soleMin": 0.013306967914104462,
+          "footMaxDisplacement": 0.006838743109256029,
+          "intersections": 0,
+          "maxDihedral": 31.78332579235982,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 31.78332579235982,
+              "canonical_edge": [
+                4847,
+                7635
+              ],
+              "center": [
+                0.1595849518974622,
+                -0.06332570314407349,
+                1.3599222302436829
+              ]
+            },
+            {
+              "degrees": 31.004468362233673,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.16121082256237665,
+                -0.06326865715285142,
+                1.358877976735433
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 3,
+          "soleMin": 0.014028577134013176,
+          "footMaxDisplacement": 0.020574860274791718,
+          "intersections": 0,
+          "maxDihedral": 40.3028293207962,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 40.3028293207962,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.1616535906990369,
+                -0.03917308337986469,
+                1.3569934169451394
+              ]
+            },
+            {
+              "degrees": 32.80628976187668,
+              "canonical_edge": [
+                4745,
+                11539
+              ],
+              "center": [
+                0.16051352272431055,
+                -0.040296267097194985,
+                1.358613113562266
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 4,
+          "soleMin": 0.014007841236889362,
+          "footMaxDisplacement": 0.031045664101839066,
+          "intersections": 0,
+          "maxDihedral": 40.87364569118299,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 40.87364569118299,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.16591533770163852,
+                -0.04364016590019067,
+                1.357470174630483
+              ]
+            },
+            {
+              "degrees": 32.1689087621861,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.17145190636316937,
+                -0.07326444114247957,
+                1.3582715392112732
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 5,
+          "soleMin": 0.013928583823144436,
+          "footMaxDisplacement": 0.032425057142972946,
+          "intersections": 0,
+          "maxDihedral": 41.11954643223447,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 41.11954643223447,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.16638965904712677,
+                -0.04255873151123524,
+                1.3573188781738281
+              ]
+            },
+            {
+              "degrees": 32.42421946192091,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.17194949587186178,
+                -0.07219154015183449,
+                1.3580173055330913
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 6,
+          "soleMin": 0.01412149053066969,
+          "footMaxDisplacement": 0.03410763666033745,
+          "intersections": 0,
+          "maxDihedral": 41.247663518982534,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 41.247663518982534,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.1663164421916008,
+                -0.03452370346834262,
+                1.3550074497858682
+              ]
+            },
+            {
+              "degrees": 32.568817384745536,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.1718770017226537,
+                -0.06415341421961784,
+                1.3559804558753967
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 7,
+          "soleMin": 0.014402450062334538,
+          "footMaxDisplacement": 0.03657301515340805,
+          "intersections": 0,
+          "maxDihedral": 41.31782108645096,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 41.31782108645096,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.1661587009827296,
+                -0.022650739488502342,
+                1.3510737220446267
+              ]
+            },
+            {
+              "degrees": 32.61597006670799,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.17171373963356018,
+                -0.05226295813918114,
+                1.3525370359420776
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 8,
+          "soleMin": 0.014607256278395653,
+          "footMaxDisplacement": 0.03914741054177284,
+          "intersections": 0,
+          "maxDihedral": 41.29987435982708,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 41.29987435982708,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.16599848618110022,
+                -0.010293027812925477,
+                1.3462389508883157
+              ]
+            },
+            {
+              "degrees": 32.59313046942942,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.17152928809324902,
+                -0.039875153452157974,
+                1.3482663234074912
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 9,
+          "soleMin": 0.01478679571300745,
+          "footMaxDisplacement": 0.041155193001031876,
+          "intersections": 0,
+          "maxDihedral": 41.214902503248865,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 41.214902503248865,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.16592309375603995,
+                -0.0008004343447585901,
+                1.341349681218465
+              ]
+            },
+            {
+              "degrees": 32.48338772116854,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.17139318585395813,
+                -0.03035101077208916,
+                1.343874216079712
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 10,
+          "soleMin": 0.015040074475109577,
+          "footMaxDisplacement": 0.0401139035820961,
+          "intersections": 0,
+          "maxDihedral": 40.99172770549997,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 40.99172770549997,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.16534430285294852,
+                0.0032284110008428497,
+                1.3373843828837075
+              ]
+            },
+            {
+              "degrees": 32.2746325382012,
+              "canonical_edge": [
+                4745,
+                11539
+              ],
+              "center": [
+                0.16424028078715006,
+                0.0021418973337858915,
+                1.3391722043355305
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 11,
+          "soleMin": 0.015201284550130367,
+          "footMaxDisplacement": 0.03611856698989868,
+          "intersections": 0,
+          "maxDihedral": 40.63903059934092,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 40.63903059934092,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.16408402224381766,
+                0.004191587640283009,
+                1.3337835868199668
+              ]
+            },
+            {
+              "degrees": 32.75211086778083,
+              "canonical_edge": [
+                4745,
+                11539
+              ],
+              "center": [
+                0.16295835375785828,
+                0.003165054329050084,
+                1.3355086644490561
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 12,
+          "soleMin": 0.014831255190074444,
+          "footMaxDisplacement": 0.030737703666090965,
+          "intersections": 0,
+          "maxDihedral": 40.20021057657243,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 40.20021057657243,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.16236891597509384,
+                0.005594577582087368,
+                1.3299705982208252
+              ]
+            },
+            {
+              "degrees": 33.22171770819628,
+              "canonical_edge": [
+                4745,
+                11539
+              ],
+              "center": [
+                0.1612184519569079,
+                0.00463017417738835,
+                1.3316313227017722
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 13,
+          "soleMin": 0.014459604397416115,
+          "footMaxDisplacement": 0.024758728221058846,
+          "intersections": 0,
+          "maxDihedral": 39.787193023316966,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 39.787193023316966,
+              "canonical_edge": [
+                7636,
+                20080
+              ],
+              "center": [
+                0.1604035620888074,
+                0.007368857002196213,
+                1.327081878980001
+              ]
+            },
+            {
+              "degrees": 33.54418424874203,
+              "canonical_edge": [
+                4745,
+                11539
+              ],
+              "center": [
+                0.15922917673985162,
+                0.006455709076059671,
+                1.3286914229393005
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 14,
+          "soleMin": 0.014108385890722275,
+          "footMaxDisplacement": 0.018974922597408295,
+          "intersections": 0,
+          "maxDihedral": 31.946826488720824,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 31.946826488720824,
+              "canonical_edge": [
+                4847,
+                7635
+              ],
+              "center": [
+                0.16097045689821243,
+                -0.022128634465237457,
+                1.33149786790212
+              ]
+            },
+            {
+              "degrees": 30.841594560121315,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.16259475300709406,
+                -0.02219089213758707,
+                1.3304647008577983
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 15,
+          "soleMin": 0.013841447420418262,
+          "footMaxDisplacement": 0.014181611128151417,
+          "intersections": 0,
+          "maxDihedral": 30.696846836455094,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 30.696846836455094,
+              "canonical_edge": [
+                15418,
+                20077
+              ],
+              "center": [
+                0.1605357974767685,
+                -0.02293666700522105,
+                1.33201132218043
+              ]
+            },
+            {
+              "degrees": 30.10063067911934,
+              "canonical_edge": [
+                11890,
+                16189
+              ],
+              "center": [
+                0.3270381589730581,
+                -0.10312297691901526,
+                0.5592214465141296
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 16,
+          "soleMin": 0.01367359608411789,
+          "footMaxDisplacement": 0.011160752736032009,
+          "intersections": 0,
+          "maxDihedral": 30.349746903117556,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 30.349746903117556,
+              "canonical_edge": [
+                11890,
+                16189
+              ],
+              "center": [
+                0.3272678256034851,
+                -0.10445209840933481,
+                0.5602925717830658
+              ]
+            },
+            {
+              "degrees": 29.09100555428695,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2751764257748922,
+                -0.1033447397251924,
+                1.2535245815912883
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 17,
+          "soleMin": 0.013625872321426868,
+          "footMaxDisplacement": 0.010502371937036514,
+          "intersections": 0,
+          "maxDihedral": 29.271962423223417,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.271962423223417,
+              "canonical_edge": [
+                11890,
+                16189
+              ],
+              "center": [
+                0.3279230246941248,
+                -0.10406167184313138,
+                0.561548004547755
+              ]
+            },
+            {
+              "degrees": 29.091082295619575,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.27514487008253735,
+                -0.1032328022023042,
+                1.2567328015963235
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 18,
+          "soleMin": 0.013625872321426868,
+          "footMaxDisplacement": 0.010502371937036514,
+          "intersections": 0,
+          "maxDihedral": 29.09212088768745,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09212088768745,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.27536410093307495,
+                -0.10275193924705188,
+                1.2594576080640159
+              ]
+            },
+            {
+              "degrees": 28.46722387147201,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.43414922058582306,
+                -0.07417124137282372,
+                0.4746422668298086
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 19,
+          "soleMin": 0.013624594546854496,
+          "footMaxDisplacement": 0.010484608821570873,
+          "intersections": 0,
+          "maxDihedral": 29.090969308043334,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.090969308043334,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.275518407424291,
+                -0.10189865405360857,
+                1.2613865733146667
+              ]
+            },
+            {
+              "degrees": 28.46703592245812,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.43523265918095905,
+                -0.07573610357940197,
+                0.4759200712045034
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 20,
+          "soleMin": 0.0136088402941823,
+          "footMaxDisplacement": 0.01026544813066721,
+          "intersections": 0,
+          "maxDihedral": 29.090038281673497,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.090038281673497,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2756058871746063,
+                -0.10064936801791191,
+                1.2625508308410645
+              ]
+            },
+            {
+              "degrees": 28.46669563859983,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.4358445306619008,
+                -0.0766268689185381,
+                0.47664472957452136
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 21,
+          "soleMin": 0.013578737154603004,
+          "footMaxDisplacement": 0.009839744307100773,
+          "intersections": 0,
+          "maxDihedral": 29.09162891460845,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09162891460845,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2756465723117193,
+                -0.0989347423116366,
+                1.2632013360659282
+              ]
+            },
+            {
+              "degrees": 28.466573816384425,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.43613337973753613,
+                -0.07704910325507322,
+                0.476987565557162
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 22,
+          "soleMin": 0.013538917526602745,
+          "footMaxDisplacement": 0.009262645617127419,
+          "intersections": 0,
+          "maxDihedral": 29.09080079918537,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09080079918537,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2756622085968653,
+                -0.09674718851844469,
+                1.2635881503423054
+              ]
+            },
+            {
+              "degrees": 28.466898763160653,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.4362483074267705,
+                -0.07721738889813423,
+                0.4771239707867304
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 23,
+          "soleMin": 0.013493933714926243,
+          "footMaxDisplacement": 0.008589464239776134,
+          "intersections": 0,
+          "maxDihedral": 29.09067461308532,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09067461308532,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.27566717068354285,
+                -0.09417873620986938,
+                1.2638652125994363
+              ]
+            },
+            {
+              "degrees": 28.46659538090925,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.4362870206435521,
+                -0.07727413872877756,
+                0.4771699508031209
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 24,
+          "soleMin": 0.013447909615933895,
+          "footMaxDisplacement": 0.007875416427850723,
+          "intersections": 0,
+          "maxDihedral": 29.09102167757883,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09102167757883,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2756684770186742,
+                -0.09151667232314746,
+                1.2640888492266336
+              ]
+            },
+            {
+              "degrees": 28.466573854292257,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.43629805246988934,
+                -0.07729038037359715,
+                0.47718312839667
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 25,
+          "soleMin": 0.01340445876121521,
+          "footMaxDisplacement": 0.007175365928560495,
+          "intersections": 0,
+          "maxDihedral": 29.091526180727737,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.091526180727737,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2756687800089518,
+                -0.09151424964269002,
+                1.26409383614858
+              ]
+            },
+            {
+              "degrees": 28.46700669607878,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.43630077441533405,
+                -0.0772943707803885,
+                0.47718646128972375
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 26,
+          "soleMin": 0.013366568833589554,
+          "footMaxDisplacement": 0.006543046794831753,
+          "intersections": 0,
+          "maxDihedral": 29.09106823507963,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09106823507963,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.27566883464654285,
+                -0.09151376038789749,
+                1.2640948295593262
+              ]
+            },
+            {
+              "degrees": 28.466618748572493,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.4363013456265131,
+                -0.07729519406954448,
+                0.4771870275338491
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 27,
+          "soleMin": 0.01333676092326641,
+          "footMaxDisplacement": 0.00608155969530344,
+          "intersections": 0,
+          "maxDihedral": 29.09152268656194,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09152268656194,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.27566883464654285,
+                -0.09151364614566167,
+                1.2640951474507651
+              ]
+            },
+            {
+              "degrees": 28.466420961838356,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.43630143006642663,
+                -0.07729532321294148,
+                0.4771871864795685
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 28,
+          "soleMin": 0.013317259028553963,
+          "footMaxDisplacement": 0.005792423151433468,
+          "intersections": 0,
+          "maxDihedral": 29.09167902404302,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.09167902404302,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2756689290205637,
+                -0.09151362379391989,
+                1.2640951474507651
+              ]
+            },
+            {
+              "degrees": 28.46649666706524,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.4363014350334803,
+                -0.07729536108672619,
+                0.4771872063477834
+              ]
+            }
+          ]
+        },
+        {
+          "frame": 29,
+          "soleMin": 0.013310214504599571,
+          "footMaxDisplacement": 0.005686325486749411,
+          "intersections": 0,
+          "maxDihedral": 29.091580288361598,
+          "degenerateTriangles": 0,
+          "examples": [],
+          "creaseExamples": [
+            {
+              "degrees": 29.091580288361598,
+              "canonical_edge": [
+                11976,
+                16457
+              ],
+              "center": [
+                0.2756689290205637,
+                -0.09151361758510271,
+                1.2640951474507651
+              ]
+            },
+            {
+              "degrees": 28.466461055343245,
+              "canonical_edge": [
+                13914,
+                19205
+              ],
+              "center": [
+                -0.4363014350334803,
+                -0.07729537474612394,
+                0.4771872063477834
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "restBounds": {
+    "min": [
+      -0.5100014805793762,
+      -0.43401676416397095,
+      0.012951252982020378
+    ],
+    "max": [
+      0.5093382596969604,
+      0.384502649307251,
+      1.6938220262527466
+    ]
+  },
+  "feetVertexCount": 1066,
+  "status": "PASS",
+  "sampleCount": 29,
+  "scope": "Native evaluated body at all 29 authored wipeout frames. Runtime supplies world-space fall, slide and board movement; continuous-time runtime collision is not asserted."
+}

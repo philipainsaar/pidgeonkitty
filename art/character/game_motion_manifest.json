@@ -1,0 +1,107 @@
+[
+  {
+    "name": "SnowboardIdle",
+    "duration": 4.0,
+    "frames": 97,
+    "loop": true,
+    "description": "Quiet binding stance with breathing and a small look around"
+  },
+  {
+    "name": "SnowboardCruise",
+    "duration": 2.0,
+    "frames": 49,
+    "loop": true,
+    "description": "Balanced riding with soft upper-body absorption"
+  },
+  {
+    "name": "SnowboardTuck",
+    "duration": 2.0,
+    "frames": 49,
+    "loop": true,
+    "description": "Low aerodynamic crouch, arms forward and tucked"
+  },
+  {
+    "name": "SnowboardCarveLeft",
+    "duration": 2.0,
+    "frames": 49,
+    "loop": true,
+    "description": "Left-edge anticipation with counterbalanced arms"
+  },
+  {
+    "name": "SnowboardCarveRight",
+    "duration": 2.0,
+    "frames": 49,
+    "loop": true,
+    "description": "Right-edge anticipation with counterbalanced arms"
+  },
+  {
+    "name": "SnowboardOllie",
+    "duration": 0.75,
+    "frames": 19,
+    "loop": false,
+    "description": "Compress, extend and gather; gameplay owns jump height"
+  },
+  {
+    "name": "SnowboardLanding",
+    "duration": 0.5,
+    "frames": 13,
+    "loop": false,
+    "description": "Impact compression, antenna follow-through and recovery"
+  },
+  {
+    "name": "SnowboardIndy",
+    "duration": 0.75,
+    "frames": 19,
+    "loop": false,
+    "description": "Front-facing compact grab gesture"
+  },
+  {
+    "name": "SnowboardMethod",
+    "duration": 0.9583333333333334,
+    "frames": 24,
+    "loop": false,
+    "description": "Asymmetric extended method silhouette"
+  },
+  {
+    "name": "SnowboardTailgrab",
+    "duration": 0.7916666666666666,
+    "frames": 20,
+    "loop": false,
+    "description": "Reach toward rear binding with opposite arm balancing"
+  },
+  {
+    "name": "SnowboardNosegrab",
+    "duration": 0.7916666666666666,
+    "frames": 20,
+    "loop": false,
+    "description": "Reach toward front binding with opposite arm balancing"
+  },
+  {
+    "name": "SnowboardFrontflip",
+    "duration": 0.9166666666666666,
+    "frames": 23,
+    "loop": false,
+    "description": "Gather then open; gameplay owns the full rotation"
+  },
+  {
+    "name": "SnowboardWipeout",
+    "duration": 1.1666666666666667,
+    "frames": 29,
+    "loop": false,
+    "description": "Balance loss, asymmetric brace, impact compression and damped settling"
+  },
+  {
+    "name": "SnowboardRemount",
+    "duration": 0.7916666666666666,
+    "frames": 20,
+    "loop": false,
+    "description": "Anticipation, compact airborne remount and planted finish"
+  },
+  {
+    "name": "Run",
+    "duration": 0.6666666666666666,
+    "frames": 17,
+    "loop": true,
+    "description": "Alternating short plush strides with opposed arm swing"
+  }
+]
