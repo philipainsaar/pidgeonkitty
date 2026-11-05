@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
+import { snow360SpatialBatches } from "./snow360SpatialBatches";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 import Snow64StartCastle from "./Snow64StartCastle";
@@ -127,6 +128,13 @@ function treeHash(tree, index, salt) {
  * Each GLB mesh is instanced, so an authored multi-part tree remains efficient.
  */
 export function SnowGLBInstances({asset, type, items, pose, hidden, animated=false}) {
+  const spatial = type === "sundaeForest" && !animated && !hidden;
+  const batches = useMemo(() => spatial ? snow360SpatialBatches(items) : [{key:"all",items}], [items,spatial]);
+  return <group>{batches.map(batch => <SnowGLBInstanceBatch key={batch.key}
+    asset={asset} type={type} items={batch.items} pose={pose} hidden={hidden} animated={animated}/>)}</group>;
+}
+
+function SnowGLBInstanceBatch({asset, type, items, pose, hidden, animated=false}) {
   const refs = useRef([]);
   const poseRef = useRef(pose);
   poseRef.current = pose;
@@ -177,12 +185,15 @@ export function SnowGLBInstances({asset, type, items, pose, hidden, animated=fal
         mesh.setMatrixAt(i,scratch.mat);
       }
       mesh.instanceMatrix.needsUpdate = true;
+      // Static batches keep exact geometry but need bounds after placement.
+      // Animated/hidden batches retain their existing uncullable behavior.
+      if (!animated && !hidden) mesh.computeBoundingSphere();
     }
   };
   useEffect(() => { update(0); }, [asset,items,scratch,treeVariation]);
   useFrame(({clock}) => { if (animated || hidden) update(clock.elapsedTime); });
   return <group>
     {asset.meshes.map((part,i)=><instancedMesh key={i} ref={v=>{refs.current[i]=v;}}
-      args={[part.geometry,part.material,items.length]} frustumCulled={false} dispose={null}/>) }
+      args={[part.geometry,part.material,items.length]} frustumCulled={!animated && !hidden} dispose={null}/>) }
   </group>;
 }

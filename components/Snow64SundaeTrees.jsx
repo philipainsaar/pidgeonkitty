@@ -228,6 +228,7 @@ function SnowAtTreeRoots({ items, groundY }) {
     });
 
     mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
   }, [items, groundY, scratch, map]);
 
   if (!map || !items.length) return null;
@@ -236,7 +237,7 @@ function SnowAtTreeRoots({ items, groundY }) {
     <instancedMesh
       ref={meshRef}
       args={[null, null, items.length]}
-      frustumCulled={false}
+      frustumCulled
       castShadow={false}
       receiveShadow={false}
     >
