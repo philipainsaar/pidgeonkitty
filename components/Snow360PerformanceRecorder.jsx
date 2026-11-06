@@ -11,7 +11,7 @@ export default function Snow360PerformanceRecorder({ phase, stateRef }) {
 }
 
 function Recorder({ phase, stateRef }) {
-  const { gl } = useThree();
+  const { gl, scene } = useThree();
   const frameStart = useRef(0);
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
@@ -32,8 +32,15 @@ function Recorder({ phase, stateRef }) {
       const link = document.createElement("a");
       link.href=download; link.download="snow360-profile.json"; link.textContent="Save report";
       Object.assign(link.style,{color:"#fff39b",marginLeft:"12px"}); node.appendChild(link);
+      const compare = document.createElement("button");
+      compare.textContent = "Compare original drawing";
+      compare.onclick = () => {
+        scene.userData.snowOriginalDrawing = !scene.userData.snowOriginalDrawing;
+        compare.textContent = scene.userData.snowOriginalDrawing ? "Restore optimized drawing" : "Compare original drawing";
+      };
+      node.appendChild(compare);
     }
-  },[status,download]);
+  },[status,download,scene]);
   useEffect(() => () => { if (download) URL.revokeObjectURL(download); }, [download]);
   useFrame(() => { frameStart.current = performance.now(); stateRef.current.profileTiming = true; stateRef.current.animationMs = 0; }, -1000);
 
@@ -45,7 +52,7 @@ function Recorder({ phase, stateRef }) {
     let started = null, last = null, done = false, lastLabel = -1, activeMs = 0;
     const finish = () => {
       done = true;
-      const report = { version: 1, label: "forest-culling-579a21a", gpuTimerSupported: !!ext,
+      const report = { version: 1, label: "visible-star-instances", gpuTimerSupported: !!ext,
         pixelRatio: gl.getPixelRatio(), width: gl.domElement.width, height: gl.domElement.height,
         notes: "Frame intervals are browser cadence, not display FPS. CPU render is submission time, not GPU execution. Update time covers R3F frame callbacks. GPU queries sample every 15th frame; disjoint samples discarded.",
         activeMs, frames, gpu };

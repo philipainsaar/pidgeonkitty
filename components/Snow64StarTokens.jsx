@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
+import { createSnowDynamicCuller, registerSnowCulling } from "./snow360InstanceCulling";
 import * as THREE from "three";
 
 // V74: same rounded five-point star, same game physics/animation,
@@ -163,6 +164,15 @@ export default function Snow64StarTokens({
   const rings = useRef(null);
   const bursts = useRef(new Map());
   const seenCollected = useRef(new Set());
+  const scene = useThree(state=>state.scene);
+  useEffect(() => {
+    const fields = [[body.current,0],[shell.current,.04],[glow.current,0],[rings.current,0]];
+    if (!items.length || fields.some(([mesh])=>!mesh)) return;
+    const cullers=fields.map(([mesh,padding])=>createSnowDynamicCuller(mesh,items.length,padding));
+    return registerSnowCulling(scene,camera=>{
+      for (const cull of cullers) cull(camera,!scene.userData.snowOriginalDrawing);
+    });
+  },[items,scene]);
 
   const geometry = useMemo(makeRoundedStarGeometry, []);
   const bodyMaterial = useMemo(() => new THREE.MeshPhysicalMaterial({
