@@ -21,3 +21,17 @@ test('diagnostic render changes restore visibility and exact material identities
  mesh.visible=false; restore=experiment.apply(scene,'no-star-glow'); restore(); assert.equal(mesh.visible,false);
  experiment.dispose(); mesh.geometry.dispose(); mat.dispose();
 });
+test('tree trials leave unrelated shared materials untouched and restore source',()=>{
+ const scene=new Scene(), group=new Group();group.name='Snow360Trees';scene.add(group);
+ const material=new MeshStandardMaterial();const tree=new Mesh(new BoxGeometry(),material), rider=new Mesh(tree.geometry,material);
+ group.add(tree);scene.add(rider);const experiment=createRenderDiagnostics();
+ for (const variant of ['tree-diffuse','tree-front-faces','tree-unlit']) {
+  const restore=experiment.apply(scene,variant);
+  assert.notEqual(tree.material,material);assert.equal(rider.material,material);
+  if(variant==='tree-diffuse')assert.equal(tree.material.isMeshLambertMaterial,true);
+  if(variant==='tree-front-faces')assert.equal(tree.material.side,0);
+  restore();assert.equal(tree.material,material);
+ }
+ assert.equal(diagnosticWindow(3500,'trees').variant,'tree-diffuse');
+ experiment.dispose();tree.geometry.dispose();material.dispose();
+});

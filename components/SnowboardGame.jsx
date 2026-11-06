@@ -363,7 +363,7 @@ function BoardTrail({stateRef,mobile}) {
     ref.current.geometry.attributes.position.needsUpdate=true;
   });
   return <points ref={ref} frustumCulled={false}>
-    <bufferGeometry><bufferAttribute attach="attributes-position" array={coords} count={num} itemSize={3}/></bufferGeometry>
+    <bufferGeometry key={num}><bufferAttribute attach="attributes-position" array={coords} count={num} itemSize={3}/></bufferGeometry>
     <pointsMaterial color="#faffff" map={sprayTexture} alphaTest={sprayTexture ? .08 : 0} size={.18} transparent opacity={.86} depthWrite={false} sizeAttenuation/>
   </points>;
 }
@@ -388,7 +388,7 @@ function Snowfall({ stateRef,mobile }) {
     points.current.geometry.attributes.position.needsUpdate=true;
   });
   return <points ref={points} frustumCulled={false}>
-    <bufferGeometry><bufferAttribute attach="attributes-position" array={coords} count={count} itemSize={3}/></bufferGeometry>
+    <bufferGeometry key={count}><bufferAttribute attach="attributes-position" array={coords} count={count} itemSize={3}/></bufferGeometry>
     <pointsMaterial color="#ffffff" map={flakeTexture} alphaTest={flakeTexture ? .04 : 0} size={.13} transparent opacity={.85} depthWrite={false} sizeAttenuation />
   </points>;
 }

@@ -46,10 +46,11 @@ function Recorder({ phase, stateRef }) {
   useFrame(() => { frameStart.current = performance.now(); stateRef.current.profileTiming = true; stateRef.current.animationMs = 0; }, -1000);
 
   useEffect(() => {
-    const diagnostic = new URLSearchParams(location.search).get("diagnose") === "1";
+    const diagnosticMode = new URLSearchParams(location.search).get("diagnose");
+    const diagnostic = diagnosticMode === "1" || diagnosticMode === "trees";
     const experiment = diagnostic ? createRenderDiagnostics() : null;
-    const duration = diagnostic ? DIAGNOSTIC_SECONDS : 60;
-    if (diagnostic) setStatus("Render comparison: play for 120 seconds; restart after each run");
+    const duration = diagnosticMode === "trees" ? 72 : diagnostic ? DIAGNOSTIC_SECONDS : 60;
+    if (diagnostic) setStatus(`Render comparison: play for ${duration} seconds; restart after each run`);
     const context = gl.getContext();
     const ext = context.getExtension("EXT_disjoint_timer_query_webgl2");
     const original = gl.render;
@@ -57,7 +58,7 @@ function Recorder({ phase, stateRef }) {
     let started = null, last = null, done = false, lastLabel = -1, activeMs = 0;
     const finish = () => {
       done = true;
-      const report = { version: 1, label: diagnostic ? "render-isolation-v1" : "visible-star-instances", diagnostic, gpuTimerSupported: !!ext,
+      const report = { version: 1, label: diagnosticMode === "trees" ? "tree-material-isolation-v1" : diagnostic ? "render-isolation-v1" : "visible-star-instances", diagnostic, diagnosticMode, gpuTimerSupported: !!ext,
         pixelRatio: gl.getPixelRatio(), width: gl.domElement.width, height: gl.domElement.height,
         notes: "Frame intervals are browser cadence, not display FPS. CPU render is submission time, not GPU execution. Update time covers R3F frame callbacks. GPU queries sample every 15th frame; disjoint samples discarded.",
         activeMs, frames, gpu };
@@ -91,7 +92,7 @@ function Recorder({ phase, stateRef }) {
         query = context.createQuery();
         if (query) context.beginQuery(ext.TIME_ELAPSED_EXT,query);
       }
-      const window = diagnostic ? diagnosticWindow(activeMs) : { variant: "baseline", settled: true };
+      const window = diagnostic ? diagnosticWindow(activeMs, diagnosticMode) : { variant: "baseline", settled: true };
       const restore = experiment?.apply(args[0], window.variant);
       const before = performance.now();
       let result;
