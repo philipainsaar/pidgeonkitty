@@ -264,242 +264,216 @@ function FrostMushroom({stateRef}) {
   </group>;
 }
 
-// SNOW360 candy-chevron course markers. Procedural, mobile-friendly and visual-only.
-// Replaces both the old flag fallback AND the optional courseMarker GLB; the
-// physical course, collisions, ramps, trees and generated banner positions stay intact.
-const COURSE_MARKER_SIDE_X = 12.35; // Snowbank shoulder, beyond the rider's 11.15m steering limit.
+// SNOW360 V8: Original V3 dreamy neon signs, DIRECTION FIX ONLY.
+// The same glowing arrow texture and candy-striped poles are preserved.
+// Every arrow lies in the vertical YZ plane and points downhill along -Z.
+const COURSE_MARKER_SIDE_X = 12.35;
 const COURSE_MARKER_UPHILL_SHIFT = 12.0;
 const CANDY_MARKER_COUNT = 5;
-const CANDY_MARKER_SPACING = 1.92;
-const candyChevronTextureCache = new Map();
+const CANDY_MARKER_SPACING = 2.85;
+const CANDY_MARKER_SIGN_X_OFFSET = 0.34;
+const CANDY_MARKER_CONNECTOR_X = 0.19;
+const dreamyChevronTextureCache = new Map();
 
-function candyRoundRect(ctx,x,y,w,h,r){
-  const rr=Math.min(r,w/2,h/2);
+function dreamyChevronStroke(ctx){
+  // A bold, friendly > shape, drawn as a wide rounded ribbon, NOT a signboard.
   ctx.beginPath();
-  ctx.moveTo(x+rr,y);
-  ctx.lineTo(x+w-rr,y);ctx.quadraticCurveTo(x+w,y,x+w,y+rr);
-  ctx.lineTo(x+w,y+h-rr);ctx.quadraticCurveTo(x+w,y+h,x+w-rr,y+h);
-  ctx.lineTo(x+rr,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-rr);
-  ctx.lineTo(x,y+rr);ctx.quadraticCurveTo(x,y,x+rr,y);
+  ctx.moveTo(146,147);
+  ctx.lineTo(344,256);
+  ctx.lineTo(146,365);
+}
+function dreamyFourPointStar(ctx,x,y,r){
+  ctx.beginPath();
+  ctx.moveTo(x,y-r);
+  ctx.quadraticCurveTo(x+r*.17,y-r*.17,x+r,y);
+  ctx.quadraticCurveTo(x+r*.17,y+r*.17,x,y+r);
+  ctx.quadraticCurveTo(x-r*.17,y+r*.17,x-r,y);
+  ctx.quadraticCurveTo(x-r*.17,y-r*.17,x,y-r);
   ctx.closePath();
 }
-function candyChevronPath(ctx){
-  ctx.beginPath();
-  ctx.moveTo(151,212);ctx.lineTo(207,212);ctx.lineTo(350,282);
-  ctx.lineTo(207,352);ctx.lineTo(151,352);ctx.lineTo(282,282);
-  ctx.closePath();
-}
-function candyStarPath(ctx,x,y,outer,inner){
-  ctx.beginPath();
-  for(let i=0;i<10;i++){
-    const a=-Math.PI/2+i*Math.PI/5;
-    const r=i%2?inner:outer;
-    if(i===0)ctx.moveTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
-    else ctx.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
-  }
-  ctx.closePath();
-}
-function makeSnow360CandySignTexture(mobile){
-  if(typeof document==="undefined")return null;
-  const key=mobile?"mobile":"desktop";
-  if(candyChevronTextureCache.has(key))return candyChevronTextureCache.get(key);
-  const size=mobile?384:512;
-  const canvas=document.createElement("canvas");canvas.width=canvas.height=512;
-  const ctx=canvas.getContext("2d");
+function makeSnow360DreamyArrowTexture(mobile,variant=0,halo=false){
+  if(typeof document==='undefined')return null;
+  const key=`arrow:${mobile?'m':'d'}:${variant}:${halo?'halo':'core'}`;
+  if(dreamyChevronTextureCache.has(key))return dreamyChevronTextureCache.get(key);
+  const res=mobile?256:512;
+  const c=document.createElement('canvas');
+  c.width=c.height=res;
+  const ctx=c.getContext('2d');
   if(!ctx)return null;
-  ctx.clearRect(0,0,512,512);
-
-  // Plush, subtly uneven frosting rim around a warm vanilla-waffle sign.
-  ctx.save();
-  ctx.shadowColor="rgba(251,114,191,.65)";ctx.shadowBlur=31;
-  candyRoundRect(ctx,38,116,436,314,72);
-  ctx.fillStyle="#f3b0d6";ctx.fill();
-  ctx.restore();
-  candyRoundRect(ctx,47,126,418,294,64);
-  const frosting=ctx.createLinearGradient(60,120,450,420);
-  frosting.addColorStop(0,"#ffdfef");frosting.addColorStop(.5,"#f4aad7");frosting.addColorStop(1,"#ffd8f2");
-  ctx.fillStyle=frosting;ctx.fill();
-  // Small silky highlights imitate the plush fibers rather than sharp metal.
-  ctx.strokeStyle="rgba(255,255,255,.6)";ctx.lineWidth=9;ctx.stroke();
-  candyRoundRect(ctx,69,145,374,258,49);
-  ctx.fillStyle="#f6d9a7";ctx.fill();
-  ctx.save();
-  candyRoundRect(ctx,69,145,374,258,49);ctx.clip();
-  const cookie=ctx.createLinearGradient(50,150,480,390);
-  cookie.addColorStop(0,"#fff0ce");cookie.addColorStop(.55,"#f3cc93");cookie.addColorStop(1,"#e8b87c");
-  ctx.fillStyle=cookie;ctx.fillRect(65,142,382,268);
-  // Crisscross wafer pattern with soft baked shadows.
-  ctx.lineWidth=9;ctx.strokeStyle="rgba(176,117,72,.22)";
-  for(let k=-520;k<990;k+=42){
-    ctx.beginPath();ctx.moveTo(k,115);ctx.lineTo(k+335,445);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(k,445);ctx.lineTo(k+335,115);ctx.stroke();
+  ctx.scale(res/512,res/512);
+  ctx.lineCap='round';ctx.lineJoin='round';
+  // A few restrained, closely related sorbet colors across the 5 signs.
+  const palettes=[
+    ['#ff8ec8','#ffbbe1','#fff5f9','#fffef3'],
+    ['#ffaac1','#ffddcb','#fff4ea','#fffdec'],
+    ['#c8a9ff','#e1caff','#fff1ff','#fffdfb'],
+    ['#94e8ee','#d0f4fa','#fff9f0','#ffffff'],
+    ['#ff9fdb','#ffd5ef','#fff4fc','#ffffef'],
+  ];
+  const [aura,candy,cream,hot]=palettes[variant%palettes.length];
+  const stroke=(width,color,blur=0,shadow=color)=>{
+    ctx.save();
+    dreamyChevronStroke(ctx);
+    ctx.lineWidth=width;
+    ctx.strokeStyle=color;
+    ctx.shadowColor=shadow;
+    ctx.shadowBlur=blur;
+    ctx.stroke();
+    ctx.restore();
+  };
+  if(halo){
+    // Only glow occupies this transparent canvas: no rectangle/waffle backing.
+    stroke(112,'rgba(255,247,253,.11)',86,aura);
+    stroke(94,'rgba(255,241,253,.28)',64,aura);
+    stroke(72,'rgba(255,252,240,.48)',51,candy);
+    stroke(43,'rgba(255,255,255,.44)',42,cream);
+  }else{
+    // Glossy, chunky candy tube with a hot vanilla-white luminous core.
+    stroke(108,aura,27,aura);
+    stroke(91,candy,15,candy);
+    stroke(71,cream,9,cream);
+    const g=ctx.createLinearGradient(92,160,373,360);
+    g.addColorStop(0,cream);g.addColorStop(.52,hot);g.addColorStop(1,candy);
+    stroke(46,g,8,hot);
+    stroke(19,hot,17,hot);
+    stroke(6,'rgba(255,255,255,.98)',6,'#ffffff');
+    // Tiny glossy breaks make the surface feel like pearly frosting.
+    ctx.save();ctx.globalAlpha=.72;
+    stroke(2.4,'#ffffff',2,'#ffffff');ctx.restore();
   }
-  ctx.lineWidth=3;ctx.strokeStyle="rgba(255,255,239,.58)";
-  for(let k=-520;k<990;k+=42){
-    ctx.beginPath();ctx.moveTo(k+10,115);ctx.lineTo(k+345,445);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(k+10,445);ctx.lineTo(k+345,115);ctx.stroke();
+  // Little floating fairy lights, intentionally isolated from the main sign.
+  const motes=[
+    [91,134,8],[393,140,7],[411,344,8],[105,400,6],[255,88,5],[267,424,5],
+  ];
+  for(let i=0;i<motes.length;i++){
+    const [x,y,r]=motes[i];
+    ctx.save();
+    ctx.fillStyle=i%3===0?'#fff1be':i%3===1?'#d7faff':'#ffe6fa';
+    ctx.shadowColor=aura;ctx.shadowBlur=halo?32:11;
+    dreamyFourPointStar(ctx,x,y,r*(halo?1.5:1));ctx.fill();
+    ctx.restore();
   }
-  ctx.fillStyle="rgba(255,230,242,.16)";ctx.fillRect(66,145,380,263);
-  ctx.restore();
-
-  // Pink candy-striped chevron, with pale yellow neon and a baked soft halo.
-  ctx.save();
-  candyChevronPath(ctx);ctx.shadowColor="#ff81c5";ctx.shadowBlur=39;
-  ctx.lineJoin="round";ctx.lineWidth=32;ctx.strokeStyle="#ffc4e0";ctx.stroke();
-  ctx.restore();
-  ctx.save();candyChevronPath(ctx);ctx.clip();
-  ctx.fillStyle="#fda3c9";ctx.fillRect(110,198,270,175);
-  for(let i=-350;i<760;i+=70){
-    ctx.beginPath();ctx.moveTo(i,175);ctx.lineTo(i+40,175);
-    ctx.lineTo(i+255,390);ctx.lineTo(i+215,390);ctx.closePath();
-    ctx.fillStyle="#ffebf0";ctx.fill();
-  }
-  ctx.restore();
-  ctx.save();candyChevronPath(ctx);
-  ctx.lineJoin="round";ctx.lineWidth=18;
-  ctx.shadowColor="#fffa9e";ctx.shadowBlur=28;
-  ctx.strokeStyle="#fffde4";ctx.stroke();
-  ctx.shadowBlur=0;ctx.lineWidth=5;ctx.strokeStyle="#ffffff";ctx.stroke();
-  ctx.restore();
-
-  // Friendly little vanilla dollop, cherry and bright yellow star.
-  ctx.save();
-  ctx.shadowColor="rgba(244,159,207,.38)";ctx.shadowBlur=11;
-  for(const [xx,yy,rx,ry] of [[244,111,35,25],[270,105,32,28],[294,112,31,25]]){
-    ctx.beginPath();ctx.ellipse(xx,yy,rx,ry,0,0,Math.PI*2);
-    ctx.fillStyle="#fff9ef";ctx.fill();
-  }
-  ctx.restore();
-  ctx.save();ctx.strokeStyle="#8b9955";ctx.lineWidth=5;ctx.lineCap="round";
-  ctx.beginPath();ctx.moveTo(275,92);ctx.quadraticCurveTo(287,61,303,67);ctx.stroke();
-  ctx.beginPath();ctx.arc(272,87,24,0,Math.PI*2);
-  ctx.fillStyle="#f45892";ctx.shadowColor="rgba(255,95,161,.45)";ctx.shadowBlur=11;ctx.fill();
-  ctx.shadowBlur=0;ctx.beginPath();ctx.ellipse(264,76,8,5,-.5,0,Math.PI*2);
-  ctx.fillStyle="rgba(255,255,255,.8)";ctx.fill();ctx.restore();
-  ctx.save();candyStarPath(ctx,91,170,31,19);
-  ctx.shadowColor="rgba(255,210,98,.7)";ctx.shadowBlur=17;
-  ctx.fillStyle="#ffe394";ctx.fill();ctx.shadowBlur=0;
-  ctx.lineWidth=4;ctx.strokeStyle="#fff7c7";ctx.stroke();ctx.restore();
-  // Small satin bow under the cookie plaque.
-  ctx.save();ctx.fillStyle="#ffabce";ctx.strokeStyle="#fff0fa";ctx.lineWidth=4;
-  ctx.beginPath();ctx.ellipse(212,426,23,13,.48,0,Math.PI*2);ctx.fill();ctx.stroke();
-  ctx.beginPath();ctx.ellipse(260,426,23,13,-.48,0,Math.PI*2);ctx.fill();ctx.stroke();
-  ctx.beginPath();ctx.arc(237,426,10,0,Math.PI*2);ctx.fillStyle="#f878b4";ctx.fill();ctx.restore();
-  for(const [x,y,c] of [[393,180,"#bff7e8"],[113,370,"#b8daff"],[399,357,"#ffe5a3"]]){
-    ctx.beginPath();ctx.arc(x,y,5.5,0,Math.PI*2);ctx.fillStyle=c;ctx.fill();
-  }
-
-  // Downsample mobile art before it ever reaches the GPU.
-  let finalCanvas=canvas;
-  if(size!==512){
-    finalCanvas=document.createElement("canvas");
-    finalCanvas.width=finalCanvas.height=size;
-    finalCanvas.getContext("2d").drawImage(canvas,0,0,size,size);
-  }
-  const texture=new THREE.CanvasTexture(finalCanvas);
-  texture.colorSpace=THREE.SRGBColorSpace;
-  texture.minFilter=THREE.LinearFilter;
-  texture.magFilter=THREE.LinearFilter;
-  texture.generateMipmaps=false;
-  texture.needsUpdate=true;
-  candyChevronTextureCache.set(key,texture);
-  return texture;
+  const tex=new THREE.CanvasTexture(c);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.minFilter=THREE.LinearFilter;
+  tex.magFilter=THREE.LinearFilter;
+  tex.generateMipmaps=false;
+  tex.needsUpdate=true;
+  dreamyChevronTextureCache.set(key,tex);
+  return tex;
 }
-function makeSnow360CandyPoleTexture(){
-  if(typeof document==="undefined")return null;
-  const key="pole";
-  if(candyChevronTextureCache.has(key))return candyChevronTextureCache.get(key);
-  const canvas=document.createElement("canvas");canvas.width=96;canvas.height=256;
-  const ctx=canvas.getContext("2d");
-  ctx.fillStyle="#fff1e3";ctx.fillRect(0,0,96,256);
-  for(let y=-190;y<450;y+=70){
+function makeSnow360DreamyPoleTexture(){
+  if(typeof document==='undefined')return null;
+  const key='dreamy-pole';
+  if(dreamyChevronTextureCache.has(key))return dreamyChevronTextureCache.get(key);
+  const canvas=document.createElement('canvas');
+  canvas.width=96;canvas.height=256;
+  const ctx=canvas.getContext('2d');
+  const bg=ctx.createLinearGradient(0,0,96,0);
+  bg.addColorStop(0,'#f9dbeb');bg.addColorStop(.37,'#fff8f1');
+  bg.addColorStop(.77,'#ffefef');bg.addColorStop(1,'#e4b7da');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,96,256);
+  for(let y=-205;y<460;y+=77){
     ctx.beginPath();ctx.moveTo(-10,y);ctx.lineTo(110,y+89);
-    ctx.lineTo(110,y+117);ctx.lineTo(-10,y+28);ctx.closePath();
-    ctx.fillStyle="#ffc0d9";ctx.fill();
-    ctx.beginPath();ctx.moveTo(-10,y+34);ctx.lineTo(110,y+123);
-    ctx.lineWidth=4;ctx.strokeStyle="rgba(255,255,255,.72)";ctx.stroke();
+    ctx.lineTo(110,y+124);ctx.lineTo(-10,y+35);ctx.closePath();
+    ctx.fillStyle='#f6a9d0';ctx.fill();
+    ctx.beginPath();ctx.moveTo(-10,y+39);ctx.lineTo(110,y+128);
+    ctx.lineWidth=4;ctx.strokeStyle='rgba(255,255,255,.72)';ctx.stroke();
   }
   const t=new THREE.CanvasTexture(canvas);
   t.colorSpace=THREE.SRGBColorSpace;t.wrapS=THREE.RepeatWrapping;
   t.minFilter=THREE.LinearFilter;t.magFilter=THREE.LinearFilter;
   t.generateMipmaps=false;t.needsUpdate=true;
-  candyChevronTextureCache.set(key,t);
+  dreamyChevronTextureCache.set(key,t);
   return t;
 }
-function makeSnow360CandyNeonGeometry(){
-  const shape=new THREE.Shape();
-  shape.moveTo(-.395,.166);shape.lineTo(-.185,.166);
-  shape.lineTo(.354,-.098);shape.lineTo(-.185,-.362);
-  shape.lineTo(-.395,-.362);shape.lineTo(.098,-.098);shape.closePath();
-  return new THREE.ShapeGeometry(shape);
-}
 
-// The sign fronts are turned inward. A reflected arrow on the right shoulder
-// still points toward -Z (downhill), so the guidance reads correctly both sides.
-function CourseMarker({ z, side, mobile=false }) {
+function CourseMarker({z,side,mobile=false}){
   const x=side*COURSE_MARKER_SIDE_X;
   const markerZ=z+COURSE_MARKER_UPHILL_SHIFT;
-  const signTexture=useMemo(()=>makeSnow360CandySignTexture(mobile),[mobile]);
-  const poleTexture=useMemo(makeSnow360CandyPoleTexture,[]);
-  const neonGeometry=useMemo(makeSnow360CandyNeonGeometry,[]);
-  const neonMaterials=useRef([]);
+  const poleTexture=useMemo(makeSnow360DreamyPoleTexture,[]);
+  const arrowTextures=useMemo(()=>Array.from({length:CANDY_MARKER_COUNT},(_,i)=>({
+    core:makeSnow360DreamyArrowTexture(mobile,i,false),
+    halo:makeSnow360DreamyArrowTexture(mobile,i,true),
+  })),[mobile]);
+  const signFaces=useRef([]);
+  const haloMaterials=useRef([]);
+  const coreMaterials=useRef([]);
   const positions=useMemo(()=>Array.from({length:CANDY_MARKER_COUNT},(_,i)=>{
     const step=(2-i)*CANDY_MARKER_SPACING;
     return {step,dy:groundY(x,markerZ+step)-groundY(x,markerZ)};
   }),[x,markerZ]);
-  useEffect(()=>()=>neonGeometry.dispose(),[neonGeometry]);
   useFrame(({clock})=>{
     const t=clock.elapsedTime;
     for(let i=0;i<CANDY_MARKER_COUNT;i++){
-      const m=neonMaterials.current[i];
-      if(!m)continue;
-      // The bright wave follows the sequence downhill (increasing sign index).
-      const wave=.5+.5*Math.sin(t*4.2-i*.78);
-      m.opacity=.19+.66*Math.pow(wave,2.4);
+      // The texture arrow points along its local +X axis. Turning the
+      // vertical sign exactly 90 degrees places that axis along WORLD -Z.
+      // On the right bank the existing mirrored texture cancels -90 degrees.
+      // Do not billboard: moving the camera must not change the direction.
+      const face=signFaces.current[i];
+      if(face){
+        face.rotation.y=side>0?-Math.PI/2:Math.PI/2;
+        face.position.y=2.80+Math.sin(t*1.18-i*.58)*.055;
+      }
+      const wave=.5+.5*Math.sin(t*3.4-i*.95);
+      const halo=haloMaterials.current[i];
+      const core=coreMaterials.current[i];
+      if(halo)halo.opacity=.32+.34*wave;
+      if(core)core.opacity=.91+.09*wave;
     }
   });
-  const yaw=side>0?-Math.PI/2:Math.PI/2;
-  const arrowMirror=side>0?-1:1;
-  return <group name="Snow360 Candy Chevron Markers" position={[x,groundY(x,markerZ),markerZ]}>
+  return <group name="Snow360 Dreamy Neon Chevron Markers"
+    position={[x,groundY(x,markerZ),markerZ]}>
     {positions.map(({step,dy},i)=><group key={i} position={[0,dy,step]}>
-      <mesh position={[0,1.25,0]} castShadow={false} receiveShadow={false}>
-        <cylinderGeometry args={[.112,.145,2.50,8,1]}/>
-        <meshStandardMaterial map={poleTexture} color="#ffffff" roughness={.73} metalness={0}/>
+      {/* V11: opaque candy pole ends WELL BELOW the glowing arrow.
+          Its matching pearl cap is fixed to the top of the pole, not the bobbing arrow. */}
+      <mesh position={[0,.88,0]} castShadow={false} receiveShadow={false}>
+        <cylinderGeometry args={[.125,.155,1.76,mobile?8:10,1]}/>
+        <meshStandardMaterial map={poleTexture} color="#ffffff" roughness={.74} metalness={0}/>
       </mesh>
-      <mesh position={[0,.13,0]}>
-        <sphereGeometry args={[.23,9,6]}/>
-        <meshStandardMaterial color="#fff7f2" roughness={.88}/>
+      <mesh position={[0,.16,0]}>
+        <sphereGeometry args={[.21,mobile?8:12,7]}/>
+        <meshStandardMaterial color="#fff8f4" roughness={.78}/>
       </mesh>
-      <group position={[0,2.38,0]} rotation={[0,yaw,0]}>
-        <mesh position={[0,-.06,0]}>
-          <boxGeometry args={[1.44,1.02,.105]}/>
-          <meshStandardMaterial color="#f8bddb" roughness={.96} metalness={0}/>
-        </mesh>
-        <group scale={[arrowMirror,1,1]}>
-          <mesh position={[0,0,.065]} renderOrder={2}>
-            <planeGeometry args={[1.93,1.93]}/>
-            <meshBasicMaterial map={signTexture} transparent alphaTest={.018}
-              side={THREE.DoubleSide} depthWrite={false} toneMapped={false}/>
+      {/* No rectangular sign mesh anywhere. Just the luminous chevron. */}
+      <group ref={el=>{signFaces.current[i]=el;}}
+        name="Floating pastel neon chevron" position={[side*CANDY_MARKER_SIGN_X_OFFSET,2.80,0]}>
+        <group scale={[side>0?-1:1,1,1]}>
+          <mesh position={[0,0,-.023]} renderOrder={3}>
+            <planeGeometry args={[3.65,3.05]}/>
+            <meshBasicMaterial ref={el=>{haloMaterials.current[i]=el;}}
+              map={arrowTextures[i].halo} transparent opacity={.48}
+              blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide}
+              toneMapped={false}/>
           </mesh>
-          <mesh geometry={neonGeometry} position={[0,0,.075]} renderOrder={3}>
-            <meshBasicMaterial ref={el=>{neonMaterials.current[i]=el;}}
-              color="#fffbe9" side={THREE.DoubleSide} toneMapped={false}
-              transparent opacity={.62} depthWrite={false}/>
+          <mesh position={[0,0,.016]} renderOrder={4}>
+            <planeGeometry args={[3.55,2.99]}/>
+            <meshBasicMaterial ref={el=>{coreMaterials.current[i]=el;}}
+              map={arrowTextures[i].core} transparent opacity={.96}
+              alphaTest={.005} depthWrite={false} side={THREE.DoubleSide}
+              toneMapped={false}/>
           </mesh>
         </group>
       </group>
+      {/* Pearl cap sits directly on the opaque pole, never inside the arrow. */}
+      <mesh position={[0,1.79,0]}>
+        <sphereGeometry args={[.16,10,7]}/>
+        <meshBasicMaterial color={['#ffcee6','#ffebd2','#e6dcff','#d8faf6','#ffdbef'][i]}
+          toneMapped={false}/>
+      </mesh>
     </group>)}
-    {/* Satin cord connecting the posts, with four tiny pastel pennants. */}
-    <mesh position={[0,1.11,0]}>
-      <boxGeometry args={[.038,.038,CANDY_MARKER_SPACING*(CANDY_MARKER_COUNT-1)]}/>
-      <meshStandardMaterial color="#fff2ef" roughness={.85}/>
+    {/* The small satin bunting between poles is decorative, not a billboard. */}
+    <mesh position={[0,1.08,0]}>
+      <boxGeometry args={[.045,.045,CANDY_MARKER_SPACING*(CANDY_MARKER_COUNT-1)]}/>
+      <meshStandardMaterial color="#fff6f1" roughness={.78}/>
     </mesh>
     {Array.from({length:CANDY_MARKER_COUNT-1},(_,i)=>{
       const at=(1.5-i)*CANDY_MARKER_SPACING;
-      return <mesh key={i} position={[0,1.00,at]} rotation={[0,side>0?Math.PI/2:-Math.PI/2,Math.PI]}>
-        <coneGeometry args={[.20,.31,3]}/>
-        <meshBasicMaterial color={["#ffc5df","#c9f6e8","#ffecb6","#d9c7ff"][i]}
-          side={THREE.DoubleSide}/>
+      return <mesh key={i} position={[0,.95,at]}
+        rotation={[0,side>0?Math.PI/2:-Math.PI/2,Math.PI]}>
+        <coneGeometry args={[.20,.27,3]}/>
+        <meshBasicMaterial color={['#ffcce6','#d7f6ed','#ffefca','#e6d6ff'][i]}
+          transparent opacity={.82} side={THREE.DoubleSide}/>
       </mesh>;
     })}
   </group>;
