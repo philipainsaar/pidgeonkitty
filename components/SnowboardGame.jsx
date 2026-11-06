@@ -3,6 +3,7 @@
 import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html, useGLTF } from "@react-three/drei";
+import Snow360PerformanceRecorder from "./Snow360PerformanceRecorder";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import * as THREE from "three";
 import { classifySnowGesture } from "./snow64Gestures";
@@ -1208,7 +1209,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         const approach=smoothstep((s.recovery.t-(end-.40))/.40);
         animator.setSpeed("Run",1-.70*approach);
       }
+      const animationStart = s.profileTiming ? performance.now() : 0;
       animator.update(dt);
+      if (s.profileTiming) s.animationMs = performance.now() - animationStart;
     }
 
     const cy = groundY(s.x, s.z);
@@ -1677,6 +1680,7 @@ function Loading() {
 }
 function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
   return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
+    <Snow360PerformanceRecorder phase={phase} stateRef={stateRef}/>
     <color attach="background" args={["#bfd9e6"]}/>
     <fog attach="fog" args={["#bfd9e6",30,138]}/>
     {/* V86: HDRI panorama or the original blue fallback while it loads. */}
