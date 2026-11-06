@@ -288,7 +288,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
   return <>
     <Terrain index={index} mobile={mobile} />
     <Snow64CloudLayer index={index} mobile={mobile} groundY={groundY} ramps={data.ramps} />
-    <Snow64SundaeTrees trees={data.trees} groundY={groundY} mobile={mobile} />
+    <group name="Snow360Trees"><Snow64SundaeTrees trees={data.trees} groundY={groundY} mobile={mobile} /></group>
     {obstacleLibrary ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
       : rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
       hidden={r=>stateRef.current.consumedRocks.has(r.id)}

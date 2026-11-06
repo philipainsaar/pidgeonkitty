@@ -412,10 +412,10 @@ export default function Snow64StarTokens({
       args={[geometry,bodyMaterial,items.length]}
       frustumCulled={false} renderOrder={3}
       receiveShadow={false} castShadow={false}/>
-    <instancedMesh ref={glow}
+    <instancedMesh ref={glow} name="Snow360StarGlow"
       args={[glowGeometry,glowMaterial,items.length]}
       frustumCulled={false} renderOrder={4}/>
-    <instancedMesh ref={shell}
+    <instancedMesh ref={shell} name="Snow360StarShell"
       args={[geometry,shellMaterial,items.length]}
       frustumCulled={false} renderOrder={5}/>
     <instancedMesh ref={particles} name="Snow360TokenBurstParticles"
