@@ -2484,7 +2484,88 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       <div style={{fontSize:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
       <div style={{fontSize:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
     </div>}
-    {(phase==="ready"||phase==="paused"||phase==="finished")&&<div onClick={e=>{if(e.target?.closest?.("button"))return;phase==="paused"?pause():start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
+    {/* Minimal, immersive pause and game-over screens. The actual course stays behind the soft blur.
+        The existing welcome menu above remains untouched, including all settings. */}
+    {(phase==="paused" || phase==="finished") &&
+      <div
+        role="dialog"
+        aria-label={phase==="paused" ? "Game paused" : "Game over"}
+        onClick={()=>{ if(phase==="paused")pause(); else start(); }}
+        style={{
+          position:"absolute",inset:0,zIndex:8,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          padding:"max(20px, env(safe-area-inset-top)) 18px max(20px, env(safe-area-inset-bottom))",
+          boxSizing:"border-box",overflowY:"auto",
+          background:"linear-gradient(150deg,rgba(60,66,91,.28),rgba(26,41,66,.48) 68%,rgba(41,34,76,.37))",
+          backdropFilter:"blur(8px) saturate(1.13)",
+          WebkitBackdropFilter:"blur(8px) saturate(1.13)",
+          cursor:"pointer",touchAction:"manipulation",textAlign:"center",
+        }}>
+        <div style={{
+          width:"min(100%, 560px)",margin:"auto",display:"flex",flexDirection:"column",
+          alignItems:"center",gap:mobile?12:17,color:"#fffafa",
+          fontFamily:"Fredoka, 'Fredoka', system-ui, sans-serif",
+          filter:"drop-shadow(0 2px 9px rgba(23,29,66,.20))",
+        }}>
+          <div style={{width:mobile?128:185,maxWidth:"43vw",flexShrink:0}}>
+            <Snow360Logo startScreen mobile={mobile===true}/>
+          </div>
+          <div style={{fontSize:mobile?10:11,fontWeight:900,letterSpacing:".22em",
+            color:"#e9faff",textShadow:"0 1px 7px #314c80"}}>
+            {phase==="paused" ? "TAKING A LITTLE BREAK" : "THE RUN HAS ENDED"}
+          </div>
+          <div style={{fontFamily:"'Lilita One', Fredoka, system-ui, sans-serif",
+            fontSize:"clamp(42px, 8vw, 77px)",fontWeight:1000,lineHeight:1.03,
+            letterSpacing:".015em",color:"#fff8fd",
+            textShadow:"0 4px 0 #45678f, 0 7px 20px rgba(17,47,85,.42)"}}>
+            {phase==="paused" ? "PAUSED" : "GAME OVER"}
+          </div>
+          {phase==="finished" ? <>
+            <div style={{fontSize:mobile?12:14,fontWeight:900,letterSpacing:".12em",
+              color:"#ffe7aa",textShadow:"0 2px 9px rgba(26,36,69,.60)"}}>
+              SCORE DEPLETED
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",
+              width:"100%",marginTop:mobile?6:14,marginBottom:mobile?5:8}}>
+              {[
+                {label:"DISTANCE",value:hud.distance.toLocaleString(),unit:"METRES"},
+                {label:"PEAK SCORE",value:hud.peakScore.toLocaleString(),unit:"POINTS"},
+                {label:"WIPEOUTS",value:hud.hits.toLocaleString(),unit:"TOTAL"},
+              ].map((stat,i)=><div key={stat.label} style={{display:"flex",flexDirection:"column",
+                alignItems:"center",justifyContent:"center",gap:4,padding:mobile?"0 5px":"0 14px",
+                borderLeft:i?"1px solid rgba(241,252,255,.40)":"none"}}>
+                <div style={{fontSize:mobile?8:10,letterSpacing:".12em",fontWeight:900,
+                  color:"#c5faff",whiteSpace:"nowrap"}}>{stat.label}</div>
+                <div style={{fontSize:"clamp(19px, 4vw, 31px)",fontWeight:1000,
+                  lineHeight:1.15,color:"#ffffff",fontVariantNumeric:"tabular-nums",
+                  textShadow:"0 3px 12px rgba(20,32,73,.45)"}}>{stat.value}</div>
+                <div style={{fontSize:mobile?8:9,fontWeight:800,letterSpacing:".09em",color:"#f9dfef"}}>{stat.unit}</div>
+              </div>)}
+            </div>
+            <div style={{fontSize:mobile?11:13,fontWeight:900,letterSpacing:".08em",
+              color:"#ffebad",textShadow:"0 2px 9px rgba(26,36,69,.55)"}}>
+              PERSONAL BEST  {currentBest.toLocaleString()} PTS
+            </div>
+          </> : null}
+          <button type="button"
+            onClick={e=>{e.stopPropagation();if(phase==="paused")pause();else start();}}
+            style={{marginTop:mobile?12:20,minWidth:mobile?192:244,
+              padding:mobile?"13px 28px":"15px 38px",borderRadius:999,
+              border:"2px solid rgba(255,255,255,.90)",
+              background:"linear-gradient(115deg,#ffe6b0 0%,#ffd1df 50%,#c6dfff 100%)",
+              color:"#354968",fontFamily:"inherit",fontWeight:1000,
+              fontSize:mobile?16:18,letterSpacing:".055em",
+              boxShadow:"0 8px 26px rgba(27,36,75,.26),inset 0 2px 0 rgba(255,255,255,.65)",
+              cursor:"pointer",touchAction:"manipulation"}}>
+            {phase==="paused" ? "▶ RESUME" : "↻ RIDE AGAIN"}
+          </button>
+          <div style={{fontSize:mobile?10:12,fontWeight:800,letterSpacing:".045em",
+            color:"#f4faff",textShadow:"0 2px 8px rgba(26,36,69,.55)"}}>
+            {phase==="paused" ? "TAP / CLICK ANYWHERE TO RESUME" : "TAP / CLICK ANYWHERE TO RESTART"}
+          </div>
+        </div>
+      </div>}
+    {phase==="ready"&&<div onClick={e=>{if(e.target?.closest?.("button"))return;start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
       <div style={{maxWidth:mobile?560:1060,width:"min(100%,1060px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
         <Snow360Logo startScreen mobile={mobile===true} />
