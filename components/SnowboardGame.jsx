@@ -264,23 +264,245 @@ function FrostMushroom({stateRef}) {
   </group>;
 }
 
-// V93: Put the markers on the open inside shoulder rather than beneath
-// the Sundae tree canopies. Visual-only: no rider physics are changed.
-const COURSE_MARKER_SIDE_X = 8.6;
+// SNOW360 candy-chevron course markers. Procedural, mobile-friendly and visual-only.
+// Replaces both the old flag fallback AND the optional courseMarker GLB; the
+// physical course, collisions, ramps, trees and generated banner positions stay intact.
+const COURSE_MARKER_SIDE_X = 12.35; // Snowbank shoulder, beyond the rider's 11.15m steering limit.
 const COURSE_MARKER_UPHILL_SHIFT = 12.0;
-function CourseMarker({ z, side }) {
-  const custom=useSnowModel("courseMarker");
-  const x = side * COURSE_MARKER_SIDE_X;
-  const markerZ = z + COURSE_MARKER_UPHILL_SHIFT;
-  if (custom) return <group position={[x,groundY(x,markerZ),markerZ]}>
-    <SnowGLBVisual asset={custom} type="courseMarker" dimensions={[2.0,4.6,.45]}/>
+const CANDY_MARKER_COUNT = 5;
+const CANDY_MARKER_SPACING = 1.92;
+const candyChevronTextureCache = new Map();
+
+function candyRoundRect(ctx,x,y,w,h,r){
+  const rr=Math.min(r,w/2,h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+rr,y);
+  ctx.lineTo(x+w-rr,y);ctx.quadraticCurveTo(x+w,y,x+w,y+rr);
+  ctx.lineTo(x+w,y+h-rr);ctx.quadraticCurveTo(x+w,y+h,x+w-rr,y+h);
+  ctx.lineTo(x+rr,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-rr);
+  ctx.lineTo(x,y+rr);ctx.quadraticCurveTo(x,y,x+rr,y);
+  ctx.closePath();
+}
+function candyChevronPath(ctx){
+  ctx.beginPath();
+  ctx.moveTo(151,212);ctx.lineTo(207,212);ctx.lineTo(350,282);
+  ctx.lineTo(207,352);ctx.lineTo(151,352);ctx.lineTo(282,282);
+  ctx.closePath();
+}
+function candyStarPath(ctx,x,y,outer,inner){
+  ctx.beginPath();
+  for(let i=0;i<10;i++){
+    const a=-Math.PI/2+i*Math.PI/5;
+    const r=i%2?inner:outer;
+    if(i===0)ctx.moveTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
+    else ctx.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
+  }
+  ctx.closePath();
+}
+function makeSnow360CandySignTexture(mobile){
+  if(typeof document==="undefined")return null;
+  const key=mobile?"mobile":"desktop";
+  if(candyChevronTextureCache.has(key))return candyChevronTextureCache.get(key);
+  const size=mobile?384:512;
+  const canvas=document.createElement("canvas");canvas.width=canvas.height=512;
+  const ctx=canvas.getContext("2d");
+  if(!ctx)return null;
+  ctx.clearRect(0,0,512,512);
+
+  // Plush, subtly uneven frosting rim around a warm vanilla-waffle sign.
+  ctx.save();
+  ctx.shadowColor="rgba(251,114,191,.65)";ctx.shadowBlur=31;
+  candyRoundRect(ctx,38,116,436,314,72);
+  ctx.fillStyle="#f3b0d6";ctx.fill();
+  ctx.restore();
+  candyRoundRect(ctx,47,126,418,294,64);
+  const frosting=ctx.createLinearGradient(60,120,450,420);
+  frosting.addColorStop(0,"#ffdfef");frosting.addColorStop(.5,"#f4aad7");frosting.addColorStop(1,"#ffd8f2");
+  ctx.fillStyle=frosting;ctx.fill();
+  // Small silky highlights imitate the plush fibers rather than sharp metal.
+  ctx.strokeStyle="rgba(255,255,255,.6)";ctx.lineWidth=9;ctx.stroke();
+  candyRoundRect(ctx,69,145,374,258,49);
+  ctx.fillStyle="#f6d9a7";ctx.fill();
+  ctx.save();
+  candyRoundRect(ctx,69,145,374,258,49);ctx.clip();
+  const cookie=ctx.createLinearGradient(50,150,480,390);
+  cookie.addColorStop(0,"#fff0ce");cookie.addColorStop(.55,"#f3cc93");cookie.addColorStop(1,"#e8b87c");
+  ctx.fillStyle=cookie;ctx.fillRect(65,142,382,268);
+  // Crisscross wafer pattern with soft baked shadows.
+  ctx.lineWidth=9;ctx.strokeStyle="rgba(176,117,72,.22)";
+  for(let k=-520;k<990;k+=42){
+    ctx.beginPath();ctx.moveTo(k,115);ctx.lineTo(k+335,445);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(k,445);ctx.lineTo(k+335,115);ctx.stroke();
+  }
+  ctx.lineWidth=3;ctx.strokeStyle="rgba(255,255,239,.58)";
+  for(let k=-520;k<990;k+=42){
+    ctx.beginPath();ctx.moveTo(k+10,115);ctx.lineTo(k+345,445);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(k+10,445);ctx.lineTo(k+345,115);ctx.stroke();
+  }
+  ctx.fillStyle="rgba(255,230,242,.16)";ctx.fillRect(66,145,380,263);
+  ctx.restore();
+
+  // Pink candy-striped chevron, with pale yellow neon and a baked soft halo.
+  ctx.save();
+  candyChevronPath(ctx);ctx.shadowColor="#ff81c5";ctx.shadowBlur=39;
+  ctx.lineJoin="round";ctx.lineWidth=32;ctx.strokeStyle="#ffc4e0";ctx.stroke();
+  ctx.restore();
+  ctx.save();candyChevronPath(ctx);ctx.clip();
+  ctx.fillStyle="#fda3c9";ctx.fillRect(110,198,270,175);
+  for(let i=-350;i<760;i+=70){
+    ctx.beginPath();ctx.moveTo(i,175);ctx.lineTo(i+40,175);
+    ctx.lineTo(i+255,390);ctx.lineTo(i+215,390);ctx.closePath();
+    ctx.fillStyle="#ffebf0";ctx.fill();
+  }
+  ctx.restore();
+  ctx.save();candyChevronPath(ctx);
+  ctx.lineJoin="round";ctx.lineWidth=18;
+  ctx.shadowColor="#fffa9e";ctx.shadowBlur=28;
+  ctx.strokeStyle="#fffde4";ctx.stroke();
+  ctx.shadowBlur=0;ctx.lineWidth=5;ctx.strokeStyle="#ffffff";ctx.stroke();
+  ctx.restore();
+
+  // Friendly little vanilla dollop, cherry and bright yellow star.
+  ctx.save();
+  ctx.shadowColor="rgba(244,159,207,.38)";ctx.shadowBlur=11;
+  for(const [xx,yy,rx,ry] of [[244,111,35,25],[270,105,32,28],[294,112,31,25]]){
+    ctx.beginPath();ctx.ellipse(xx,yy,rx,ry,0,0,Math.PI*2);
+    ctx.fillStyle="#fff9ef";ctx.fill();
+  }
+  ctx.restore();
+  ctx.save();ctx.strokeStyle="#8b9955";ctx.lineWidth=5;ctx.lineCap="round";
+  ctx.beginPath();ctx.moveTo(275,92);ctx.quadraticCurveTo(287,61,303,67);ctx.stroke();
+  ctx.beginPath();ctx.arc(272,87,24,0,Math.PI*2);
+  ctx.fillStyle="#f45892";ctx.shadowColor="rgba(255,95,161,.45)";ctx.shadowBlur=11;ctx.fill();
+  ctx.shadowBlur=0;ctx.beginPath();ctx.ellipse(264,76,8,5,-.5,0,Math.PI*2);
+  ctx.fillStyle="rgba(255,255,255,.8)";ctx.fill();ctx.restore();
+  ctx.save();candyStarPath(ctx,91,170,31,19);
+  ctx.shadowColor="rgba(255,210,98,.7)";ctx.shadowBlur=17;
+  ctx.fillStyle="#ffe394";ctx.fill();ctx.shadowBlur=0;
+  ctx.lineWidth=4;ctx.strokeStyle="#fff7c7";ctx.stroke();ctx.restore();
+  // Small satin bow under the cookie plaque.
+  ctx.save();ctx.fillStyle="#ffabce";ctx.strokeStyle="#fff0fa";ctx.lineWidth=4;
+  ctx.beginPath();ctx.ellipse(212,426,23,13,.48,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.ellipse(260,426,23,13,-.48,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.arc(237,426,10,0,Math.PI*2);ctx.fillStyle="#f878b4";ctx.fill();ctx.restore();
+  for(const [x,y,c] of [[393,180,"#bff7e8"],[113,370,"#b8daff"],[399,357,"#ffe5a3"]]){
+    ctx.beginPath();ctx.arc(x,y,5.5,0,Math.PI*2);ctx.fillStyle=c;ctx.fill();
+  }
+
+  // Downsample mobile art before it ever reaches the GPU.
+  let finalCanvas=canvas;
+  if(size!==512){
+    finalCanvas=document.createElement("canvas");
+    finalCanvas.width=finalCanvas.height=size;
+    finalCanvas.getContext("2d").drawImage(canvas,0,0,size,size);
+  }
+  const texture=new THREE.CanvasTexture(finalCanvas);
+  texture.colorSpace=THREE.SRGBColorSpace;
+  texture.minFilter=THREE.LinearFilter;
+  texture.magFilter=THREE.LinearFilter;
+  texture.generateMipmaps=false;
+  texture.needsUpdate=true;
+  candyChevronTextureCache.set(key,texture);
+  return texture;
+}
+function makeSnow360CandyPoleTexture(){
+  if(typeof document==="undefined")return null;
+  const key="pole";
+  if(candyChevronTextureCache.has(key))return candyChevronTextureCache.get(key);
+  const canvas=document.createElement("canvas");canvas.width=96;canvas.height=256;
+  const ctx=canvas.getContext("2d");
+  ctx.fillStyle="#fff1e3";ctx.fillRect(0,0,96,256);
+  for(let y=-190;y<450;y+=70){
+    ctx.beginPath();ctx.moveTo(-10,y);ctx.lineTo(110,y+89);
+    ctx.lineTo(110,y+117);ctx.lineTo(-10,y+28);ctx.closePath();
+    ctx.fillStyle="#ffc0d9";ctx.fill();
+    ctx.beginPath();ctx.moveTo(-10,y+34);ctx.lineTo(110,y+123);
+    ctx.lineWidth=4;ctx.strokeStyle="rgba(255,255,255,.72)";ctx.stroke();
+  }
+  const t=new THREE.CanvasTexture(canvas);
+  t.colorSpace=THREE.SRGBColorSpace;t.wrapS=THREE.RepeatWrapping;
+  t.minFilter=THREE.LinearFilter;t.magFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;t.needsUpdate=true;
+  candyChevronTextureCache.set(key,t);
+  return t;
+}
+function makeSnow360CandyNeonGeometry(){
+  const shape=new THREE.Shape();
+  shape.moveTo(-.395,.166);shape.lineTo(-.185,.166);
+  shape.lineTo(.354,-.098);shape.lineTo(-.185,-.362);
+  shape.lineTo(-.395,-.362);shape.lineTo(.098,-.098);shape.closePath();
+  return new THREE.ShapeGeometry(shape);
+}
+
+// The sign fronts are turned inward. A reflected arrow on the right shoulder
+// still points toward -Z (downhill), so the guidance reads correctly both sides.
+function CourseMarker({ z, side, mobile=false }) {
+  const x=side*COURSE_MARKER_SIDE_X;
+  const markerZ=z+COURSE_MARKER_UPHILL_SHIFT;
+  const signTexture=useMemo(()=>makeSnow360CandySignTexture(mobile),[mobile]);
+  const poleTexture=useMemo(makeSnow360CandyPoleTexture,[]);
+  const neonGeometry=useMemo(makeSnow360CandyNeonGeometry,[]);
+  const neonMaterials=useRef([]);
+  const positions=useMemo(()=>Array.from({length:CANDY_MARKER_COUNT},(_,i)=>{
+    const step=(2-i)*CANDY_MARKER_SPACING;
+    return {step,dy:groundY(x,markerZ+step)-groundY(x,markerZ)};
+  }),[x,markerZ]);
+  useEffect(()=>()=>neonGeometry.dispose(),[neonGeometry]);
+  useFrame(({clock})=>{
+    const t=clock.elapsedTime;
+    for(let i=0;i<CANDY_MARKER_COUNT;i++){
+      const m=neonMaterials.current[i];
+      if(!m)continue;
+      // The bright wave follows the sequence downhill (increasing sign index).
+      const wave=.5+.5*Math.sin(t*4.2-i*.78);
+      m.opacity=.19+.66*Math.pow(wave,2.4);
+    }
+  });
+  const yaw=side>0?-Math.PI/2:Math.PI/2;
+  const arrowMirror=side>0?-1:1;
+  return <group name="Snow360 Candy Chevron Markers" position={[x,groundY(x,markerZ),markerZ]}>
+    {positions.map(({step,dy},i)=><group key={i} position={[0,dy,step]}>
+      <mesh position={[0,1.25,0]} castShadow={false} receiveShadow={false}>
+        <cylinderGeometry args={[.112,.145,2.50,8,1]}/>
+        <meshStandardMaterial map={poleTexture} color="#ffffff" roughness={.73} metalness={0}/>
+      </mesh>
+      <mesh position={[0,.13,0]}>
+        <sphereGeometry args={[.23,9,6]}/>
+        <meshStandardMaterial color="#fff7f2" roughness={.88}/>
+      </mesh>
+      <group position={[0,2.38,0]} rotation={[0,yaw,0]}>
+        <mesh position={[0,-.06,0]}>
+          <boxGeometry args={[1.44,1.02,.105]}/>
+          <meshStandardMaterial color="#f8bddb" roughness={.96} metalness={0}/>
+        </mesh>
+        <group scale={[arrowMirror,1,1]}>
+          <mesh position={[0,0,.065]} renderOrder={2}>
+            <planeGeometry args={[1.93,1.93]}/>
+            <meshBasicMaterial map={signTexture} transparent alphaTest={.018}
+              side={THREE.DoubleSide} depthWrite={false} toneMapped={false}/>
+          </mesh>
+          <mesh geometry={neonGeometry} position={[0,0,.075]} renderOrder={3}>
+            <meshBasicMaterial ref={el=>{neonMaterials.current[i]=el;}}
+              color="#fffbe9" side={THREE.DoubleSide} toneMapped={false}
+              transparent opacity={.62} depthWrite={false}/>
+          </mesh>
+        </group>
+      </group>
+    </group>)}
+    {/* Satin cord connecting the posts, with four tiny pastel pennants. */}
+    <mesh position={[0,1.11,0]}>
+      <boxGeometry args={[.038,.038,CANDY_MARKER_SPACING*(CANDY_MARKER_COUNT-1)]}/>
+      <meshStandardMaterial color="#fff2ef" roughness={.85}/>
+    </mesh>
+    {Array.from({length:CANDY_MARKER_COUNT-1},(_,i)=>{
+      const at=(1.5-i)*CANDY_MARKER_SPACING;
+      return <mesh key={i} position={[0,1.00,at]} rotation={[0,side>0?Math.PI/2:-Math.PI/2,Math.PI]}>
+        <coneGeometry args={[.20,.31,3]}/>
+        <meshBasicMaterial color={["#ffc5df","#c9f6e8","#ffecb6","#d9c7ff"][i]}
+          side={THREE.DoubleSide}/>
+      </mesh>;
+    })}
   </group>;
-  return (
-    <group position={[x, groundY(x,markerZ), markerZ]}>
-      <mesh position={[0,2.3,0]}><cylinderGeometry args={[.06,.09,4.6,5]} /><meshLambertMaterial color="#d4f9ff" /></mesh>
-      <mesh position={[side*.62,3.55,0]}><boxGeometry args={[1.25,.65,.08]} /><meshBasicMaterial color={side>0?"#ff77ab":"#f8bb66"} side={THREE.DoubleSide} /></mesh>
-    </group>
-  );
 }
 const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mobile}) {
   const data = useMemo(() => getSnowChunk(index), [index]);
@@ -298,7 +520,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
       : data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
     {data.ramps.map(r=><Snow360CloudRamp key={r.id} {...r} groundHeight={groundY(r.x,r.z)} />)}
     <Snow64StarTokens items={data.coins} groundY={groundY} collectedRef={collectedRef} />
-    {data.banners.map(c=><CourseMarker key={c.id} {...c} />)}
+    {data.banners.map(c=><CourseMarker key={c.id} {...c} mobile={mobile} />)}
   </>;
 });
 function Course({ collectedRef, distance, stateRef, mobile }) {
