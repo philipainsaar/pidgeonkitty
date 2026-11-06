@@ -9,11 +9,12 @@ import * as THREE from "three";
 import { classifySnowGesture } from "./snow64Gestures";
 import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landing";
 import { SNOW_GRAVITY, startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip } from "./snow64Physics";
+import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushPhysics";
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnSnowMushroom, mushroomCollision, activateSnowMushroom } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
-import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider, riderRecoveryGroundLift } from "./snow64CrashPhysics";
+import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
 import { SNOW64_SNOWBOARD_FOOT_TUNE } from "./snow64ModelConfig";
 import { SNOW64_TERRAIN } from "./snow64Appearance";
@@ -326,45 +327,95 @@ function Mountains({stateRef}) {
   </group>;
 }
 
+/** Soft rounded snow-powder texture. No sprite-sheet rectangles and no custom shader. */
+function useSnow360PowderTexture(){
+  const texture=useMemo(()=>{
+    if(typeof document==="undefined")return null;
+    const canvas=document.createElement("canvas");
+    canvas.width=canvas.height=128;
+    const ctx=canvas.getContext("2d");
+    if(!ctx)return null;
+    const center=64;
+    const gradient=ctx.createRadialGradient(center,center,7,center,center,63);
+    gradient.addColorStop(0,"rgba(255,255,255,1)");
+    gradient.addColorStop(.28,"rgba(255,255,255,.99)");
+    gradient.addColorStop(.58,"rgba(255,255,255,.68)");
+    gradient.addColorStop(.80,"rgba(255,255,255,.24)");
+    gradient.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle=gradient;
+    ctx.fillRect(0,0,128,128);
+    const t=new THREE.CanvasTexture(canvas);
+    t.colorSpace=THREE.SRGBColorSpace;
+    t.magFilter=THREE.LinearFilter;
+    t.minFilter=THREE.LinearFilter;
+    t.generateMipmaps=false;
+    t.needsUpdate=true;
+    return t;
+  },[]);
+  useEffect(()=>()=>texture?.dispose(),[texture]);
+  return texture;
+}
+
+/** Lightweight, variable-density powder flowing from the actual snowboard edges. */
 function BoardTrail({stateRef,mobile}) {
-  // Fewer dynamic points and spawn calls on mobile; never tie particle updates to React state.
-  const num=mobile?110:250;
-  const ref=useRef(),next=useRef(0),spawnAccumulator=useRef(0);
-  const sprayTexture=useSnow64Texture("snowSpray");
-  const snow=useMemo(()=>Array.from({length:num},()=>({x:0,y:0,z:0,life:0,vx:0,vy:0,vz:0})),[num]);
+  const num=mobile?130:300;
+  const points=useRef(),next=useRef(0),accumulator=useRef(0);
+  const powder=useSnow360PowderTexture();
+  const flakes=useMemo(()=>Array.from({length:num},()=>({x:0,y:0,z:0,vx:0,vy:0,vz:0,life:0,maxLife:1})),[num]);
   const coords=useMemo(()=>new Float32Array(num*3).fill(100000),[num]);
+  const colors=useMemo(()=>{
+    const values=new Float32Array(num*3);
+    const palette=[[1,1,1],[.92,.97,1],[1,.94,.98],[.86,.95,1]];
+    for(let i=0;i<num;i++)values.set(palette[i%palette.length],i*3);
+    return values;
+  },[num]);
   useFrame((_,rawDt)=>{
-    if(!ref.current)return;
-    const dt=Math.min(rawDt,.05),s=stateRef.current;
+    if(!points.current)return;
+    const dt=Math.min(Math.max(rawDt,0),.05),s=stateRef.current;
+    const steer=Math.abs(s.steer||0);
     const moving=s.speed>4 && !s.inAir && !s.recovery && s.t>0;
     if(moving){
-      const rate=clamp(22+s.speed*(mobile?1.35:2.8)+Math.abs(s.steer)*35,28,mobile?90:185);
-      spawnAccumulator.current=Math.min(10,spawnAccumulator.current+rate*dt);
-      let emit=Math.min(mobile?4:8,Math.floor(spawnAccumulator.current));
-      spawnAccumulator.current-=emit;
-      while(emit--){
-        const i=next.current++%num,p=snow[i];
-        const side=(i%2===0?-1:1),jitter=Math.sin(i*8.19+s.t*91.7);
-        p.x=s.x+side*(.31+jitter*.07);
+      const rate=Math.min(mobile?105:235,20+s.speed*(mobile?1.6:3.1)+steer*55);
+      accumulator.current=Math.min(12,accumulator.current+rate*dt);
+      let emit=Math.min(mobile?6:11,Math.floor(accumulator.current));
+      accumulator.current-=emit;
+      while(emit-->0){
+        const i=next.current++%num,p=flakes[i];
+        const direction=i%2?1:-1;
+        const jitter=Math.sin(i*17.91+s.t*53.3);
+        const carveKick=.55+steer*2.1;
+        p.x=s.x+direction*(.27+.08*jitter);
         p.y=groundY(s.x,s.z)+.12;
-        p.z=s.z+.57;
-        p.life=.30+Math.abs(jitter)*.34;
-        p.vx=side*(.7+s.speed*.045+Math.abs(s.steer)*1.4)+jitter*.65;
-        p.vy=.75+s.speed*.045+Math.abs(jitter)*1.8;
-        p.vz=1.4+s.speed*.27;
+        p.z=s.z+.50+jitter*.13;
+        p.life=p.maxLife=.28+(i%7)*.055+steer*.12;
+        p.vx=direction*(.35+s.speed*.037+carveKick)+jitter*.85;
+        p.vy=.40+Math.abs(jitter)*.90+steer*1.8;
+        p.vz=.65+s.speed*.26+(i%3)*.22;
       }
-    }
+    }else accumulator.current=0;
     for(let i=0;i<num;i++){
-      const p=snow[i];p.life-=dt;
-      if(p.life>0){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy-=6.4*dt;p.z+=p.vz*dt;}
-      coords[i*3]=p.life>0?p.x:100000;
-      coords[i*3+1]=p.y;coords[i*3+2]=p.z;
+      const p=flakes[i];
+      if(p.life>0){
+        p.life-=dt;
+        p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=p.vz*dt;
+        p.vy-=5.7*dt;
+        p.vx*=Math.max(0,1-dt*.85);
+      }
+      const n=i*3;
+      coords[n]=p.life>0?p.x:100000;
+      coords[n+1]=p.y;
+      coords[n+2]=p.z;
     }
-    ref.current.geometry.attributes.position.needsUpdate=true;
+    points.current.geometry.attributes.position.needsUpdate=true;
   });
-  return <points ref={ref} frustumCulled={false}>
-    <bufferGeometry key={num}><bufferAttribute attach="attributes-position" array={coords} count={num} itemSize={3}/></bufferGeometry>
-    <pointsMaterial color="#faffff" map={sprayTexture} alphaTest={sprayTexture ? .08 : 0} size={.18} transparent opacity={.86} depthWrite={false} sizeAttenuation/>
+  return <points ref={points} frustumCulled={false} renderOrder={2}>
+    <bufferGeometry key={num}>
+      <bufferAttribute attach="attributes-position" array={coords} count={num} itemSize={3}/>
+      <bufferAttribute attach="attributes-color" array={colors} count={num} itemSize={3}/>
+    </bufferGeometry>
+    <pointsMaterial color="#ffffff" vertexColors map={powder}
+      transparent opacity={.84} alphaTest={.012} size={mobile?.23:.25}
+      depthWrite={false} sizeAttenuation toneMapped={false}/>
   </points>;
 }
 
@@ -788,7 +839,30 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     character.traverse(o=>{if(o.isBone)bones.push(o);});
     return bones;
   },[character]);
-  const boneWorld=useMemo(()=>new THREE.Vector3(),[]);
+  const plushResponse=useRef(null);
+  if (!plushResponse.current) plushResponse.current=createSnow360PlushResponse();
+  const plushVisual=useRef();
+  // Recompute collision clearance from the actually posed skinned model only
+  // during recoveries. Unlike the old capsule + all-bone lift, this cannot stack
+  // two large positive offsets and leave the rider hovering above the snow.
+  const recoverySkinned=useMemo(()=>{
+    const meshes=[];
+    character.traverse(object=>{ if(object.isSkinnedMesh) meshes.push(object); });
+    return meshes;
+  },[character]);
+  const recoveryBounds=useMemo(()=>new THREE.Box3(),[]);
+  const recoveryScratch=useMemo(()=>new THREE.Box3(),[]);
+  const plushSpringBones=useMemo(()=>{
+    // Use names only; never edit geometry, skin weights or existing animation clips.
+    const springs=[];
+    for(const bone of riderBones){
+      const name=bone.name.toLowerCase();
+      if(/ear|antenna|tail|whisker|cheek|bang|tuft|hair|head/.test(name)){
+        springs.push({bone,kind:/ear|antenna|tail|whisker|bang|tuft|hair/.test(name)?"loose":"head",oldZ:0,oldX:0});
+      }
+    }
+    return springs;
+  },[riderBones]);
   const root=useRef(), stance=useRef(), board=useRef(), crashBoard=useRef(), kickSnow=useRef(), riderCarrier=useRef(), riderModel=useRef(), hoverRing=useRef();
   const frame=useRef(0),cameraReady=useRef(false),crashCameraBlend=useRef(0),phaseRef=useRef(phase);
   const frostCamera=useRef({active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null,actionFocus:null});
@@ -803,6 +877,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     nearby.current={index:-1,chunks:[]};
     delete camera.userData._look;
     animator.reset();
+    plushResponse.current.reset();
+    for(const softBone of plushSpringBones){softBone.oldX=softBone.oldZ=0;}
+    if (plushVisual.current) {plushVisual.current.scale.set(1,1,1);plushVisual.current.rotation.set(0,0,0);plushVisual.current.position.set(0,0,0);}
     if (root.current) root.current.position.set(0,.1,0);
     if (crashBoard.current) crashBoard.current.visible=false;
   },[runKey,stateRef,collectedRef,queueRef,camera,animator,mobile]);
@@ -949,8 +1026,8 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         const lateralTarget=poweredCarve
           ? (frostDesiredVelX??s.steer*13.2)
           : s.steer * (s.inAir ? 5.0 : 9.2);
-        s.velX=lerp(s.velX,lateralTarget,
-          Math.min(1,dt*(poweredCarve?8.5:s.inAir?2.8:5.5)));
+        const carveResponse=poweredCarve?8.5:s.inAir?2.8:snow360GripResponse(5.5);
+        s.velX=lerp(s.velX,lateralTarget,Math.min(1,dt*carveResponse));
         const previousX=s.x;
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
         const previousZ=s.z;
@@ -1209,6 +1286,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         const approach=smoothstep((s.recovery.t-(end-.40))/.40);
         animator.setSpeed("Run",1-.70*approach);
       }
+      // Undo our previous secondary rotation before the next keyed animation pose.
+      for(const softBone of plushSpringBones){
+        softBone.bone.rotation.x-=softBone.oldX;
+        softBone.bone.rotation.z-=softBone.oldZ;
+        softBone.oldX=softBone.oldZ=0;
+      }
       const animationStart = s.profileTiming ? performance.now() : 0;
       animator.update(dt);
       if (s.profileTiming) s.animationMs = performance.now() - animationStart;
@@ -1310,39 +1393,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         // for the last push-off, restoring the normal snowboard binding height.
         riderModel.current.position.y=lerp(.06,profile.bindingHeight,hopP)
           + (mountP>.71 && mountP<.90 ? .10*Math.sin(Math.PI*(mountP-.71)/.19) : 0);
-        // Capsule-like pose/ground collision for the skinned rider. A sideways
-        // fall rotates its broad head/body below the feet; simply putting the
-        // model root at snow level was causing it to sink underground.
-        const riderX=s.x+riderCarrier.current.position.x;
-        const riderZ=s.z+riderCarrier.current.position.z;
-        const colliderFloor=Math.max(
-          snowSurfaceAt(riderX,riderZ,localChunks,groundY).height,
-          snowSurfaceAt(riderX-.34,riderZ,localChunks,groundY).height,
-          snowSurfaceAt(riderX+.34,riderZ,localChunks,groundY).height,
-          snowSurfaceAt(riderX,riderZ-.48,localChunks,groundY).height,
-          snowSurfaceAt(riderX,riderZ+.48,localChunks,groundY).height,
-        );
-        const lift=riderRecoveryGroundLift({
-          rootY:root.current.position.y,
-          carrierY:riderCarrier.current.position.y,
-          modelY:riderModel.current.position.y,
-          roll:riderCarrier.current.rotation.z,
-          yaw:riderModel.current.rotation.y,
-          pitch:riderCarrier.current.rotation.x,
-          floor:colliderFloor,
-        });
-        riderCarrier.current.position.y += lift;
-        // Bone-level contact is inexpensive (16 bones, crash frames only).
-        // It also catches animated paws/head parts that leave the rigid
-        // proxy's envelope during the original wipeout clip.
-        root.current.updateMatrixWorld(true);
-        let skeletonLift=0;
-        for(const bone of riderBones){
-          bone.getWorldPosition(boneWorld);
-          const boneFloor=snowSurfaceAt(boneWorld.x,boneWorld.z,localChunks,groundY).height;
-          skeletonLift=Math.max(skeletonLift,boneFloor+.085-boneWorld.y);
-        }
-        riderCarrier.current.position.y += Math.max(0,skeletonLift);
+        // Contact is resolved AFTER applying the crash squish, below.
+        // The previous capsule correction and per-bone correction both moved
+        // the entire model UP. Together they could make the character float.
       } else {
         riderCarrier.current.position.set(0, profile.plush ? board.current.position.y : 0, 0);
         // Both soles follow the deck on slopes and grabs, not just the world root.
@@ -1350,6 +1403,63 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         else riderCarrier.current.rotation.set(0, 0, 0);
         riderModel.current.rotation.y = Math.PI / 2;
         riderModel.current.position.y = profile.bindingHeight;
+      }
+    }
+    // Soft-body response stays visual-only; the collision and board roots
+    // retain their original movement and trick timeline. Unlike V1, the plush
+    // spring keeps running through wipeout, skid, chase, and remount.
+    if (plushVisual.current && phaseRef.current !== "paused") {
+      const soft=plushResponse.current.step(s,dt);
+      plushVisual.current.scale.set(soft.expandXZ,soft.squashY,soft.expandXZ);
+      plushVisual.current.rotation.set(soft.tiltX,0,soft.swayZ);
+      plushVisual.current.position.y=soft.bobY;
+      for(const record of plushSpringBones){
+        const weight=record.kind==="loose"?1:0.37;
+        const offsetZ=soft.earLagZ*weight,offsetX=soft.earLagX*weight;
+        record.bone.rotation.z+=offsetZ;
+        record.bone.rotation.x+=offsetX;
+        record.oldZ=offsetZ;
+        record.oldX=offsetX;
+      }
+    }
+
+    // Ground the DEFORMED visible rider, not a guessed capsule. A wipeout has
+    // brief ballistic airtime, then the model settles onto the actual slope.
+    // Never snap down during the intentional remount hop. This adjustment
+    // changes only rendered rider height, not the crash body's trajectory.
+    if (s.recovery && root.current && riderCarrier.current && riderModel.current) {
+      const rec=s.recovery;
+      root.current.updateMatrixWorld(true);
+      recoveryBounds.makeEmpty();
+      for(const mesh of recoverySkinned){
+        if(!mesh.visible)continue;
+        // AnimationMixer already updated the bones earlier this frame.
+        mesh.skeleton?.update();
+        mesh.computeBoundingBox();
+        if(mesh.boundingBox && !mesh.boundingBox.isEmpty()){
+          recoveryScratch.copy(mesh.boundingBox).applyMatrix4(mesh.matrixWorld);
+          recoveryBounds.union(recoveryScratch);
+        }
+      }
+      const contactX=recoveryBounds.isEmpty()?s.x+riderCarrier.current.position.x:
+        (recoveryBounds.min.x+recoveryBounds.max.x)*.5;
+      const contactZ=recoveryBounds.isEmpty()?s.z+riderCarrier.current.position.z:
+        (recoveryBounds.min.z+recoveryBounds.max.z)*.5;
+      const floor=snowSurfaceAt(contactX,contactZ,localChunks,groundY).height;
+      const actualBottom=recoveryBounds.isEmpty()
+        ? root.current.position.y+riderCarrier.current.position.y+riderModel.current.position.y-.18
+        : recoveryBounds.min.y;
+      const groundAdjust=clamp(floor+.02-actualBottom,-1.65,1.65);
+      const recoveryModeNow=recoveryStage(rec);
+      const hasHitSnow=(rec.rider?.groundHits||0)>0;
+      const canSettle=recoveryModeNow==="chasing" ||
+        (recoveryModeNow==="falling" && hasHitSnow) ||
+        (recoveryModeNow==="remounting" && remountP<.09);
+      if(canSettle){
+        riderCarrier.current.position.y+=groundAdjust;
+      }else if(groundAdjust>0){
+        // Only correct snow penetration during flight and remount jumps.
+        riderCarrier.current.position.y+=groundAdjust;
       }
     }
     if (crashBoard.current) {
@@ -1667,7 +1777,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
       <group ref={board}><Snowboard /></group>
       <group ref={riderCarrier}>
         <group ref={riderModel} position-x={profile.offsetX}>
-          <primitive object={character} dispose={null} scale={profile.scale} />
+          <group ref={plushVisual}>
+            <primitive object={character} dispose={null} scale={profile.scale} />
+          </group>
         </group>
       </group>
     </group>
