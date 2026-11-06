@@ -2414,6 +2414,52 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       .snow64-iconbtn{transition:background .10s ease,transform .10s ease}
       .snow64-iconbtn:active{transform:scale(.92);filter:brightness(1.3)}
       .snow64-iconbtn:focus-visible{outline:3px solid #fff1a3;outline-offset:1px}
+      /* Welcome Play/Settings match the rounded pastel Resume/Ride Again buttons.
+         The real Welcome controls live in Snow64Welcome.jsx, a sibling of this game. */
+      .snow360-start-glass > div:first-child > button:first-child {
+        border-radius:999px!important;
+        min-height:54px!important;
+        padding:12px 22px!important;
+        border:2px solid rgba(255,255,255,.94)!important;
+        background:linear-gradient(115deg,#ffe6b0 0%,#ffd1df 50%,#c6dfff 100%)!important;
+        color:#354968!important;
+        box-shadow:0 8px 26px rgba(27,36,75,.21),inset 0 2px 0 rgba(255,255,255,.70)!important;
+        font-family:Fredoka,system-ui,sans-serif!important;
+        font-weight:1000!important;
+        font-size:20px!important;
+        letter-spacing:.055em!important;
+      }
+      .snow360-start-glass > div:first-child > button:first-child:disabled {
+        filter:saturate(.65)!important;
+        box-shadow:inset 0 2px 0 rgba(255,255,255,.60)!important;
+      }
+      .snow360-start-glass > div:first-child > button:nth-child(2) {
+        flex:0 0 54px!important;
+        width:54px!important;
+        min-height:54px!important;
+        border-radius:999px!important;
+        border:2px solid rgba(255,255,255,.94)!important;
+        background:linear-gradient(125deg,#fce7f6,#e9dfff 57%,#ceeaff)!important;
+        color:#465779!important;
+        box-shadow:0 7px 21px rgba(27,36,75,.18),inset 0 2px 0 rgba(255,255,255,.66)!important;
+      }
+      .snow360-start-glass > div:first-child > button:nth-child(2)[aria-expanded="true"] {
+        background:linear-gradient(125deg,#ffe5b3,#f7c8e7 57%,#d8d0ff)!important;
+        color:#774a8c!important;
+      }
+      .snow360-start-glass > div:first-child > button:nth-child(2) > span {
+        font-family:Fredoka,system-ui,sans-serif!important;
+        font-size:7px!important;
+        letter-spacing:.02em!important;
+      }
+      .snow360-start-glass > div:first-child > button:not(:disabled):active,
+      .snow360-mini-pause:active {transform:scale(.96)!important;}
+      @media(max-width:720px) {
+        .snow360-start-glass > div:first-child > button:first-child {font-size:18px!important;}
+        .snow360-start-glass > div:first-child > button:nth-child(2) {
+          flex-basis:50px!important;width:50px!important;min-height:50px!important;
+        }
+      }
       .snow64-panel{background:linear-gradient(130deg,#153b55ee,#0f2d46db);border:2px solid #c5eff4;border-radius:9px;box-shadow:3px 5px 0 #0e2a39bb;padding:8px 13px}
       .snow64-label{font-size:10px;font-weight:900;letter-spacing:.17em;color:#8feaf1}
       .snow64-number{font-weight:1000;font-style:italic;font-size:clamp(17px,2.6vw,30px);letter-spacing:.025em;text-shadow:2px 2px #193447}
@@ -2622,10 +2668,25 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     {phase==="playing" && <FollowCameraDragArea cameraOrbitRef={cameraOrbit} mobile={mobile} />}
     {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} stateRef={state} act={act} phase={phase} runKey={runKey} trickMode={trickMode} onTuckChange={setTouchTuckFx} /> : null}
     {phase==="playing" && trickMode==="buttons" && <Snow64TrickButtonPad act={act} mobile={mobile===true}/>}
-    {phase==="playing" && <>
-      <div style={{position:"absolute",bottom:mobile?14:18,left:mobile?10:24,zIndex:3,pointerEvents:"none",color:"#1a5268",fontSize:mobile?9:12,fontWeight:900,textShadow:"1px 1px #e9f8ff"}}>BEST {currentBest.toLocaleString()} &nbsp; ✦ {hud.coins} TOKENS</div>
-      {!mobile && <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:3,pointerEvents:"none",color:"#174760",fontSize:11,fontWeight:900,textShadow:"1px 1px #effbff",letterSpacing:".04em"}}>{trickMode==="buttons"?"A / D CARVE · W TUCK · TAP TRICK ICONS OR 1–0 / F · P PAUSE · C CAMERA":"A / D CARVE · W TUCK · SPACE OLLIE · SHIFT+SPACE POWER · 1–0 / F TRICKS · P PAUSE · C CAMERA"}</div>}
-    </>}
+    {/* Keep the downhill view clean. The bottom BEST/TOKENS and keyboard hint
+        lines are hidden; values and keyboard shortcuts still work normally. */}
+    {mobile && phase==="playing" &&
+      <button type="button" className="snow360-mini-pause"
+        aria-label="Pause Snow360" title="Pause"
+        onPointerDown={e=>e.stopPropagation()}
+        onClick={e=>{e.stopPropagation();pause();}}
+        style={{position:"absolute",left:"max(10px, env(safe-area-inset-left))",
+          bottom:"max(12px, env(safe-area-inset-bottom))",zIndex:10,
+          width:34,height:34,padding:0,display:"grid",placeItems:"center",
+          borderRadius:"50%",border:"1.5px solid rgba(255,255,255,.91)",
+          background:"linear-gradient(125deg,rgba(255,237,200,.91),rgba(255,212,227,.93),rgba(211,231,255,.94))",
+          color:"#425676",boxShadow:"0 3px 12px rgba(38,62,101,.22),inset 0 1px 0 #ffffffaa",
+          cursor:"pointer",touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}>
+        <svg aria-hidden="true" width="12" height="13" viewBox="0 0 12 13" fill="currentColor">
+          <rect x="1.1" y="1.4" width="3.2" height="10.2" rx="1"/>
+          <rect x="7.7" y="1.4" width="3.2" height="10.2" rx="1"/>
+        </svg>
+      </button>}
   </main>;
 }
 
