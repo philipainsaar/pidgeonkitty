@@ -3,7 +3,9 @@ import "./snow360-fonts.css";
 import "./snow360-cloud-buttons.css";
 import "./snow360-hud-effects.css";
 import "./snow360-trick-unicode.css";
+import "./snow360-party-colorama.css";
 import Snow360HudEffects from "../components/Snow360HudEffects";
+import Snow360PartyColorama from "../components/Snow360PartyColorama";
 
 // Fonts are optimized and self-hosted by Next.js on build.
 const fredoka = Fredoka({
@@ -31,6 +33,7 @@ export default function RootLayout({ children }) {
       <body style={{ margin: 0, background: "#0b1222", color: "#ffffff" }}>
         {children}
         <Snow360HudEffects />
+        <Snow360PartyColorama />
       </body>
     </html>
   );

@@ -1,0 +1,55 @@
+/* SNOW360 V21: Colorama Party Mode affects the 3D WORLD only.
+ * Preserve the unfiltered colors of all gameplay HUDs, floating trick buttons,
+ * text, snowflake settings controls and Snow360 logos.
+ *
+ * SnowboardGame.jsx mounts the WebGL scene in the first direct <div> in <main>,
+ * followed by separate HUD and UI overlays. Filter only this WebGL layer.
+ * The sound-reactive properties below are still controlled by the existing
+ * Snow360PartyColorama.jsx. No changes to physics, music or inputs.
+ */
+
+/* The previous V19/V20 stylesheet filtered the whole main element.
+ * Undo that, including the V19 inline keyframe animation, so UI stays intact.
+ * This more-specific selector wins over the earlier inline <style> selectors.
+ */
+html body main[data-colorama="on"],
+html body main[data-colorama="off"] {
+  animation: none !important;
+  filter: none !important;
+}
+
+/* Only the game world's Three.js scene gets the Colorama palette.
+ * This wrapper contains the rendered game canvas, not HUD, logos or buttons.
+ */
+html body main[data-colorama="on"] > div:first-of-type {
+  animation: none !important;
+  filter: url(#snow360-pastel-colorama)
+    hue-rotate(var(--snow360-party-hue, 0deg))
+    saturate(var(--snow360-party-saturation, 1.055))
+    brightness(var(--snow360-party-brightness, 1.005)) !important;
+}
+
+/* Completely restore original colors when the setting is off. */
+html body main[data-colorama="off"] > div:first-of-type {
+  filter: none !important;
+  animation: none !important;
+}
+
+/* Intro scene: the Colorama preview is attached to the R3F Canvas wrapper,
+ * not the welcome logo, PLAY button, Settings controls or other text. */
+html body .snow360-colorama-preview {
+  animation: none !important;
+  filter: url(#snow360-pastel-colorama)
+    hue-rotate(var(--snow360-party-hue, 0deg))
+    saturate(var(--snow360-party-saturation, 1.055))
+    brightness(var(--snow360-party-brightness, 1.005)) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body main[data-colorama="on"] > div:first-of-type,
+  html body .snow360-colorama-preview {
+    animation: none !important;
+    filter: url(#snow360-pastel-colorama)
+      hue-rotate(42deg) saturate(1.04) brightness(1.01) !important;
+  }
+}
