@@ -621,53 +621,70 @@ main .snow360-arcade-hud .snow64-number span {
   -webkit-text-stroke: .3px #20375e !important;
   text-shadow: 1px 1px 0 #20375e !important;
 }
-/* The user-selected mobile layout already stacks the stats at top-right.
-   Allow real height for the cloud art, rather than squashing each panel into
-   one third of the old fixed-size, dark-blue rail. */
+/* V8: SPEED / TIME / SCORE share one HORIZONTAL row on every mobile screen.
+   Desktop styling above is unchanged. This deliberately overrides the old
+   mobile column in the JSX without touching gameplay or live stat values. */
 @media (max-width: 720px), (pointer: coarse) {
   main .snow360-arcade-hud {
-    width: clamp(102px, 30vw, 128px) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-end !important;
+    align-items: flex-start !important;
+    align-self: flex-start !important;
+    flex: 0 0 auto !important;
+    width: max-content !important;
+    max-width: calc(100vw - 94px) !important;
     height: auto !important;
-    gap: 2px !important;
-    margin-top: 5px !important;
+    gap: clamp(1px, .65vw, 4px) !important;
+    margin-top: 4px !important;
+    margin-left: auto !important;
   }
   main .snow360-arcade-hud .snow64-panel {
-    width: 100% !important;
-    height: auto !important;
     flex: 0 0 auto !important;
+    width: clamp(68px, 21.7vw, 112px) !important;
+    min-width: 0 !important;
     min-height: 0 !important;
+    height: auto !important;
+    aspect-ratio: 940 / 401 !important;
   }
   main .snow360-arcade-hud .snow64-label {
-    top: 12% !important;
-    font-size: clamp(7px, 1.75vw, 9px) !important;
-    letter-spacing: .02em !important;
+    top: 11% !important;
+    font-size: clamp(7px, 1.78vw, 10px) !important;
+    letter-spacing: .025em !important;
   }
   main .snow360-arcade-hud .snow64-number {
-    top: 54% !important;
-    font-size: clamp(17px, 4.45vw, 22px) !important;
+    top: 60% !important;
+    font-size: clamp(15px, 4vw, 24px) !important;
     letter-spacing: -.04em !important;
     -webkit-text-stroke: .45px #20375e !important;
     text-shadow: .6px 1.3px 0 #20375e !important;
   }
   main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number {
-    font-size: clamp(13px, 3.45vw, 18px) !important;
-    letter-spacing: -.052em !important;
-  }
-  main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number {
-    font-size: clamp(14px, 3.9vw, 20px) !important;
+    font-size: clamp(10.5px, 3.15vw, 17px) !important;
     letter-spacing: -.055em !important;
   }
+  main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number {
+    font-size: clamp(12px, 3.75vw, 21px) !important;
+    letter-spacing: -.05em !important;
+  }
   main .snow360-arcade-hud .snow64-number span {
-    font-size: clamp(5px, 1.3vw, 7px) !important;
+    font-size: clamp(5px, 1.23vw, 7px) !important;
     margin-left: 1px !important;
   }
-  /* Score distance lives directly below the expanded stat rail. Keep the
-     big-air / combo notices below it so labels never collide mid-jump. */
-  main .snow360-air-notices { top: clamp(228px, 29dvh, 265px) !important; }
+  /* Without the tall three-card stack, combo messages can return higher. */
+  main .snow360-air-notices {
+    top: clamp(168px, 20dvh, 190px) !important;
+  }
 }
 @media (max-width: 350px) {
-  main .snow360-arcade-hud { width: 101px !important; }
-  main .snow360-arcade-hud .snow64-number { font-size: 16px !important; }
-  main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number { font-size: 12.5px !important; }
-  main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number { font-size: 14px !important; }
+  main .snow360-arcade-hud {
+    gap: 1px !important;
+  }
+  main .snow360-arcade-hud .snow64-panel {
+    width: clamp(67px, 21.1vw, 74px) !important;
+  }
+  main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number {
+    font-size: 10.5px !important;
+  }
 }
