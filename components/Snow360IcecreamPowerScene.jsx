@@ -13,7 +13,7 @@ import { useEffect, useRef } from "react";
  */
 export const SNOW360_CANDY_WORLD = {
   desktopSprinkles: 190,
-  mobileSprinkles: 105, // Extra visibility on small screens without crowding the rider.
+  mobileSprinkles: 105, // Opaque CSS-animated rods, no mobile 2D canvas context.
   desktopFps: 60,
   mobileFps: 35,
 };
@@ -72,6 +72,79 @@ function renderFrame(ctx,w,h,sprinkles,dt,speed,reduceMotion,mobile) {
   }
 }
 
+/**
+ * Mobile WebGL-safe sprinkles: pure DOM/CSS compositor animation.
+ * The previous mobile path created a second continuously-redrawn 2D canvas
+ * directly above the active WebGL game. Some mobile GPU/viewport combinations
+ * failed to composite that transparent canvas consistently. CSS rods do not
+ * allocate a second drawing context and are visible immediately at pickup.
+ */
+function sprinkleRandom(seed) {
+  let n=seed>>>0;
+  return ()=>{
+    n=(Math.imul(n,1664525)+1013904223)>>>0;
+    return n/4294967296;
+  };
+}
+const MOBILE_RODS=(()=>{
+  const random=sprinkleRandom(3608678);
+  const rods=[];
+  for(let i=0;i<SNOW360_CANDY_WORLD.mobileSprinkles;i++){
+    const startX=-12+random()*122;
+    const startY=-52+random()*153;
+    const toX=(random()-.5)*90;
+    const toY=104+random()*118;
+    const duration=1.95+random()*2.25;
+    const initialAngle=Math.round(random()*360);
+    const rotation=(random()<.5?-1:1)*(260+Math.round(random()*570));
+    rods.push({
+      id:i,x:startX,y:startY,dx:toX,dy:toY,
+      length:15+random()*14,thickness:5.4+random()*3.5,
+      angle:initialAngle,endAngle:initialAngle+rotation,
+      duration,delay:-random()*duration,
+      color:COLORS[i%COLORS.length],
+    });
+  }
+  return rods;
+})();
+function MobileCandySprinkles({speed=0}) {
+  const holder=useRef(null);
+  const lastRate=useRef(0);
+  // CSS animation playbackRate varies with the real snowboard speed without
+  // repainting/recreating every particle on HUD state updates.
+  useEffect(()=>{
+    const target=clamp(.8+speed/75,.8,2.3);
+    if(Math.abs(target-lastRate.current)<.085)return;
+    lastRate.current=target;
+    const parent=holder.current;
+    if(!parent)return;
+    for(const child of parent.children){
+      for(const animation of child.getAnimations?.()||[]){
+        try{animation.playbackRate=target;}catch{}
+      }
+    }
+  },[speed]);
+  return <div ref={holder} className="snow360-mobile-candy-rods" aria-hidden="true"
+    style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",zIndex:1}}>
+    {MOBILE_RODS.map(p=><span key={p.id} className="snow360-mobile-candy-rod"
+      style={{position:"absolute",left:`${p.x}%`,top:`${p.y}%`,
+        width:`${p.length}px`,height:`${p.thickness}px`,borderRadius:999,
+        backgroundColor:p.color,opacity:1,
+        animation:`snow360MobileCandyFly ${p.duration}s linear ${p.delay}s infinite`,
+        '--dx':`${p.dx}vw`,'--dy':`${p.dy}vh`,
+        '--angle0':`${p.angle}deg`,'--angle1':`${p.endAngle}deg`}}/>) }
+    <style>{`
+      @keyframes snow360MobileCandyFly {
+        from {transform:translate3d(0,0,0) rotate(var(--angle0));}
+        to {transform:translate3d(var(--dx),var(--dy),0) rotate(var(--angle1));}
+      }
+      @media(prefers-reduced-motion:reduce){
+        .snow360-mobile-candy-rod{animation-duration:9s!important;}
+      }
+    `}</style>
+  </div>;
+}
+
 export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,speed=0,trick="",sprinklesOnly=false}) {
   const canvasRef=useRef(null);
   const gameRef=useRef({speed,remaining});
@@ -87,6 +160,9 @@ export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,spee
   },[trick]);
 
   useEffect(()=>{
+    // On phones the opaque sprinkle rods are animated by CSS instead.
+    // This avoids the failing dual-canvas composition and canvas-size races.
+    if(mobile)return;
     const canvas=canvasRef.current;
     if(!canvas)return;
     const ctx=canvas.getContext("2d",{alpha:true,desynchronized:true});
@@ -141,26 +217,29 @@ export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,spee
   },[mobile]);
 
   if(remaining<=0)return null;
-  // Scene 2: reuse ONLY the original candy rods. Its sky overlay supplies
-  // the title and color treatment; do not add a duplicate screen tint/title.
-  if(sprinklesOnly)return <canvas ref={canvasRef} aria-hidden="true"
-    className="snow360-candy-sprinkles-only" data-snow360-sprinkles="sky"
-    style={{position:"absolute",inset:0,zIndex:2,width:"100%",height:"100%",
-      display:"block",pointerEvents:"none"}}/>;
   const backgroundFade=clamp(remaining/.7,0,1);
-  return <div aria-hidden="true" data-snow360-sprinkles="candy" className="snow360-candy-world"
-    style={{position:"absolute",inset:0,zIndex:2,overflow:"hidden",pointerEvents:"none",opacity:1,
-      isolation:"isolate"}}>
-    {/* Leave the center clear so the rider and world stay readable. */}
-    <div style={{position:"absolute",inset:0,opacity:backgroundFade,
-      background:"radial-gradient(ellipse at 50% 49%, transparent 17%, rgba(255,216,237,.08) 46%, rgba(244,190,250,.20) 77%, rgba(177,241,248,.25) 100%)"}}/>
-    <div style={{position:"absolute",inset:0,opacity:.52*backgroundFade,
-      background:"linear-gradient(125deg,rgba(251,190,225,.12),transparent 37%,transparent 65%,rgba(255,232,174,.14))"}}/>
-    <canvas ref={canvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block"}}/>
-    {remaining>7.6&&<div className="snow360-candy-title" style={{position:"absolute",top:"34%",left:"50%",
-      transform:"translateX(-50%)",whiteSpace:"nowrap",maxWidth:"95vw",color:"#fff4ff",
-      font:"1000 clamp(18px,4vw,32px) Fredoka,system-ui,sans-serif",letterSpacing:".07em",
-      textShadow:"0 0 18px #f49ccd,1px 2px #a367a1",textAlign:"center"}}>
+  // A single stable root handles BOTH scene modes. Never switch the actual
+  // canvas element while the drawing effect is attached to it.
+  return <div aria-hidden="true"
+    data-snow360-sprinkles={sprinklesOnly?"sky":"candy"}
+    data-snow360-mobile-renderer={mobile?"css":"canvas"}
+    className="snow360-candy-world"
+    style={{position:"fixed",inset:0,zIndex:2,overflow:"hidden",pointerEvents:"none",
+      background:"transparent",opacity:1,isolation:"isolate"}}>
+    {!sprinklesOnly&&<>
+      {/* Scene 1: same soft background treatment; Scene 2 stays untouched. */}
+      <div style={{position:"absolute",inset:0,opacity:backgroundFade,
+        background:"radial-gradient(ellipse at 50% 49%,transparent 17%,rgba(255,216,237,.08) 46%,rgba(244,190,250,.20) 77%,rgba(177,241,248,.25) 100%)"}}/>
+      <div style={{position:"absolute",inset:0,opacity:.52*backgroundFade,
+        background:"linear-gradient(125deg,rgba(251,190,225,.12),transparent 37%,transparent 65%,rgba(255,232,174,.14))"}}/>
+    </>}
+    {mobile ? <MobileCandySprinkles speed={speed}/> : <canvas ref={canvasRef}
+      style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block"}}/>}
+    {!sprinklesOnly&&remaining>7.6&&<div className="snow360-candy-title"
+      style={{position:"absolute",top:"34%",left:"50%",transform:"translateX(-50%)",
+        whiteSpace:"nowrap",maxWidth:"95vw",color:"#fff4ff",
+        font:"1000 clamp(18px,4vw,32px) Fredoka,system-ui,sans-serif",letterSpacing:".07em",
+        textShadow:"0 0 18px #f49ccd,1px 2px #a367a1",textAlign:"center"}}>
       ✦ ICE-CREAM POWER ✦
     </div>}
     <style>{`
