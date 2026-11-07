@@ -2766,12 +2766,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
           <div className="snow64-number" style={mobile?{fontSize:12.5,lineHeight:1.02,whiteSpace:"nowrap",letterSpacing:"0"}:undefined}>{v.value}<span
             style={{fontSize:mobile?6.5:9,marginLeft:mobile?1:2}}>{v.unit}</span></div>
         </div>)}
-        {mobile && <div style={{position:"absolute",top:"calc(100% + 7px)",right:0,width:"max-content",
-          maxWidth:"min(45vw, 150px)",textAlign:"right",lineHeight:1.18,pointerEvents:"none"}}>
-          <div style={{color:"#22546c",fontSize:7,fontWeight:900,letterSpacing:".055em",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
-          <div style={{fontSize:13,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
-          <div style={{fontSize:8,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
-        </div>}
+
       </div>
     </div>
     {/* Mobile trick/score/combo notices are anchored just below the compact top HUD,
@@ -2784,11 +2779,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       {hud.recovery!=="riding" && <div style={{fontWeight:900,color:"#ffd89a",textShadow:"2px 2px #285467",fontSize:12}}> {hud.recovery==="chasing" ? "RUNNING BACK TO THE BOARD" : hud.recovery==="remounting" ? "REMOUNTING" : "RIDER DOWN"}</div>}
       {hud.combo>1&&<div style={{fontWeight:900,letterSpacing:".15em",color:"#f8ffff",textShadow:"2px 2px #285467"}}>COMBO ×{hud.combo}</div>}
     </div>}
-    {!mobile && <div style={{position:"absolute",right:20,top:121,zIndex:3,pointerEvents:"none",textAlign:"right"}}>
-      <div className="snow64-label" style={{color:"#22546c",textShadow:"1px 1px #e6f7ff"}}>ENDLESS DOWNHILL</div>
-      <div style={{fontSize:19,color:"#16445a",fontWeight:1000,textShadow:"1px 1px #e9f8ff"}}>{hud.distance.toLocaleString()} m</div>
-      <div style={{fontSize:12,color:hud.score<Math.max(900,hud.drainRate*9)?"#bb395b":"#20536a",fontWeight:900,textShadow:"1px 1px #f4faff"}}>−{hud.drainRate.toFixed(1)} PTS / SEC</div>
-    </div>}
+
     {/* Minimal, immersive pause and game-over screens. The actual course stays behind the soft blur.
         The existing welcome menu above remains untouched, including all settings. */}
     {(phase==="paused" || phase==="finished") &&
