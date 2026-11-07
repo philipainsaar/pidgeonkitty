@@ -688,3 +688,67 @@ main .snow360-arcade-hud .snow64-number span {
     font-size: 10.5px !important;
   }
 }
+
+/* V9 mobile HUD alignment: center the REAL label/value as a two-line group.
+   Earlier labels used top:11% while the value used top:60%, which left the
+   value visibly too low in the pink cloud. The card uses a grid instead of
+   independently positioned text, so live values cannot drift out of place. */
+@media (max-width: 720px), (pointer: coarse) {
+  main .snow360-arcade-hud .snow64-panel {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: min-content min-content !important;
+    justify-items: center !important;
+    align-items: center !important;
+    align-content: center !important;
+    row-gap: 0 !important;
+    /* A tiny downward optical offset centers the pair in the pink capsule,
+       rather than in the fluffy cloud topper. */
+    padding: 12% 2% 0 !important;
+  }
+  main .snow360-arcade-hud .snow64-label,
+  main .snow360-arcade-hud .snow64-number {
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    left: auto !important;
+    width: auto !important;
+    max-width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+    text-align: center !important;
+    justify-self: center !important;
+    align-self: center !important;
+    transform: none !important;
+  }
+  main .snow360-arcade-hud .snow64-label {
+    font-size: clamp(6.5px, 1.7vw, 9px) !important;
+    line-height: 1.05 !important;
+  }
+  main .snow360-arcade-hud .snow64-number {
+    font-size: clamp(14px, 3.8vw, 22px) !important;
+    font-variant-numeric: tabular-nums !important;
+    line-height: 1 !important;
+  }
+  main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number {
+    font-size: clamp(10px, 2.8vw, 16px) !important;
+    letter-spacing: -.045em !important;
+  }
+  main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number {
+    font-size: clamp(11.5px, 3.25vw, 19px) !important;
+    letter-spacing: -.04em !important;
+  }
+  main .snow360-arcade-hud .snow64-number span {
+    font-size: clamp(5px, 1.17vw, 7px) !important;
+    margin-left: 1px !important;
+  }
+}
+/* Narrow phones still show all three panels in ONE horizontal row. */
+@media (max-width: 350px) {
+  main .snow360-arcade-hud .snow64-panel {padding-top: 10% !important;}
+  main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number {
+    font-size: 9.7px !important;
+  }
+}
