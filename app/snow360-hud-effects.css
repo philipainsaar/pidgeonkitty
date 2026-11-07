@@ -1,0 +1,185 @@
+/* SNOW360 V13: upper-cloud labels and centered live arcade numbers.
+   V12 reactive candy-light stays unchanged.
+   Desktop: label 17%, number 52%. Mobile: label 15%, number 54%.
+   Addresses label/value drifting low in the original V12 desktop HUD.
+
+   SNOW360 V12: freshly rebuilt pearl-white HUD art and reactive candy-light.
+   Must load AFTER snow360-cloud-buttons.css. No gameplay source modified. */
+:root {
+  --snow360-cloud-hud: url('/images/snow360-cloud-hud-pearl-v12.png');
+}
+
+main .snow360-arcade-hud .snow64-panel {
+  position: relative !important;
+  isolation: isolate;
+  background: transparent var(--snow360-cloud-hud) center / 100% 100% no-repeat !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+/* Every reaction colors just the INNER glass capsule. Cloud trim stays white. */
+main .snow360-arcade-hud .snow64-panel::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  left: 9%; right: 9%; top: 25%; bottom: 23%;
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+main .snow360-arcade-hud .snow64-label,
+main .snow360-arcade-hud .snow64-number {
+  position: absolute !important;
+  z-index: 1;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  transform: translateY(-50%) !important;
+  line-height: 1 !important;
+  pointer-events: none;
+}
+main .snow360-arcade-hud .snow64-label {
+  top: 17% !important;
+  color: #1682b0 !important;
+  text-shadow: 0 1px 0 #fff, 0 1px 2px #fff !important;
+}
+main .snow360-arcade-hud .snow64-number { top: 52% !important; }
+
+@keyframes snow360HudTint {
+  0% { opacity: 0; transform: scale(.90); }
+  19% { opacity: .80; transform: scale(1.0); }
+  46% { opacity: .22; }
+  65% { opacity: .75; }
+  100% { opacity: 0; transform: scale(1.02); }
+}
+@keyframes snow360HudGlow {
+  0% { filter: brightness(1); }
+  35% { filter: brightness(1.10) drop-shadow(0 0 6px var(--snow360-pulse-glow,#fff)); }
+  100% { filter: brightness(1); }
+}
+main .snow360-arcade-hud [data-snow360-pulse] {
+  animation: snow360HudGlow .75s ease-out both;
+}
+main .snow360-arcade-hud [data-snow360-pulse]::after {
+  animation: snow360HudTint .78s ease-out both;
+}
+main .snow360-arcade-hud [data-snow360-pulse="gain"] {
+  --snow360-pulse-glow: #eaff97;
+}
+main .snow360-arcade-hud [data-snow360-pulse="gain"]::after {
+  background: linear-gradient(110deg,#bdfff3,#fff3a9);
+}
+main .snow360-arcade-hud [data-snow360-pulse="loss"] {
+  --snow360-pulse-glow: #ff537d;
+}
+main .snow360-arcade-hud [data-snow360-pulse="loss"]::after {
+  background: linear-gradient(105deg,#ff9eac,#ff3d75);
+}
+main .snow360-arcade-hud [data-snow360-pulse="drain"] {
+  --snow360-pulse-glow: #ffb6bc;
+}
+main .snow360-arcade-hud [data-snow360-pulse="drain"]::after {
+  background: linear-gradient(100deg,#fff1f1,#ffc8cc);
+}
+main .snow360-arcade-hud [data-snow360-pulse="boost"] {
+  --snow360-pulse-glow: #94f9ff;
+}
+main .snow360-arcade-hud [data-snow360-pulse="boost"]::after {
+  background: linear-gradient(90deg,#c7fff5,#7adfff);
+}
+main .snow360-arcade-hud [data-snow360-pulse="slow"] {
+  --snow360-pulse-glow: #c3b8ff;
+}
+main .snow360-arcade-hud [data-snow360-pulse="slow"]::after {
+  background: linear-gradient(90deg,#e4e5ff,#bab9fa);
+}
+main .snow360-arcade-hud [data-snow360-pulse="milestone"] {
+  --snow360-pulse-glow: #ffc1eb;
+}
+main .snow360-arcade-hud [data-snow360-pulse="milestone"]::after {
+  background: linear-gradient(90deg,#efdbff,#ffc1ed);
+}
+main .snow360-arcade-hud [data-snow360-pulse="frost"] {
+  --snow360-pulse-glow: #c7aaff;
+}
+main .snow360-arcade-hud [data-snow360-pulse="frost"]::after {
+  background: linear-gradient(110deg,#8cffff,#ebb0fc,#fff1b1);
+}
+@keyframes snow360FrostFrame {
+  0%,100% { filter: drop-shadow(0 0 2px #b4faff77); }
+  50% { filter: drop-shadow(0 0 7px #d8a9ffbc); }
+}
+main .snow360-arcade-hud[data-snow360-frost-active] .snow64-panel:not([data-snow360-pulse]) {
+  animation: snow360FrostFrame 2.3s ease-in-out infinite;
+}
+
+/* Works with the current game markup, including its inline mobile flex/grid
+   overrides. Absolute, zero-padding text cannot fall beneath the art. */
+@media (max-width: 720px), (pointer: coarse) {
+  main .snow360-arcade-hud {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: flex-start !important;
+    justify-content: flex-end !important;
+    gap: clamp(1px,.65vw,4px) !important;
+    height: auto !important;
+  }
+  main .snow360-arcade-hud .snow64-panel {
+    display: block !important;
+    position: relative !important;
+    flex: 0 0 auto !important;
+    width: clamp(68px,21.7vw,112px) !important;
+    height: auto !important;
+    min-height: 0 !important;
+    aspect-ratio: 940 / 401 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  main .snow360-arcade-hud .snow64-label,
+  main .snow360-arcade-hud .snow64-number {
+    display: flex !important;
+    position: absolute !important;
+    inset: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    transform: translateY(-50%) !important;
+  }
+  main .snow360-arcade-hud .snow64-label {
+    top: 15% !important;
+    font-size: clamp(7px,1.78vw,10px) !important;
+  }
+  main .snow360-arcade-hud .snow64-number {
+    top: 54% !important;
+    font-size: clamp(14px,3.8vw,21px) !important;
+  }
+  main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number {
+    font-size: clamp(10px,2.85vw,16px) !important;
+  }
+  main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number {
+    font-size: clamp(11px,3.15vw,18px) !important;
+  }
+  main .snow360-arcade-hud .snow64-number span {
+    flex: 0 0 auto !important;
+    font-size: clamp(5px,1.17vw,7px) !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  main .snow360-arcade-hud [data-snow360-pulse],
+  main .snow360-arcade-hud [data-snow360-pulse]::after,
+  main .snow360-arcade-hud[data-snow360-frost-active] .snow64-panel {
+    animation: none !important;
+  }
+  main .snow360-arcade-hud [data-snow360-pulse]::after { opacity: .25 !important; }
+}
