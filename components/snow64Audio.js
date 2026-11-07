@@ -1,21 +1,22 @@
 /**
- * SNOW 64 V20: softer airborne wind / original procedural soundscape, using the browser's Web Audio API.
- * No downloaded audio, copyrighted music, libraries, or per-frame node creation.
- * A single AudioContext plays continuous snow/speed/carve/wind noise, event cues,
- * and the original Frost Shroom arpeggio. Sound starts on a user gesture.
+ * SNOW 64: Browser Web Audio soundscape.
+ * Original snow/carve/air ambience, cues, soft snow footsteps, and power-up music.
  *
- * SNOW 64: SOFT BUBBLE FOOTSTEPS
- * Only walking/chasing footsteps are redesigned: a tiny, gentle sine-wave
- * bubble or squeak (no metallic thump, noise crackle or resonant filtering).
- * Token pickup, original game SFX and master volume remain unchanged.
+ * ICE-CREAM BUBBLE COLLISION OVERLAY
+ * A bright watery pop followed immediately by a LOUD, adorable alien
+ * two-syllable squeak-yelp: one high WEE followed by a descending yu.
+ * Plays IN ADDITION TO the original collision audio, at the instant of impact.
+ * Nothing new plays on normal landings or on subsequent bouncing boards.
+ * No external audio assets or per-frame creation of audio nodes.
  */
 export const SNOW64_EFFECT_LEVELS = {
-  footsteps: 1.0,    // Soft bubble loudness; try 0.65 for extra quiet, 1.4 for louder
-  tokenPickup: 1.9,  // Keep the token pickup volume unchanged
+  footsteps: 1.0,
+  tokenPickup: 1.9,
+  collisionBubble: 1.15, // First watery pop (0-2.5)
+  collisionScream: 1.65, // Loudness of the cute alien yelp (0-2.5)
+  collisionAlienPitch: 1.07, // 1.0 = normal, 1.15 = even smaller/cuter alien
 };
-// Change to 'squeak' for a slightly higher, whisper-soft "peep".
 export const SNOW64_FOOTSTEP_STYLE = 'bubble'; // 'bubble' | 'squeak'
-
 
 let engine = null;
 let enabled = true;
@@ -33,7 +34,6 @@ function audioEngine() {
     const master = ctx.createGain();
     master.gain.value = volume;
     master.connect(ctx.destination);
-    // Loopable short noise buffer: no audio files or network fetches.
     const frames = Math.ceil(ctx.sampleRate * 1.25);
     const buffer = ctx.createBuffer(1,frames,ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -45,25 +45,23 @@ function audioEngine() {
       data[i] = white*.65 + previous*.35;
     }
     const source = ctx.createBufferSource();
-    source.buffer = buffer; source.loop=true;
+    source.buffer = buffer;
+    source.loop = true;
     const chains = {};
-    // Reuse the same noise oscillator across three filtered sound layers.
     for(const [name,type,freq,q] of [
       ['snow','lowpass',1250,.56],
       ['edge','bandpass',2300,.77],
       ['wind','highpass',770,.61],
     ]) {
-      const filter=ctx.createBiquadFilter(); filter.type=type;filter.frequency.value=freq;filter.Q.value=q;
+      const filter=ctx.createBiquadFilter();
+      filter.type=type;filter.frequency.value=freq;filter.Q.value=q;
       const gain=ctx.createGain();gain.gain.value=FLOAT_ZERO;
       source.connect(filter);filter.connect(gain);gain.connect(master);
       chains[name]={filter,gain};
     }
     source.start();
 
-    // Separate, low-frequency *colored* airflow. White/high-passed noise sounds
-    // like a shower on phone speakers, especially during long Super Air jumps.
-    // Filtering the signal BEFORE playback removes the brittle water-like hiss.
-    // This source is created once, not per animation frame.
+    // Dark, soft airflow, not bright shower-like noise.
     const airBuffer = ctx.createBuffer(1,frames,ctx.sampleRate);
     const airData = airBuffer.getChannelData(0);
     let low=0,mid=0,body=0,airSeed=863971;
@@ -79,14 +77,9 @@ function audioEngine() {
     airSource.buffer=airBuffer;
     airSource.loop=true;
     const airFilter=ctx.createBiquadFilter();
-    airFilter.type='lowpass';
-    airFilter.frequency.value=470;
-    airFilter.Q.value=.5;
-    const airGain=ctx.createGain();
-    airGain.gain.value=FLOAT_ZERO;
-    airSource.connect(airFilter);
-    airFilter.connect(airGain);
-    airGain.connect(master);
+    airFilter.type='lowpass';airFilter.frequency.value=470;airFilter.Q.value=.5;
+    const airGain=ctx.createGain();airGain.gain.value=FLOAT_ZERO;
+    airSource.connect(airFilter);airFilter.connect(airGain);airGain.connect(master);
     airSource.start();
     chains.air={filter:airFilter,gain:airGain};
     engine={ctx,master,buffer,source,airSource,chains,lastBedAt:-1,cueAt:{},musicStop:null};
@@ -110,7 +103,6 @@ export function unlockSnow64Audio() {
   const e=audioEngine();
   if(e?.ctx.state==='suspended')e.ctx.resume().catch(()=>{});
 }
-/** Tear down the sound loop when leaving the game; avoid orphan audio on navigation. */
 export function shutdownSnow64Audio() {
   if(!engine)return;
   const e=engine;
@@ -121,7 +113,7 @@ export function shutdownSnow64Audio() {
   try{e.ctx.close();}catch{}
 }
 
-/** Update a few filter/gain parameters ~20 times/sec. No new nodes are created. */
+/** Update ambience ~20 times a second, without adding new nodes. */
 export function updateSnow64AudioFrame({playing=false,speed=0,steer=0,tuck=false,
   inAir=false,recovery=false,powered=false,airHeight=0}={}) {
   const e=engine;
@@ -136,14 +128,9 @@ export function updateSnow64AudioFrame({playing=false,speed=0,steer=0,tuck=false
   const carving=clamp(Math.abs(steer));
   const snow=grounded ? (.012+.22*Math.pow(v,.9))*(.88+carving*.12) : FLOAT_ZERO;
   const edge=grounded ? (.012+.17*v)*Math.pow(carving,1.45) : FLOAT_ZERO;
-  // Brighter speed hiss belongs ON THE SNOW, not in the air. On airborne
-  // frames it fades completely, rather than adding a permanent spray layer.
   const wind=grounded ? (.008+.085*v*v+(tuck?.036*v:0)) : FLOAT_ZERO;
-  // Soft, dark airflow responds to speed and altitude but never produces a
-  // shower-like high-frequency band. Frost Hover uses this same smooth layer.
   const air=airborne ? (.055+.092*v+clamp(airHeight/15)*.018+(powered?.018:0)) : FLOAT_ZERO;
   const smooth=(chain,target,rate=.075)=>chain.gain.gain.setTargetAtTime(Math.max(FLOAT_ZERO,target),t,rate);
-  // Rapidly silence contact noise at takeoff; gently swell the air current.
   smooth(e.chains.snow,snow,grounded?.065:.018);
   smooth(e.chains.edge,edge,grounded?.055:.018);
   smooth(e.chains.wind,wind,grounded?.09:.028);
@@ -180,13 +167,7 @@ function burst(e,when,length,level=.095,frequency=850,type='lowpass') {
   source.onended=()=>{source.disconnect();filter.disconnect();env.disconnect();};
 }
 
-/**
- * Very soft, single-voice fish-on-snow footstep. No synthesized noise,
- * low-frequency thud, hard click or metallic harmonics.
- * A rounded sine glides slightly upward and down, with a gentle envelope.
- * Tiny alternating variations prevent identical repeated "notes".
- * Generated on demand, never downloads or plays a sound file.
- */
+/** Original super-soft bubble/squeak footsteps on snow. */
 function playSoftSnowStep(e, when) {
   const level = clamp(SNOW64_EFFECT_LEVELS.footsteps, 0, 2.5);
   if (level <= 0) return;
@@ -214,13 +195,137 @@ function playSoftSnowStep(e, when) {
   osc.onended = () => { osc.disconnect(); env.disconnect(); };
 }
 
-/** Gameplay sound cues are material-specific, not generic UI beeps. */
+/**
+ * COLLISION / WIPEOUT: two-syllable cute alien voice, no sampled files.
+ *
+ *   0.00s: a soft springy bubble pop.
+ *   0.14s: one loud, high "WEE" followed by one rounded, falling "yu".
+ *   Then silence. No third syllable, final chirp, or repeating echo.
+ *
+ * Shares a cooldown across rock, ramp, and wipeout collisions. Other sounds
+ * (including snow footsteps and board bounces) are not changed.
+ */
+function playBubbleImpactOverlay(e, when, kind) {
+  const bubble = clamp(SNOW64_EFFECT_LEVELS.collisionBubble, 0, 2.5);
+  const scream = clamp(SNOW64_EFFECT_LEVELS.collisionScream, 0, 2.5);
+  if ((bubble <= 0 && scream <= 0) || when - (e.cueAt.bubbleImpact ?? -100) < .9) return;
+  e.cueAt.bubbleImpact = when;
+
+  const {ctx, master} = e;
+  const variation = (e.bubbleIndex = (e.bubbleIndex || 0) + 1) % 5;
+  const pitch = [1, 1.07, .955, 1.025, .985][variation]
+    * clamp(SNOW64_EFFECT_LEVELS.collisionAlienPitch ?? 1, .72, 1.35);
+  const weight = kind === 'rockHit' ? .98 : kind === 'rampHit' ? 1.05 : 1;
+
+  if (bubble > 0) {
+    // Existing little watery pop, unchanged.
+    const pop = ctx.createOscillator(), env = ctx.createGain();
+    pop.type = 'sine';
+    pop.frequency.setValueAtTime(620 * pitch, when);
+    pop.frequency.exponentialRampToValueAtTime(775 * pitch, when + .022);
+    pop.frequency.exponentialRampToValueAtTime(280 * pitch, when + .138);
+    env.gain.setValueAtTime(FLOAT_ZERO, when);
+    env.gain.linearRampToValueAtTime(.18 * bubble * weight, when + .011);
+    env.gain.exponentialRampToValueAtTime(FLOAT_ZERO, when + .15);
+    pop.connect(env); env.connect(master);
+    pop.start(when); pop.stop(when + .16);
+    pop.onended = () => {pop.disconnect(); env.disconnect();};
+    burst(e, when + .003, .043, .038 * bubble * weight, 1480, 'lowpass');
+  }
+
+  if (scream <= 0) return;
+  const at = when + .142;
+  const length = .54;
+  const end = at + length;
+
+  const voice = ctx.createOscillator();
+  const baby = ctx.createOscillator();
+  const shimmer = ctx.createOscillator();
+  const wobble = ctx.createOscillator();
+  const wobbleAmount = ctx.createGain();
+  const vowel = ctx.createBiquadFilter();
+  const soften = ctx.createBiquadFilter();
+  const voiceGain = ctx.createGain(), babyGain = ctx.createGain();
+  const shimmerGain = ctx.createGain(), mouth = ctx.createGain();
+  const compressor = ctx.createDynamicsCompressor();
+  const level = ctx.createGain();
+
+  voice.type = 'triangle';
+  baby.type = 'sine';
+  shimmer.type = 'sine';
+  // EXACTLY TWO movements: climb and hold "WEE", then round and fall "yu".
+  // No new upward pitch movement after the "yu" begins.
+  const notes = [
+    [0, 660], [.06, 940], [.13, 1060], [.22, 990],
+    [.295, 795], [.39, 600], [.54, 440],
+  ];
+  for (const [i, osc] of [voice, baby, shimmer].entries()) {
+    const multiple = i === 1 ? .5 : i === 2 ? 2 : 1;
+    osc.frequency.setValueAtTime(notes[0][1] * pitch * multiple, at);
+    for (const [sec, hz] of notes.slice(1))
+      osc.frequency.exponentialRampToValueAtTime(hz * pitch * multiple, at + sec);
+  }
+
+  // Gentle alien wobble, not a harsh siren.
+  wobble.type = 'sine';
+  wobble.frequency.setValueAtTime(8.5, at);
+  wobble.frequency.linearRampToValueAtTime(10.1, end);
+  wobbleAmount.gain.value = 13;
+  wobble.connect(wobbleAmount);
+  wobbleAmount.connect(voice.frequency);
+  wobbleAmount.connect(baby.frequency);
+  wobbleAmount.connect(shimmer.frequency);
+
+  // Bright "ee" vowel closes into a soft "yu" vowel.
+  vowel.type = 'lowpass'; vowel.Q.value = .65;
+  vowel.frequency.setValueAtTime(2650, at);
+  vowel.frequency.linearRampToValueAtTime(2200, at + .22);
+  vowel.frequency.linearRampToValueAtTime(1350, at + .34);
+  vowel.frequency.linearRampToValueAtTime(950, end);
+  soften.type = 'lowpass'; soften.frequency.value = 2800; soften.Q.value = .38;
+  voiceGain.gain.value = .78;
+  babyGain.gain.value = .24;
+  shimmerGain.gain.value = .10;
+
+  // Only two syllables. A short dip at .275 separates WEE from yu.
+  mouth.gain.setValueAtTime(FLOAT_ZERO, at);
+  mouth.gain.linearRampToValueAtTime(.55, at + .022);
+  mouth.gain.linearRampToValueAtTime(1, at + .085);
+  mouth.gain.linearRampToValueAtTime(.85, at + .21);
+  mouth.gain.linearRampToValueAtTime(.32, at + .275);
+  mouth.gain.linearRampToValueAtTime(.87, at + .325);
+  mouth.gain.linearRampToValueAtTime(.69, at + .42);
+  mouth.gain.exponentialRampToValueAtTime(FLOAT_ZERO, end);
+
+  compressor.threshold.value = -14;
+  compressor.knee.value = 18;
+  compressor.ratio.value = 2.8;
+  compressor.attack.value = .003;
+  compressor.release.value = .105;
+  level.gain.value = .42 * scream * weight;
+
+  voice.connect(vowel); vowel.connect(voiceGain); voiceGain.connect(mouth);
+  baby.connect(babyGain); babyGain.connect(mouth);
+  shimmer.connect(soften); soften.connect(shimmerGain); shimmerGain.connect(mouth);
+  mouth.connect(compressor); compressor.connect(level); level.connect(master);
+
+  for (const osc of [voice, baby, shimmer, wobble]) {
+    osc.start(at); osc.stop(end + .014);
+  }
+  voice.onended = () => {
+    for (const node of [voice, baby, shimmer, wobble, wobbleAmount, vowel,
+      soften, voiceGain, babyGain, shimmerGain, mouth, compressor, level]) {
+      try { node.disconnect(); } catch {}
+    }
+  };
+}
+
+/** Every original sound stays intact; only collision cases gain the overlay. */
 export function playSnow64Sound(kind) {
   if(!enabled)return;
   const e=audioEngine();if(!e)return;
   if(e.ctx.state==='suspended')e.ctx.resume().catch(()=>{});
   const n=e.ctx.currentTime+.008;
-  // Rate-limit repeated taps/automatic tricks to avoid sound overload.
   const limits={trickStart:.12,magicTrick:.24,shatter:.09,boardBounce:.10,pickup:.09};
   if(limits[kind] && n-(e.cueAt[kind]||-50)<limits[kind])return;
   e.cueAt[kind]=n;
@@ -257,13 +362,16 @@ export function playSnow64Sound(kind) {
     case 'rockHit':
       burst(e,n,.41,.27,340,'lowpass');
       tone(e,n,120,.27,.15,'triangle',57);
-      burst(e,n+.055,.13,.092,1600,'highpass');break;
+      burst(e,n+.055,.13,.092,1600,'highpass');
+      playBubbleImpactOverlay(e,n,'rockHit');break;
     case 'rampHit':
       burst(e,n,.29,.16,720,'bandpass');
-      tone(e,n,210,.22,.12,'square',88);break;
+      tone(e,n,210,.22,.12,'square',88);
+      playBubbleImpactOverlay(e,n,'rampHit');break;
     case 'crash':
       burst(e,n,.34,.20,510,'lowpass');
-      tone(e,n,160,.28,.12,'triangle',72);break;
+      tone(e,n,160,.28,.12,'triangle',72);
+      playBubbleImpactOverlay(e,n,'crash');break;
     case 'boardBounce':
       burst(e,n,.11,.075,620,'bandpass');
       tone(e,n,260,.095,.035,'triangle',150);break;
@@ -294,7 +402,7 @@ export function playSnow64Sound(kind) {
   }
 }
 
-/** Original repeating Frost Shroom melody. Uses the same context + master bus. */
+/** Existing power-up melody and event timing remain unchanged. */
 export function playSnow64FrostMusic() {
   if(!enabled || typeof window==='undefined')return()=>{};
   const e=audioEngine();if(!e)return()=>{};
