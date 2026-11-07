@@ -107,7 +107,7 @@ const MOBILE_RODS=(()=>{
   }
   return rods;
 })();
-function MobileCandySprinkles({speed=0}) {
+export function MobileCandySprinkles({speed=0}) {
   const holder=useRef(null);
   const lastRate=useRef(0);
   // CSS animation playbackRate varies with the real snowboard speed without

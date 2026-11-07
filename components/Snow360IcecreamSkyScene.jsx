@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
+import { MobileCandySprinkles } from "./Snow360IcecreamPowerScene";
 
 /**
  * SNOW360 Ice Cream Power | randomized SCENE 2: CLOUD SURF.
@@ -109,6 +110,55 @@ function drawStar(ctx,x,y,r) {
   ctx.closePath();ctx.fill();
 }
 
+/** Mobile-safe Sky Surf motes. The desktop keeps its ORIGINAL Canvas motes;
+ * mobile draws the same kinds of star, pearl and sky streak with CSS instead.
+ * Keeping every screen-space effect in the SAME DOM layer avoids mobile GPU
+ * compositing conflicts between a constantly-redrawn sky canvas and sprinkles.
+ * The real 3D cloud GLBs and every cinematic camera shot are unchanged. */
+const MOBILE_SKY_MOTES=(()=>{
+  const kinds=["star","pearl","trail"];
+  return Array.from({length:46},(_,i)=>{
+    const n=i+1;
+    const hash=(salt)=>seeded(n*(salt+21)+salt*33.25);
+    const kind=kinds[Math.floor(hash(7)*3)];
+    return {
+      id:i,kind,color:PINK[Math.floor(hash(13)*PINK.length)],
+      x:-7+hash(2)*114,y:-18+hash(3)*133,
+      size:kind==="trail"?1.4+hash(4)*1.6:2.7+hash(5)*3.2,
+      length:kind==="trail"?12+hash(9)*16:0,
+      dx:(hash(11)-.5)*37,dy:105+hash(17)*73,
+      duration:2.5+hash(19)*2.7,delay:-hash(23)*4.7,
+    };
+  });
+})();
+function MobileSkyMotes({speed=0}) {
+  const rate=clamp(.78+speed/150,.78,1.9);
+  return <div aria-hidden="true" data-snow360-mobile-sky-motes="true"
+    style={{position:"absolute",inset:0,zIndex:2,pointerEvents:"none",overflow:"hidden"}}>
+    {MOBILE_SKY_MOTES.map(p=><span key={p.id}
+      className={`snow360-css-skymote snow360-css-skymote-${p.kind}`}
+      style={{position:"absolute",left:`${p.x}%`,top:`${p.y}%`,
+        width:p.kind==="star"?p.size*2.4:p.size,
+        height:p.kind==="trail"?p.length:p.kind==="star"?p.size*2.4:p.size,
+        borderRadius:p.kind==="pearl"?"50%":p.kind==="trail"?"100px":0,
+        backgroundColor:p.color,
+        clipPath:p.kind==="star"?"polygon(50% 0%,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0% 50%,39% 39%)":undefined,
+        opacity:p.kind==="star"?.78:.52,
+        '--sky-mote-x':`${p.dx}vw`,'--sky-mote-y':`${p.dy}vh`,
+        animation:`snow360CssSkyMote ${(p.duration/rate).toFixed(2)}s linear ${p.delay.toFixed(2)}s infinite`}}/>) }
+    <style>{`
+      @keyframes snow360CssSkyMote {
+        from {transform:translate3d(0,0,0);opacity:.45}
+        45% {opacity:.8}
+        to {transform:translate3d(var(--sky-mote-x),var(--sky-mote-y),0);opacity:.35}
+      }
+      @media(prefers-reduced-motion:reduce){
+        .snow360-css-skymote {animation-duration:10s!important}
+      }
+    `}</style>
+  </div>;
+}
+
 /** 2D scene overlay: soft magical sky particles, not the scene-1 sprinkles. */
 export default function Snow360IcecreamSkyScene({remaining=0,mobile=false,speed=0,trick=""}) {
   const canvasRef=useRef(null);
@@ -122,6 +172,9 @@ export default function Snow360IcecreamSkyScene({remaining=0,mobile=false,speed=
   },[trick]);
 
   useEffect(()=>{
+    // On mobile both sky motes and the candy rods use CSS in the same DOM
+    // scene. Do not create a constantly-redrawn sky canvas above them.
+    if(mobile)return;
     const canvas=canvasRef.current;
     if(!canvas)return;
     const ctx=canvas.getContext("2d",{alpha:true,desynchronized:true});
@@ -188,7 +241,17 @@ export default function Snow360IcecreamSkyScene({remaining=0,mobile=false,speed=
       background:"radial-gradient(ellipse at 50% 50%,transparent 22%,rgba(202,235,255,.09) 55%,rgba(255,196,234,.22) 100%)"}}/>
     <div style={{position:"absolute",inset:0,opacity:.8*fade,
       background:"linear-gradient(120deg,rgba(226,206,255,.13),transparent 45%,rgba(203,255,248,.12))"}}/>
-    <canvas ref={canvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block"}}/>
+    {mobile ? <>
+      <MobileSkyMotes speed={speed}/>
+      {/* Use the exact CSS rods already proven on the user's Scene 1.
+          Their parent is the same Sky Surf scene as the motes, so a Safari
+          canvas layer can never draw over or hide the candy sprinkles. */}
+      <div data-snow360-sprinkles="sky" style={{position:"absolute",inset:0,zIndex:4,
+        overflow:"hidden",pointerEvents:"none"}}>
+        <MobileCandySprinkles speed={speed}/>
+      </div>
+    </> : <canvas ref={canvasRef}
+      style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block"}}/>}
     {remaining>7.5&&<div className="snow360-sky-title" style={{position:"absolute",left:"50%",top:"32%",
       transform:"translateX(-50%)",whiteSpace:"nowrap",maxWidth:"94vw",pointerEvents:"none",
       color:"#fff9ff",font:"1000 clamp(17px,3.9vw,33px) Fredoka,system-ui,sans-serif",

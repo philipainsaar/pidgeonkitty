@@ -2891,10 +2891,11 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
         {hud.icecreamScene===2 && <Snow360IcecreamSkyScene
           remaining={hud.powerRemaining} mobile={mobile===true}
           speed={hud.speed} trick={hud.trick}/>}
-        <Snow360IcecreamPowerScene
-          remaining={hud.powerRemaining} mobile={mobile===true}
-          speed={hud.speed} trick={hud.trick}
-          sprinklesOnly={hud.icecreamScene===2}/>
+        {(hud.icecreamScene!==2 || mobile!==true) &&
+          <Snow360IcecreamPowerScene
+            remaining={hud.powerRemaining} mobile={mobile===true}
+            speed={hud.speed} trick={hud.trick}
+            sprinklesOnly={hud.icecreamScene===2}/>}
       </div>}
     {/* Mobile: an ultra-compact SPEED / TIME / SCORE rail at top-right, about
         as tall as the visible logo. Distance hangs below the rail without
