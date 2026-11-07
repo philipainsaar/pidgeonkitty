@@ -2880,13 +2880,22 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
         Sky Surf keeps its complete cloud/mote camera and atmosphere; its
         sprinkles-only layer adds no second title, gradients or other visuals.
         Scene 1 still renders the full original Candy World overlay. */}
-    {phase==="playing" && hud.powerRemaining>0 && <>
-      {hud.icecreamScene===2 && <Snow360IcecreamSkyScene
-        remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>}
-      <Snow360IcecreamPowerScene
-        remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}
-        sprinklesOnly={hud.icecreamScene===2}/>
-    </>}
+    {phase==="playing" && hud.powerRemaining>0 &&
+      <div data-snow360-icecream-visual-stack="true" aria-hidden="true"
+        style={{position:"absolute",inset:0,zIndex:2,overflow:"hidden",
+          pointerEvents:"none",isolation:"isolate"}}>
+        {/* Fixed explicit order across mobile and desktop:
+            0 = Sky Surf atmosphere, 1 = shared opaque candy rods.
+            Gameplay HUD remains at zIndex 3 above the entire stack.
+            Sky Surf camera/3D cloud flight code is unchanged. */}
+        {hud.icecreamScene===2 && <Snow360IcecreamSkyScene
+          remaining={hud.powerRemaining} mobile={mobile===true}
+          speed={hud.speed} trick={hud.trick}/>}
+        <Snow360IcecreamPowerScene
+          remaining={hud.powerRemaining} mobile={mobile===true}
+          speed={hud.speed} trick={hud.trick}
+          sprinklesOnly={hud.icecreamScene===2}/>
+      </div>}
     {/* Mobile: an ultra-compact SPEED / TIME / SCORE rail at top-right, about
         as tall as the visible logo. Distance hangs below the rail without
         stretching its cards. Desktop keeps the original horizontal HUD. */}

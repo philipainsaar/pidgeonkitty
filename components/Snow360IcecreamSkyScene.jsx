@@ -182,7 +182,7 @@ export default function Snow360IcecreamSkyScene({remaining=0,mobile=false,speed=
   if(remaining<=0)return null;
   const fade=clamp(remaining/.85,0,1);
   return <div className="snow360-icecream-sky-scene" aria-hidden="true"
-    style={{position:"absolute",inset:0,zIndex:2,overflow:"hidden",pointerEvents:"none",isolation:"isolate"}}>
+    style={{position:"absolute",inset:0,zIndex:0,overflow:"hidden",pointerEvents:"none",isolation:"isolate"}}>
     {/* Clear middle for rider; cotton-candy sky concentrated around perimeter. */}
     <div style={{position:"absolute",inset:0,opacity:fade,
       background:"radial-gradient(ellipse at 50% 50%,transparent 22%,rgba(202,235,255,.09) 55%,rgba(255,196,234,.22) 100%)"}}/>

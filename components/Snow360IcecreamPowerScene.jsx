@@ -125,11 +125,12 @@ function MobileCandySprinkles({speed=0}) {
     }
   },[speed]);
   return <div ref={holder} className="snow360-mobile-candy-rods" aria-hidden="true"
-    style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",zIndex:1}}>
+    style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",zIndex:1,
+      width:"100%",height:"100%",opacity:1,visibility:"visible"}}>
     {MOBILE_RODS.map(p=><span key={p.id} className="snow360-mobile-candy-rod"
       style={{position:"absolute",left:`${p.x}%`,top:`${p.y}%`,
         width:`${p.length}px`,height:`${p.thickness}px`,borderRadius:999,
-        backgroundColor:p.color,opacity:1,
+        backgroundColor:p.color,opacity:1,backfaceVisibility:"hidden",
         animation:`snow360MobileCandyFly ${p.duration}s linear ${p.delay}s infinite`,
         '--dx':`${p.dx}vw`,'--dy':`${p.dy}vh`,
         '--angle0':`${p.angle}deg`,'--angle1':`${p.endAngle}deg`}}/>) }
@@ -224,8 +225,8 @@ export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,spee
     data-snow360-sprinkles={sprinklesOnly?"sky":"candy"}
     data-snow360-mobile-renderer={mobile?"css":"canvas"}
     className="snow360-candy-world"
-    style={{position:"fixed",inset:0,zIndex:2,overflow:"hidden",pointerEvents:"none",
-      background:"transparent",opacity:1,isolation:"isolate"}}>
+    style={{position:"absolute",inset:0,zIndex:1,overflow:"hidden",pointerEvents:"none",
+      background:"transparent",opacity:1,isolation:"isolate",width:"100%",height:"100%"}}>
     {!sprinklesOnly&&<>
       {/* Scene 1: same soft background treatment; Scene 2 stays untouched. */}
       <div style={{position:"absolute",inset:0,opacity:backgroundFade,
