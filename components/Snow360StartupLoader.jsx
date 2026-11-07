@@ -4,11 +4,9 @@ import { useEffect, useState } from "react";
 import { useProgress } from "@react-three/drei";
 
 /**
- * Snow360 startup screen. The art remains fullscreen and entirely unobstructed.
- * The progress bar represents Three.js loading; 100% appears only when the
- * actual welcome PLAY control is enabled. No separate panel or asset captions.
- * The old CONTINUE override is intentionally removed: the loader now fades
- * only when the real PLAY button becomes ready.
+ * Snow360 startup screen. The larger layered logo sits at the top center
+ * while loading; the progress display stays centered. The screen fades only
+ * when the real Welcome PLAY button is ready, never after an arbitrary delay.
  */
 export default function Snow360StartupLoader() {
   const { progress, total } = useProgress();
@@ -57,6 +55,21 @@ export default function Snow360StartupLoader() {
       @keyframes snow360LoadPulse {0%,100%{opacity:.65;transform:scale(.98)}50%{opacity:1;transform:scale(1.02)}}
       @media(prefers-reduced-motion:reduce){.snow360-loading-word,.snow360-loading-shine{animation:none!important}}
     `}</style>
+
+    {/* The large logo is shown ONLY during loading. As this overlay fades, the
+        small top-left Welcome logo is revealed beneath it. */}
+    <div aria-label="Snow360" style={{position:"absolute",zIndex:1,pointerEvents:"none",
+      left:"50%",top:"clamp(12px, 4.5vh, 58px)",transform:"translateX(-50%)",
+      width:"min(88vw, 720px)",height:"min(26vh, 280px)",
+      maxWidth:"100%",userSelect:"none"}}>
+      <img src="/images/Snow360Logo-background.png" alt="" aria-hidden="true"
+        draggable={false} loading="eager" decoding="async"
+        style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain"}} />
+      <img src="/images/Snow360Logo.png" alt="SNOW360"
+        draggable={false} loading="eager" decoding="async"
+        style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain"}} />
+    </div>
+
     <div aria-live="polite" style={{width:"min(340px,80vw)",textAlign:"center",position:"relative",
       zIndex:1,filter:"drop-shadow(0 2px 10px rgba(255,255,255,.86))"}}>
       <div aria-hidden="true" style={{font:"900 20px Fredoka,system-ui,sans-serif",

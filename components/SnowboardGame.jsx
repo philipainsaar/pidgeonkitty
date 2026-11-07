@@ -34,6 +34,7 @@ import Snow64SundaeTrees from "./Snow64SundaeTrees";
 import Snow64StarTokens from "./Snow64StarTokens";
 import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
 import Snow64IcecreamPowerAura from "./Snow64IcecreamPowerAura";
+import Snow360IcecreamPowerScene from "./Snow360IcecreamPowerScene";
 import { playSnow64Sound, playSnow64FrostMusic as playSnow64IcecreamPowerMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -2097,24 +2098,6 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
   </Snow64TextureProvider></Snow64ModelProvider>;
 }
 
-function IcecreamMagicOverlay({ remaining, mobile }) {
-  if (remaining <= 0) return null;
-  const alpha=Math.min(1,remaining/.85);
-  return <div aria-hidden="true" className="snow64-magic" style={{position:"absolute",inset:0,
-    zIndex:2,overflow:"hidden",pointerEvents:"none",opacity:alpha,
-    background:"radial-gradient(ellipse at 50% 45%, transparent 34%, #ffd6e629 75%, #dabdff38 100%)"}}>
-    <div className="snow64-magic-halo" style={{position:"absolute",inset:"-24%",opacity:.58,animation:mobile?"none":undefined,
-      background:"conic-gradient(from 30deg at 50% 50%,transparent 0deg,#ffd3e83a 36deg,transparent 70deg,#e5c5ff30 145deg,transparent 210deg,#ffe0b43b 270deg,transparent 310deg)",
-      borderRadius:"50%"}}/>
-    {[[16,24,0],[81,20,.35],[26,79,.8],[73,72,1.15],[50,34,.55],[91,49,1.6]].slice(0,mobile?4:6).map(([x,y,d],i)=><div key={i} className="snow64-magic-star"
-      style={{position:"absolute",left:`${x}%`,top:`${y}%`,animationDelay:`-${d}s`,
-        color:i%2?"#f3cdff":"#ffdcf0",fontSize:i%3===0?26:16,textShadow:"0 0 12px currentColor"}}>✦</div>)}
-    {remaining>7.3 && <div className="snow64-magic-title" style={{position:"absolute",top:"34%",left:"50%",transform:"translateX(-50%)",
-      whiteSpace:"nowrap",font:"900 clamp(17px,4vw,32px) system-ui",letterSpacing:".14em",color:"#ffeff9",
-      textShadow:"0 0 10px #ffbde4,2px 3px #69416d"}}>✦ ICE-CREAM POWER ✦</div>}
-  </div>;
-}
-
 function formatTime(s){const m=Math.floor(s/60);const sec=(s%60).toFixed(2).padStart(5,"0");return `${String(m).padStart(2,"0")}:${sec}`;}
 
 /** Two independent touch zones allow true two-thumb multi-touch: steering with the
@@ -2528,7 +2511,7 @@ function getSnow360TrimmedLogos(startScreen) {
 }
 
 /** Layered start logo and in-game HUD logo, without vertical letterboxing. */
-function Snow360Logo({ startScreen = false, mobile = false }) {
+export function Snow360Logo({ startScreen = false, mobile = false }) {
   const [images,setImages] = useState(null);
   useEffect(() => {
     let mounted=true;
@@ -2823,7 +2806,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       </Canvas>}
     </div>
     <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
-    {phase==="playing" && <IcecreamMagicOverlay remaining={hud.powerRemaining||0} mobile={mobile===true}/>}
+    {phase==="playing" && hud.powerRemaining>0 && <Snow360IcecreamPowerScene remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>}
     {/* Mobile: an ultra-compact SPEED / TIME / SCORE rail at top-right, about
         as tall as the visible logo. Distance hangs below the rail without
         stretching its cards. Desktop keeps the original horizontal HUD. */}
