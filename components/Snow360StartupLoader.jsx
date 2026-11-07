@@ -7,14 +7,15 @@ import { useProgress } from "@react-three/drei";
  * Snow360 startup screen. The art remains fullscreen and entirely unobstructed.
  * The progress bar represents Three.js loading; 100% appears only when the
  * actual welcome PLAY control is enabled. No separate panel or asset captions.
+ * The old CONTINUE override is intentionally removed: the loader now fades
+ * only when the real PLAY button becomes ready.
  */
 export default function Snow360StartupLoader() {
-  const { progress, total, errors } = useProgress();
+  const { progress, total } = useProgress();
   const [ready, setReady] = useState(false);
   const [displayProgress, setDisplayProgress] = useState(0);
   const [fading, setFading] = useState(false);
   const [visible, setVisible] = useState(true);
-  const [takingLong, setTakingLong] = useState(false);
 
   useEffect(() => {
     const next = Number.isFinite(progress) ? Math.max(0, progress) : 0;
@@ -42,15 +43,8 @@ export default function Snow360StartupLoader() {
     return () => { window.clearTimeout(fade); window.clearTimeout(hide); };
   }, [ready]);
 
-  useEffect(() => {
-    if (ready) return;
-    const timer = window.setTimeout(() => setTakingLong(true), 45000);
-    return () => window.clearTimeout(timer);
-  }, [ready]);
-
   if (!visible) return null;
   const percent = ready ? 100 : displayProgress;
-  const canContinue = !ready && (takingLong || (Array.isArray(errors) && errors.length > 0));
 
   return <div aria-label="Snow360 loading screen" aria-busy={!ready}
     style={{position:"fixed",inset:0,zIndex:9999,display:"grid",placeItems:"center",
@@ -87,13 +81,6 @@ export default function Snow360StartupLoader() {
         color:"#6085a2",textShadow:"0 1px 3px #fff",fontVariantNumeric:"tabular-nums"}}>
         {total>0||ready?`${percent}%`:""}
       </div>
-      {canContinue && <button type="button" onClick={()=>{
-        setFading(true);window.setTimeout(()=>setVisible(false),600);
-      }} style={{marginTop:18,padding:"9px 21px",borderRadius:999,border:"2px solid #fff",
-        color:"#56708b",background:"linear-gradient(120deg,#ffe6bded,#fcd2e8ed,#d4e8ffed)",
-        font:"900 13px Fredoka,system-ui,sans-serif",cursor:"pointer",boxShadow:"0 5px 14px #729abc35"}}>
-        CONTINUE
-      </button>}
     </div>
   </div>;
 }

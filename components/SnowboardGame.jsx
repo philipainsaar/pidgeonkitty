@@ -707,6 +707,12 @@ function safeHud(s) {
     powerRemaining:s.powerTime, shieldRemaining:s.frostCollisionGrace, mushroomReady:!!s.mushroom, rockShattered:s.rockShattered,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
     recovery:recoveryStage(s.recovery),
+    // Visual feedback for cloud trick icons follows the REAL animation, not
+    // keyboard focus or a fixed timer. The armed trick is highlighted while
+    // waiting briefly for takeoff, then the running trick until completion.
+    activeTrickKey:s.recovery ? null : s.trick?.key ??
+      (s.armedTrick && s.armedTrick.until > s.t ? s.armedTrick.trick?.key : null),
+    ollieActive:!s.recovery && s.inAir && s.launchSource==="ollie",
     trick:s.recovery ? (s.textUntil>s.t ? s.lastText : (recoveryStage(s.recovery)==="chasing" ? "RUN FOR YOUR BOARD!" : "GETTING UP..."))
       : (s.inAir && (s.completedAirTricks.length || s.trick || s.airQueue.length))
       ? `AIR COMBO ×${s.completedAirTricks.length + (s.trick?1:0)}  ${s.trick?.name||"READY"}${s.airQueue.length?`  +${s.airQueue.length} QUEUED`:""}`
@@ -2281,14 +2287,16 @@ function Snow64TrickGlyph({kind,level}) {
   </svg>;
 }
 
-const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
+const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile,activeTrickKey,ollieActive}) {
   const jumpHeld=useRef(null);
+  const [ollieHeld,setOllieHeld]=useState(false);
   const sendTrick=useCallback(key=>act({type:"trick",key}),[act]);
   const sendJump=useCallback(boost=>act({type:"jump",boost}),[act]);
   const jumpDown=e=>{
     e.stopPropagation();
     if(e.pointerType==="mouse" && e.button!==0)return;
     jumpHeld.current={id:e.pointerId,start:performance.now()};
+    setOllieHeld(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const jumpUp=e=>{
@@ -2296,6 +2304,7 @@ const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
     const held=jumpHeld.current;
     if(!held || held.id!==e.pointerId)return;
     jumpHeld.current=null;
+    setOllieHeld(false);
     sendJump(clamp((performance.now()-held.start-120)/750,0,1));
   };
   // Floating trick icons only. No rectangular window, title or visible labels.
@@ -2318,6 +2327,8 @@ const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
       gap:mobile?3:5,width:"100%"}}>
       {SNOW64_BUTTON_TRICKS.map(t=><button key={t.key} type="button"
         aria-label={`Perform ${t.full}`} title={`${t.full} · ${t.key.toUpperCase()}`}
+        aria-pressed={activeTrickKey===t.key}
+        data-snow360-active={activeTrickKey===t.key?"true":"false"}
         className="snow64-iconbtn" onPointerDown={e=>e.stopPropagation()}
         onClick={e=>{e.stopPropagation();sendTrick(t.key);}}
         style={{minWidth:0,minHeight:mobile?44:53,padding:"3px 0 2px",color:"#f9f3d9",
@@ -2327,8 +2338,10 @@ const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
         <Snow64TrickGlyph kind={t.icon} level={t.key}/>
       </button>)}
       <button type="button" className="snow64-iconbtn" aria-label="Ollie jump; hold to charge" title="OLLIE · Hold to charge"
-        onPointerDown={jumpDown} onPointerUp={jumpUp} onPointerCancel={()=>{jumpHeld.current=null;}}
-        onLostPointerCapture={()=>{jumpHeld.current=null;}}
+        aria-pressed={ollieHeld||!!ollieActive}
+        data-snow360-active={ollieHeld||ollieActive?"true":"false"}
+        onPointerDown={jumpDown} onPointerUp={jumpUp} onPointerCancel={()=>{jumpHeld.current=null;setOllieHeld(false);}}
+        onLostPointerCapture={()=>{jumpHeld.current=null;setOllieHeld(false);}}
         onClick={e=>{e.stopPropagation();if(e.detail===0)sendJump(0);}}
         style={{minWidth:0,minHeight:mobile?44:53,padding:"3px 0 2px",color:"#293e5b",
           display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
@@ -2928,7 +2941,9 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     </div>}
     {phase==="playing" && <FollowCameraDragArea cameraOrbitRef={cameraOrbit} mobile={mobile} />}
     {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} stateRef={state} act={act} phase={phase} runKey={runKey} trickMode={trickMode} onTuckChange={setTouchTuckFx} /> : null}
-    {phase==="playing" && trickMode==="buttons" && <Snow64TrickButtonPad act={act} mobile={mobile===true}/>}
+    {phase==="playing" && trickMode==="buttons" && <Snow64TrickButtonPad
+      act={act} mobile={mobile===true} activeTrickKey={hud.activeTrickKey}
+      ollieActive={hud.ollieActive}/>}
     {/* Keep the downhill view clean. The bottom BEST/TOKENS and keyboard hint
         lines are hidden; values and keyboard shortcuts still work normally. */}
     {mobile && phase==="playing" &&

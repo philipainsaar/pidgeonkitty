@@ -170,3 +170,26 @@ main .snow64-button-pad button.snow64-iconbtn::before {
     transition: none !important;
   }
 }
+
+
+/* V18: actual game-activity colors, never sticky focus state.
+   Inactive tricks are pearl-gray. Pressing a button immediately restores its
+   original pink cloud, and a live trick stays pink until its animation ends.
+   The Ollie icon also stays pink while held/airborne, then resets at landing.
+   No effect on Welcome settings or on regular buttons. */
+main[data-game-phase="playing"] .snow64-button-pad button.snow64-iconbtn[data-snow360-active="false"] {
+  filter: grayscale(1) saturate(0) brightness(1.07) !important;
+  opacity: .83 !important;
+  transition: filter .18s ease, opacity .18s ease !important;
+}
+main[data-game-phase="playing"] .snow64-button-pad button.snow64-iconbtn[data-snow360-active="true"],
+main[data-game-phase="playing"] .snow64-button-pad button.snow64-iconbtn[data-snow360-active="false"]:active {
+  filter: saturate(1.12) brightness(1.06) drop-shadow(0 0 7px #ff8fcbb0) !important;
+  opacity: 1 !important;
+  transition: filter .12s ease, opacity .12s ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  main[data-game-phase="playing"] .snow64-button-pad button.snow64-iconbtn[data-snow360-active] {
+    transition: none !important;
+  }
+}
