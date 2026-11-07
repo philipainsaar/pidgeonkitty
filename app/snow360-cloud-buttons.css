@@ -521,3 +521,153 @@ main .snow360-secret-star:is(:hover,:focus-visible),
   text-decoration-thickness: 2px !important;
   text-underline-offset: 3px !important;
 }
+
+
+/* ---------------------------------------------------------------
+   V6: LIVE candy-cloud HUD. The numbers and units remain real React
+   text; PNG is just the reusable border/plate, never baked-in values.
+   THPS-inspired yellow arcade numbers, adapted to Snow360 pink clouds.
+   This overrides the old blue rectangular SPEED / TIME / SCORE cards.
+   No change to game physics, time keeping, scores or click handlers.
+   --------------------------------------------------------------- */
+:root {
+  --snow360-cloud-hud: url("/images/snow360-cloud-hud.png");
+  --snow360-arcade-yellow: #ffe76a;
+  --snow360-arcade-ink: #20375e;
+}
+main .snow360-arcade-hud {
+  width: auto !important;
+  height: auto !important;
+  gap: 5px !important;
+  align-items: flex-start !important;
+  overflow: visible !important;
+  filter: drop-shadow(0 3px 4px rgba(96, 49, 103, .10));
+}
+main .snow360-arcade-hud .snow64-panel {
+  /* 940 x 401 PNG ratio: keep the pearl/cloud border round, not squashed. */
+  position: relative !important;
+  display: block !important;
+  flex: 0 0 auto !important;
+  box-sizing: border-box !important;
+  width: clamp(148px, 13.5vw, 184px) !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  aspect-ratio: 940 / 401 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent var(--snow360-cloud-hud) center / 100% 100% no-repeat !important;
+  box-shadow: none !important;
+  isolation: isolate;
+  text-align: center !important;
+}
+main .snow360-arcade-hud .snow64-label,
+main .snow360-arcade-hud .snow64-number {
+  position: absolute !important;
+  display: block !important;
+  width: 80% !important;
+  left: 10% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  pointer-events: none;
+}
+main .snow360-arcade-hud .snow64-label {
+  top: 12% !important;
+  color: #1484ba !important;
+  font-family: Fredoka, system-ui, sans-serif !important;
+  font-style: italic !important;
+  font-weight: 700 !important;
+  font-size: clamp(9px, .96vw, 13px) !important;
+  letter-spacing: .08em !important;
+  text-shadow: 0 1px 0 #ffffff, 0 1px 3px #ffffffbb !important;
+  -webkit-text-stroke: 0 !important;
+}
+main .snow360-arcade-hud .snow64-number {
+  top: 53% !important;
+  transform: translateY(-50%) skewX(-5deg);
+  color: var(--snow360-arcade-yellow) !important;
+  font-family: "Lilita One", Fredoka, system-ui, sans-serif !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: clamp(22px, 2.5vw, 34px) !important;
+  letter-spacing: -.025em !important;
+  font-variant-numeric: tabular-nums !important;
+  -webkit-text-stroke: .8px var(--snow360-arcade-ink) !important;
+  paint-order: stroke fill;
+  text-shadow: 1px 2px 0 #20375e, 0 2px 3px #20375e55 !important;
+}
+main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number {
+  font-size: clamp(20px, 2.15vw, 29px) !important;
+  letter-spacing: -.048em !important;
+}
+main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number {
+  font-size: clamp(21px, 2.25vw, 31px) !important;
+  letter-spacing: -.04em !important;
+}
+main .snow360-arcade-hud .snow64-number span {
+  display: inline-block !important;
+  font-family: Fredoka, system-ui, sans-serif !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  font-style: italic !important;
+  letter-spacing: -.025em !important;
+  vertical-align: baseline !important;
+  color: #fff8c9 !important;
+  -webkit-text-stroke: .3px #20375e !important;
+  text-shadow: 1px 1px 0 #20375e !important;
+}
+/* The user-selected mobile layout already stacks the stats at top-right.
+   Allow real height for the cloud art, rather than squashing each panel into
+   one third of the old fixed-size, dark-blue rail. */
+@media (max-width: 720px), (pointer: coarse) {
+  main .snow360-arcade-hud {
+    width: clamp(102px, 30vw, 128px) !important;
+    height: auto !important;
+    gap: 2px !important;
+    margin-top: 5px !important;
+  }
+  main .snow360-arcade-hud .snow64-panel {
+    width: 100% !important;
+    height: auto !important;
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+  }
+  main .snow360-arcade-hud .snow64-label {
+    top: 12% !important;
+    font-size: clamp(7px, 1.75vw, 9px) !important;
+    letter-spacing: .02em !important;
+  }
+  main .snow360-arcade-hud .snow64-number {
+    top: 54% !important;
+    font-size: clamp(17px, 4.45vw, 22px) !important;
+    letter-spacing: -.04em !important;
+    -webkit-text-stroke: .45px #20375e !important;
+    text-shadow: .6px 1.3px 0 #20375e !important;
+  }
+  main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number {
+    font-size: clamp(13px, 3.45vw, 18px) !important;
+    letter-spacing: -.052em !important;
+  }
+  main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number {
+    font-size: clamp(14px, 3.9vw, 20px) !important;
+    letter-spacing: -.055em !important;
+  }
+  main .snow360-arcade-hud .snow64-number span {
+    font-size: clamp(5px, 1.3vw, 7px) !important;
+    margin-left: 1px !important;
+  }
+  /* Score distance lives directly below the expanded stat rail. Keep the
+     big-air / combo notices below it so labels never collide mid-jump. */
+  main .snow360-air-notices { top: clamp(228px, 29dvh, 265px) !important; }
+}
+@media (max-width: 350px) {
+  main .snow360-arcade-hud { width: 101px !important; }
+  main .snow360-arcade-hud .snow64-number { font-size: 16px !important; }
+  main .snow360-arcade-hud [data-snow360-stat="time"] .snow64-number { font-size: 12.5px !important; }
+  main .snow360-arcade-hud [data-snow360-stat="score"] .snow64-number { font-size: 14px !important; }
+}

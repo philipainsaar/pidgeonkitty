@@ -2748,14 +2748,14 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
         <Snow360Logo mobile={mobile===true} />
         <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".095em":".16em",color:"#cdfaff",whiteSpace:"nowrap"}}>DOWNHILL FREESTYLE</div>
       </div>
-      <div className="snow64-hud" style={{display:"flex",flexDirection:mobile?"column":"row",
+      <div className="snow64-hud snow360-arcade-hud" style={{display:"flex",flexDirection:mobile?"column":"row",
         position:"relative",gap:mobile?SNOW360_MOBILE_STATS_GAP:8,
         alignItems:"stretch",alignSelf:"flex-start",justifyContent:"flex-start",
         flexShrink:0,width:mobile?SNOW360_MOBILE_STATS_WIDTH:undefined,
         height:mobile?SNOW360_MOBILE_STATS_HEIGHT:undefined,
         marginTop:mobile?12:0}}>
         {[{label:"SPEED",value:hud.speed,unit:"KM/H"},{label:"TIME",value:formatTime(hud.time)},{label:"SCORE",value:hud.score.toLocaleString()}].map(v=><div
-          key={v.label} className="snow64-panel" style={{minWidth:mobile?0:100,width:mobile?"100%":undefined,
+          key={v.label} data-snow360-stat={v.label.toLowerCase()} className="snow64-panel" style={{minWidth:mobile?0:100,width:mobile?"100%":undefined,
             flex:mobile?"1 1 0":undefined,minHeight:0,
             display:mobile?"flex":undefined,flexDirection:"column",justifyContent:"center",alignItems:"center",
             boxSizing:"border-box",textAlign:"center",padding:mobile?"1px 3px":"8px 13px",
@@ -2776,7 +2776,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     </div>
     {/* Mobile trick/score/combo notices are anchored just below the compact top HUD,
         instead of hovering over the rider and snowboard. Desktop is unchanged. */}
-    {phase==="playing" && <div style={{position:"absolute",zIndex:3,top:mobile?"clamp(168px, 20dvh, 190px)":145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none",maxWidth:mobile?"94vw":undefined}}>
+    {phase==="playing" && <div className="snow360-air-notices" style={{position:"absolute",zIndex:3,top:mobile?"clamp(168px, 20dvh, 190px)":145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none",maxWidth:mobile?"94vw":undefined}}>
       {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".07em"}}>✦ FROST SHROOM {hud.powerRemaining.toFixed(1)}s • {hud.rockShattered||0} ROCKS ✦</div>}
       {hud.powerRemaining<=0 && hud.shieldRemaining>0 && <div style={{font:"900 12px system-ui",color:"#b9ffeb",textShadow:"1px 2px #165473",letterSpacing:".08em"}}>❄ FROST SHIELD {hud.shieldRemaining.toFixed(1)}s ❄</div>}
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
