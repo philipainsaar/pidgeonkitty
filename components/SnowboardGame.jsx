@@ -11,7 +11,7 @@ import { judgeSnowLanding, recoveryStage, recoveryDuration } from "./snow64Landi
 import { SNOW_GRAVITY, startSnowJump, stepSnowJump, rampTakeoffSpeed, crossedRampLip } from "./snow64Physics";
 import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushPhysics";
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
-import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower } from "./snow64Powerup";
+import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower, ICECREAM_DURATION } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
@@ -35,6 +35,7 @@ import Snow64StarTokens from "./Snow64StarTokens";
 import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
 import Snow64IcecreamPowerAura from "./Snow64IcecreamPowerAura";
 import Snow360IcecreamPowerScene from "./Snow360IcecreamPowerScene";
+import Snow360IcecreamSkyScene, { Snow360IcecreamSkyClouds } from "./Snow360IcecreamSkyScene";
 import { playSnow64Sound, playSnow64FrostMusic as playSnow64IcecreamPowerMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
 // PidgeonKitty Snow 64. Original arcade game inspired by late-1990s N64 snowboarding.
@@ -50,6 +51,13 @@ const DEG = Math.PI / 180;
 const TOKEN_POINTS = 360;
 const ICECREAM_HOVER_HEIGHT = 1.28; // Snowboard floats above actual snow/ramp surfaces.
 const ICECREAM_HOVER_BOB = 0.12;
+// Two equally likely power sequences: 1 = original sprinkle rush, 2 = sky-cloud Big Air.
+// The sky sequence rises above the slope, cruises through genuine 3D cloud GLBs,
+// and lowers gradually before the normal two-second collision shield begins.
+const ICECREAM_SKY_SCENE_CHANCE = 0.6; // 0 = only Scene 1, 1 = only Scene 2 (for testing).
+const ICECREAM_SKY_HEIGHT = 14.5;
+const ICECREAM_SKY_TAKEOFF_SECONDS = 1.65;
+const ICECREAM_SKY_LANDING_SECONDS = 2.65;
 const ICECREAM_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-safe after Ice-cream Power.
 // V33: powered snowboarding gets its own visible left/right slalom movement.
 // The old hover movement used the much weaker airborne steering limit (5).
@@ -713,7 +721,7 @@ function initialState(cameraMode = 0) {
     launchSuper:false,
     icecreamPower:null, icecreamPowerTime:0, icecreamPowerCooldownTime:-200, icecreamPowerCooldownDistance:-1000,
     icecreamPowerCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
-    icecreamHover:false, icecreamAutoIndex:0, icecreamPaidTricks:0, icecreamCollisionGrace:0,
+    icecreamHover:false, icecreamScene:0, icecreamAutoIndex:0, icecreamPaidTricks:0, icecreamCollisionGrace:0,
     icecreamEnter:0, icecreamExitLift:0,
     icecreamCarveStart:0, icecreamCarveCenter:0, icecreamCarveDirection:1, icecreamRockTargetId:null,
     scoreGainEvents:[],
@@ -726,7 +734,7 @@ function safeHud(s) {
     speed:Math.round(s.speed*3.6),
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.max(0,Math.floor(-s.z)), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
-    powerRemaining:s.powerTime, shieldRemaining:s.icecreamCollisionGrace, icecreamPowerReady:!!s.icecreamPower, rockShattered:s.rockShattered,
+    powerRemaining:s.powerTime, icecreamScene:s.powerTime>0?s.icecreamScene:0, shieldRemaining:s.icecreamCollisionGrace, icecreamPowerReady:!!s.icecreamPower, rockShattered:s.rockShattered,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
     recovery:recoveryStage(s.recovery),
     // Visual feedback for cloud trick icons follows the REAL animation, not
@@ -800,6 +808,26 @@ const ICECREAM_CAMERA_RETURN_SECONDS = 3;
 const ICECREAM_AUTO_TRICK_END_BUFFER = 1.45;
 // Keep dramatic camera shots out of the ice-cream-tree trunks and raised banks.
 const ICECREAM_CAMERA_SAFE_X = 12.25;
+/** Scene 2: camera angles chosen only during the cloud-surfing flight.
+ * Each angle tracks the actual animated snowboard, with real cinematic cuts.
+ * Rear chase, side-follow, low-underboard, front view and wide sky view.
+ */
+const ICECREAM_SKY_CAMERA_SHOTS = [
+  {kind:"skyChase",yaw:-.19,elevation:.30,radius:9.3,lookHeight:.58},
+  {kind:"skyChase",yaw:.24,elevation:.22,radius:8.9,lookHeight:.48},
+  {kind:"skySide",yaw:1.42,elevation:.08,radius:6.2,lookHeight:.47},
+  {kind:"skySide",yaw:4.78,elevation:.06,radius:6.2,lookHeight:.43},
+  {kind:"skyFront",yaw:3.10,elevation:.19,radius:5.9,lookHeight:.52},
+  {kind:"skyLow",yaw:5.50,elevation:-.055,radius:6.6,lookHeight:.54},
+  {kind:"skyWide",yaw:.67,elevation:.48,radius:11.8,lookHeight:.40},
+];
+function nextIcecreamSkyShot(previousIndex, random=Math.random) {
+  // Exclude the last angle, without enforcing a predictable preset cycle.
+  const candidates=ICECREAM_SKY_CAMERA_SHOTS.map((shot,index)=>({shot,index}))
+    .filter(item=>item.index!==previousIndex);
+  return candidates[Math.floor(clamp(random(),0,.999999)*candidates.length)];
+}
+
 const ICECREAM_CAMERA_SHOTS = [
   // Trick details: low front/side angles with both bindings visible.
   {kind:"trick",yaw:2.10,elevation:.15,radius:4.65,lookHeight:.38},
@@ -819,6 +847,13 @@ const ICECREAM_CAMERA_SHOTS = [
   {kind:"shatter",yaw:1.30,elevation:.15,radius:6.25,lookHeight:.54},
   {kind:"shatter",yaw:4.96,elevation:.16,radius:6.35,lookHeight:.56},
 ];
+
+/** Sky lift is C2-smoothed at BOTH ends; zero altitude on expiration. */
+function icecreamSkyLift(elapsed,remaining){
+  const rise=icecreamCameraEase(elapsed/ICECREAM_SKY_TAKEOFF_SECONDS);
+  const descent=icecreamCameraEase(remaining/ICECREAM_SKY_LANDING_SECONDS);
+  return ICECREAM_SKY_HEIGHT*rise*descent;
+}
 
 /** Smooth C2 easing for the first shot and the 3-second return only. */
 function icecreamCameraEase(t){
@@ -1370,9 +1405,18 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
           // bob and flip lift once the entrance is complete.
           s.icecreamEnter=Math.min(1,(s.icecreamEnter||0)+dt/.50);
           const hoverBlend=smoothstep(s.icecreamEnter);
-          const hoverTarget=hoverFloor+.08+(ICECREAM_HOVER_HEIGHT-.08)*hoverBlend
-            + Math.sin(s.t*6.8)*ICECREAM_HOVER_BOB*hoverBlend + flipLift*hoverBlend;
-          s.worldY=lerp(s.worldY,hoverTarget,Math.min(1,dt*15));
+          const skyFlight=s.icecreamScene===2;
+          const skyElapsed=ICECREAM_DURATION-s.powerTime;
+          // Scene 1 remains the ORIGINAL close-to-snow hover unchanged.
+          // Scene 2 takes off into the Big Air clouds then descends BEFORE
+          // the shield starts. No teleport, hard landing or crash check.
+          const hoverTarget=skyFlight
+            ? hoverFloor+.08+icecreamSkyLift(skyElapsed,s.powerTime)
+              + Math.sin(s.t*3.3)*.11*hoverBlend + flipLift*hoverBlend
+            : hoverFloor+.08+(ICECREAM_HOVER_HEIGHT-.08)*hoverBlend
+              + Math.sin(s.t*6.8)*ICECREAM_HOVER_BOB*hoverBlend + flipLift*hoverBlend;
+          // Fast vertical response follows the programmed landing curve.
+          s.worldY=lerp(s.worldY,hoverTarget,Math.min(1,dt*(skyFlight?22:15)));
           s.air = Math.max(0, s.worldY - hoverFloor);
           s.peakAir = Math.max(s.peakAir,s.air);
           s.flightTime += dt;
@@ -1438,6 +1482,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
             // avoiding a crash loop on the very next frame after recovery.
             if (s.consumedRocks.has(rock.id)) continue;
             const powered = s.icecreamHover && s.powerTime > 0;
+            // Sky riders are metres above snow-level rocks, so the cloud
+            // sequence should never shatter a rock far below the board.
+            if (powered && s.icecreamScene===2 && s.air>3.2) continue;
             if (!powered && s.hitRocks.has(rock.id)) continue;
             const obstacle=getSnow64ObstacleParams(rock);
             const contact = powered
@@ -1492,10 +1539,15 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         }
         // Floating rare icecreamPower: collected by crossing its actual position.
         if (!s.recovery && icecreamPowerCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
+          // Pick a scene afresh for EVERY collected power-up; neither one is
+          // forced or disabled. Scene 1 is the previous thick-sprinkle scene.
+          s.icecreamScene=Math.random()<ICECREAM_SKY_SCENE_CHANCE?2:1;
           activateIcecreamPower(s);
           beginIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
           s.score+=450; // bonus is intentionally not counted toward the next icecreamPower spawn
-          s.lastText="✦ ICE-CREAM POWER! SUPER SPEED + AUTO TRICKS! ✦";
+          s.lastText=s.icecreamScene===2
+            ? "✦ ICE-CREAM SKY SURF! BIG AIR CLOUDS! ✦"
+            : "✦ ICE-CREAM POWER! SUPER SPEED + AUTO TRICKS! ✦";
           s.textUntil=s.t+2.4;
           onSound("power");
         }
@@ -1553,7 +1605,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     const boardFloor=Math.max(deck.height,frontFloor-.12,backFloor-.12);
     const visualY=s.inAir ? s.worldY : s.recovery ? boardFloor : Math.max(s.worldY,boardFloor);
     if (hoverRing.current) {
-      hoverRing.current.visible = s.icecreamHover && s.powerTime > 0;
+      hoverRing.current.visible = s.icecreamHover && s.powerTime > 0 && s.icecreamScene!==2;
       if (hoverRing.current.visible) {
         hoverRing.current.position.y = boardFloor - visualY + .035;
         const pulse = 1 + Math.sin(s.t * 9) * .08;
@@ -1829,10 +1881,11 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
       // Do not cut on every particle or during the smooth entrance/exit.
       const newImpact=s.rockShattered>director.lastShatterCount;
       director.lastShatterCount=s.rockShattered;
-      const rockFocus=icecreamRockCameraTarget(s,localChunks);
+      const skyScene=s.icecreamScene===2;
+      const rockFocus=skyScene?null:icecreamRockCameraTarget(s,localChunks);
       const cinematicPhase=s.t-director.startAt>=ICECREAM_CAMERA_INTRO_SECONDS &&
         s.powerTime>ICECREAM_CAMERA_RETURN_SECONDS;
-      const impactCut=cinematicPhase && s.powerTime>ICECREAM_CAMERA_RETURN_SECONDS+ICECREAM_IMPACT_SHOT_SECONDS+.12 &&
+      const impactCut=!skyScene && cinematicPhase && s.powerTime>ICECREAM_CAMERA_RETURN_SECONDS+ICECREAM_IMPACT_SHOT_SECONDS+.12 &&
         newImpact && s.t-director.lastCutAt>.34;
       // Freeze the lens on the shattered rock for a few frames. Following the
       // board here would carry the lens 20+ world units away before the shards
@@ -1856,9 +1909,11 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         // leave the order randomized. Shatters still take priority over it.
         const forceSpeed=!firstShot && director.speedShots===0 &&
           s.t-director.startAt>2.15 && !impactCut;
-        const next=nextIcecreamCameraShot(director.index,Math.random,{
-          impact:impactCut,forceSpeed,rockAhead:!!rockFocus,
-        });
+        const next=skyScene
+          ? (firstShot ? {index:0,shot:ICECREAM_SKY_CAMERA_SHOTS[0]} : nextIcecreamSkyShot(director.index,Math.random))
+          : nextIcecreamCameraShot(director.index,Math.random,{
+              impact:impactCut,forceSpeed,rockAhead:!!rockFocus,
+            });
         director.index=next.index;
         director.shot=next.shot;
         director.focusRock=next.shot.kind==="shatter"?rockFocus:null;
@@ -1866,7 +1921,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         // First shot eases in. Every subsequent mid-boost change is a cut.
         icecreamCut=!firstShot && cinematicPhase;
         director.lastCutAt=s.t;
-        director.nextAt=s.t+(firstShot?1.34:next.shot.kind==="shatter"?.67:.57+Math.random()*.26);
+        director.nextAt=s.t+(skyScene
+          ? (firstShot?1.40:1.05+Math.random()*.33)
+          : (firstShot?1.34:next.shot.kind==="shatter"?.67:.57+Math.random()*.26));
       }
       if(director.shot){
         // Keep the view fixed between cuts. No smooth orbital travel between
@@ -1899,8 +1956,11 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
       radius=lerp(baseRadius,director.radius,icecreamMix);
       // Rear chase shots widen the view to emphasize rushing snow and
       // approaching obstacles. Close trick shots stay cinematic and tighter.
-      const shotFov=director.shot?.kind==="speed"?(mobile?52:50)
-        :director.shot?.kind==="shatter"?(mobile?47:46):(mobile?43:42);
+      const shotFov=skyScene
+        ? (director.shot?.kind==="skyWide"?(mobile?57:54)
+          :director.shot?.kind==="skyChase"?(mobile?54:52):(mobile?47:46))
+        :director.shot?.kind==="speed"?(mobile?52:50)
+          :director.shot?.kind==="shatter"?(mobile?47:46):(mobile?43:42);
       desiredFov=lerp(baseFov,shotFov,icecreamMix);
       // getWorldPosition includes animated stance yaw/pitch and board offset.
       // The focus remains glued to the deck itself, not s.z or a spot behind.
@@ -1913,7 +1973,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
           icecreamBoardAnchor.y+director.lookHeight,
           icecreamBoardAnchor.z,
         );
-        if(director.shot?.kind==="speed"){
+        if(director.shot?.kind==="skyChase" || director.shot?.kind==="skyWide"){
+          // Cloud surfing: reveal the approaching sky clouds while keeping
+          // the board in the foreground. Other shots focus on the rider.
+          icecreamLook.z-=2.5;
+          icecreamLook.y+=.55;
+        }else if(director.shot?.kind==="speed"){
           // Camera behind, aimed slightly down-course: speed is visible, but
           // the board still occupies the foreground instead of disappearing.
           icecreamLook.z-=1.45;
@@ -1993,7 +2058,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         camera.lookAt(targetLook);
       }
     }
-    const impactFocus=cinematicPhaseAvailable(s, director, icecreamActive);
+    const impactFocus=s.icecreamScene===2?null:cinematicPhaseAvailable(s, director, icecreamActive);
     if(impactFocus){
       // Dedicated impact edit: eye *and* lookAt remain world-locked to the
       // rock, while the board passes through the frame and shards explode.
@@ -2087,6 +2152,11 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
     <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef} mobile={mobile}/>
     <Snow360IcecreamShatterEffects stateRef={stateRef} mobile={mobile}/>
     <IcecreamPowerCollectible stateRef={stateRef} mobile={mobile}/>
+    {/* Reuses the FOUR existing Big Air sky-cloud GLBs. Purely visual;
+        the rider's altitude, camera and collisions stay in the main game. */}
+    <Suspense fallback={null}>
+      <Snow360IcecreamSkyClouds stateRef={stateRef} mobile={mobile} groundY={groundY}/>
+    </Suspense>
     <Mountains stateRef={stateRef}/>
     <Snow360RiderBoundary key={`${rider}:${mobile}:${assetAttempt}`} onError={onRiderError}>
     <Suspense fallback={<Loading/>}>
@@ -2585,7 +2655,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
   const [soundOn,setSoundOn]=useState(true);
   const soundRef=useRef(true);
   const [best,setBest]=useState(0);
-  const [hud,setHud]=useState({speed:57,score:SNOW_INITIAL_SCORE,peakScore:SNOW_INITIAL_SCORE,drainRate:snowDrainPerSecond(0),distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
+  const [hud,setHud]=useState({icecreamScene:0,speed:57,score:SNOW_INITIAL_SCORE,peakScore:SNOW_INITIAL_SCORE,drainRate:snowDrainPerSecond(0),distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
   const [touchTuckFx,setTouchTuckFx]=useState(false);
   const sound=useCallback(kind=>{if(soundRef.current)playSnow64Sound(kind);},[]);
   const icecreamMusicActive=phase==="playing" && hud.powerRemaining>0;
@@ -2806,7 +2876,11 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       </Canvas>}
     </div>
     <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
-    {phase==="playing" && hud.powerRemaining>0 && <Snow360IcecreamPowerScene remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>}
+    {phase==="playing" && hud.powerRemaining>0 && (
+      hud.icecreamScene===2
+        ? <Snow360IcecreamSkyScene remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>
+        : <Snow360IcecreamPowerScene remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>
+    )}
     {/* Mobile: an ultra-compact SPEED / TIME / SCORE rail at top-right, about
         as tall as the visible logo. Distance hangs below the rail without
         stretching its cards. Desktop keeps the original horizontal HUD. */}
