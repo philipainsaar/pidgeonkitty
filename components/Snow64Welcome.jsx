@@ -224,13 +224,13 @@ export default function Snow64Welcome(){
 
         {/* Settings expand UPWARDS from the controls. Each option floats alone.
             There is deliberately NO glass menu window behind any of them. */}
-        <div id="snow360-intro-settings" inert={!settingsOpen} aria-hidden={!settingsOpen}
+        <div id="snow360-intro-settings" className="snow360-settings-stack" inert={!settingsOpen} aria-hidden={!settingsOpen}
           style={{display:settingsOpen?"flex":"none",flexDirection:"column",gap:9,
             maxHeight:mobile?"min(49dvh,360px)":"min(50dvh,380px)",
             overflowY:"auto",scrollbarWidth:"thin",padding:"2px 5px 6px"}}>
-          <div style={{font:"1000 14px Fredoka,system-ui,sans-serif",color:"#426387",
+          <div className="snow360-settings-heading" style={{font:"700 14px Fredoka,system-ui,sans-serif",color:"#426387",
             letterSpacing:".16em",textShadow:"0 1px 5px #ffffff"}}>SETTINGS ✦</div>
-          <div role="group" aria-label="Trick controls"
+          <div className="snow360-settings-trick-row" role="group" aria-label="Trick controls"
             style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
             <button type="button" aria-pressed={!trickButtons} onClick={()=>setTrickButtons(false)}
               style={{...FLOATING_PILL,padding:"10px 3px",fontSize:10,
@@ -243,7 +243,7 @@ export default function Snow64Welcome(){
               ▦ TRICK BUTTONS
             </button>
           </div>
-          <div style={{display:"flex",gap:5,justifyContent:"center",flexWrap:"wrap"}}>
+          <div className="snow360-settings-toggle-row" style={{display:"flex",gap:5,justifyContent:"center",flexWrap:"wrap"}}>
             <WelcomeToggle label="SFX" checked={soundOn} onClick={()=>setSoundOn(v=>!v)}/>
             <WelcomeToggle label="MUSIC" checked={musicOn} onClick={()=>setMusicOn(v=>!v)}/>
             <WelcomeToggle label="N64 FILTER" checked={retro} onClick={()=>setRetro(v=>!v)}/>
@@ -258,7 +258,7 @@ export default function Snow64Welcome(){
           style={{...FLOATING_PILL,padding:"5px 11px"}}>Retry</button>
         </p>}
 
-        <div style={{display:"flex",gap:9,alignItems:"stretch"}}>
+        <div className="snow360-start-actions" style={{display:"flex",gap:9,alignItems:"stretch"}}>
           <button type="button" onClick={play} disabled={!canPlay}
             aria-label={canPlay?"Play Snow360":"Loading course"}
             style={{...FLOATING_PILL,minWidth:0,flex:1,minHeight:55,padding:"12px 15px",
@@ -267,7 +267,7 @@ export default function Snow64Welcome(){
               border:"2px solid #ffffff",borderRadius:999,
               boxShadow:"0 7px 22px #365e8935,inset 0 2px 0 #ffffff91",
               cursor:canPlay?"pointer":"wait",opacity:canPlay?1:.72}}>
-            {canPlay?"▶ PLAY":"LOADING…"}
+            {canPlay?"PLAY":"LOADING…"}
           </button>
           <button type="button" aria-label={settingsOpen?"Close settings":"Open settings"}
             aria-expanded={settingsOpen} aria-controls="snow360-intro-settings"
