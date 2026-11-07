@@ -1,0 +1,67 @@
+/* SNOW360 V22: ◉ Hide UI / ⯪ Colorama settings button.
+   Loaded AFTER the standard cloud-button and trick-icon styles.
+   Uses the existing round cloud PNG frame and pink/gray ON/OFF classes.
+ */
+
+/* Center all six round settings buttons in an even 3-by-2 layout. */
+#snow360-intro-settings .snow360-settings-icon-grid {
+  width: 100% !important;
+  max-width: 277px !important;
+  margin-inline: auto !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 9px !important;
+  justify-content: center !important;
+  justify-items: center !important;
+}
+
+/* Replace the previous ▧ icon visually with the exact Unicode glyph ⯪.
+   The original Colorama native button and onClick remain intact. */
+#snow360-intro-settings .snow360-settings-icon-grid > button[aria-label^="Pastel rainbow Colorama"] .snow360-settings-icon-glyph {
+  font-size: 0 !important;
+}
+#snow360-intro-settings .snow360-settings-icon-grid > button[aria-label^="Pastel rainbow Colorama"] .snow360-settings-icon-glyph::before {
+  content: "⯪";
+  display: block;
+  font-size: 32px;
+  font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", sans-serif;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff9ff;
+  text-shadow: 0 1px 2px #b6427d88;
+  speak: none;
+}
+
+/* Hide UI only while RIDING. Menus, loading and game-over remain visible.
+   Retain the WebGL canvas and invisible gesture/steering/camera input zones. */
+html[data-snow360-hide-ui="on"] main[data-game-phase="playing"] .snow64-hud,
+html[data-snow360-hide-ui="on"] main[data-game-phase="playing"] .snow64-button-pad,
+html[data-snow360-hide-ui="on"] main[data-game-phase="playing"] .snow360-air-notices,
+html[data-snow360-hide-ui="on"] main[data-game-phase="playing"] .snow360-mini-pause,
+html[data-snow360-hide-ui="on"] main[data-game-phase="playing"] .snow64-magic-title,
+html[data-snow360-hide-ui="on"] .snow360-trick-overlay {
+  display: none !important;
+}
+
+/* Keep the logo, remove the two small captions around it. */
+html[data-snow360-hide-ui="on"] main[data-game-phase="playing"] > div:has(> .snow64-hud) > div:first-child > div:not(:has(> img)) {
+  display: none !important;
+}
+
+/* The actual logo remains the ONLY visible control. In Hide UI mode it is
+   tappable to bring the full controls back on phones. */
+html[data-snow360-hide-ui="on"] main[data-game-phase="playing"] > div:has(> .snow64-hud) > div:first-child > div:has(> img) {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  touch-action: manipulation !important;
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  #snow360-intro-settings .snow360-settings-icon-grid {
+    max-width: 254px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 9px 8px !important;
+  }
+  #snow360-intro-settings .snow360-settings-icon-grid > button[aria-label^="Pastel rainbow Colorama"] .snow360-settings-icon-glyph::before {
+    font-size: 29px;
+  }
+}
