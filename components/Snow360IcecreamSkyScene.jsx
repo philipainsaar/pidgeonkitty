@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import { MobileCandySprinkles } from "./Snow360IcecreamPowerScene";
 
 /**
  * SNOW360 Ice Cream Power | randomized SCENE 2: CLOUD SURF.
@@ -241,17 +240,11 @@ export default function Snow360IcecreamSkyScene({remaining=0,mobile=false,speed=
       background:"radial-gradient(ellipse at 50% 50%,transparent 22%,rgba(202,235,255,.09) 55%,rgba(255,196,234,.22) 100%)"}}/>
     <div style={{position:"absolute",inset:0,opacity:.8*fade,
       background:"linear-gradient(120deg,rgba(226,206,255,.13),transparent 45%,rgba(203,255,248,.12))"}}/>
-    {mobile ? <>
-      <MobileSkyMotes speed={speed}/>
-      {/* Use the exact CSS rods already proven on the user's Scene 1.
-          Their parent is the same Sky Surf scene as the motes, so a Safari
-          canvas layer can never draw over or hide the candy sprinkles. */}
-      <div data-snow360-sprinkles="sky" style={{position:"absolute",inset:0,zIndex:4,
-        overflow:"hidden",pointerEvents:"none"}}>
-        <MobileCandySprinkles speed={speed}/>
-      </div>
-    </> : <canvas ref={canvasRef}
+    {mobile ? <MobileSkyMotes speed={speed}/> : <canvas ref={canvasRef}
       style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block"}}/>}
+    {/* Mobile Scene 2's sprinkles are now REAL 3D particles emitted by the
+        snowboard inside SnowboardGame's Three.js Canvas. Keep sky motes,
+        cameras, cloud GLBs and title fully intact. */}
     {remaining>7.5&&<div className="snow360-sky-title" style={{position:"absolute",left:"50%",top:"32%",
       transform:"translateX(-50%)",whiteSpace:"nowrap",maxWidth:"94vw",pointerEvents:"none",
       color:"#fff9ff",font:"1000 clamp(17px,3.9vw,33px) Fredoka,system-ui,sans-serif",

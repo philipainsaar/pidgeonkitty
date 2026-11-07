@@ -13,7 +13,7 @@ import { useEffect, useRef } from "react";
  */
 export const SNOW360_CANDY_WORLD = {
   desktopSprinkles: 190,
-  mobileSprinkles: 105, // Original mobile density; identical in Scene 1 and Scene 2.
+  mobileSprinkles: 105, // Same density, now world-space 3D on mobile.
   desktopFps: 60,
   mobileFps: 35,
 };
@@ -72,108 +72,9 @@ function renderFrame(ctx,w,h,sprinkles,dt,speed,reduceMotion,mobile) {
   }
 }
 
-/**
- * Mobile WebGL-safe sprinkles: pure DOM/CSS compositor animation.
- * The previous mobile path created a second continuously-redrawn 2D canvas
- * directly above the active WebGL game. Some mobile GPU/viewport combinations
- * failed to composite that transparent canvas consistently. CSS rods do not
- * allocate a second drawing context and are visible immediately at pickup.
- */
-function sprinkleRandom(seed) {
-  let n=seed>>>0;
-  return ()=>{
-    n=(Math.imul(n,1664525)+1013904223)>>>0;
-    return n/4294967296;
-  };
-}
-/**
- * One mobile sprinkle renderer shared by BOTH Ice Cream Power scenes.
- * Keep the ORIGINAL 105 particles: the previous Scene 1 mobile-only increase
- * to 170 was not the problem, so it has been removed.
- *
- * Crucial direction fix: sprinkles now originate near the snowboard and
- * radiate toward every screen edge in perspective. They NEVER fall straight
- * down from random positions above the viewport. This mimics the desktop
- * Canvas's outward-travelling pickup burst without triggering a second 2D
- * canvas compositing problem on mobile WebGL browsers.
- */
-const MOBILE_RODS=(()=>{
-  const random=sprinkleRandom(3608678);
-  const rods=[];
-  for(let i=0;i<SNOW360_CANDY_WORLD.mobileSprinkles;i++){
-    // Golden-angle distribution prevents clumps/gaps while keeping the
-    // same count of sprinkles. Random jitter prevents regular spokes.
-    const angle=(i*.6180339887498949+random()*.065)*Math.PI*2;
-    const ux=Math.cos(angle),uy=Math.sin(angle);
-    // Source is approximately where the snowboard sits in screen space.
-    // Each path continues just past its first viewport edge, for a continuous
-    // camera-flying-toward-you spray instead of vertical confetti rainfall.
-    const originY=.62;
-    const tx=Math.abs(ux)<.0001?100:(ux>0?.54:-.54)/ux;
-    const ty=Math.abs(uy)<.0001?100:(uy>0?1.02-originY:-originY-.02)/uy;
-    const reach=Math.max(.15,Math.min(tx,ty))*(1.02+random()*.16);
-    const dx=ux*reach*100;
-    const dy=uy*reach*100;
-    const duration=1.65+random()*1.35;
-    const initialAngle=Math.round(random()*360);
-    const rotation=(random()<.5?-1:1)*(260+Math.round(random()*570));
-    rods.push({
-      id:i,
-      // Small jitter at the board instead of a randomly chosen screen top.
-      sx:(random()-.5)*7,
-      sy:(random()-.5)*5,
-      dx,dy,
-      // Preserve the original mobile candy rod shape and solid colors.
-      length:15+random()*14,
-      thickness:5.4+random()*3.5,
-      angle:initialAngle,endAngle:initialAngle+rotation,
-      duration,delay:-random()*duration,
-      color:COLORS[i%COLORS.length],
-    });
-  }
-  return rods;
-})();
-
-export function MobileCandySprinkles({speed=0}) {
-  const holder=useRef(null);
-  const lastRate=useRef(0);
-  // Drive the whole spray's velocity from snowboard speed, without making
-  // more DOM particles or recreating keyframes every gameplay HUD update.
-  useEffect(()=>{
-    const target=clamp(.8+speed/75,.8,2.3);
-    if(Math.abs(target-lastRate.current)<.085)return;
-    lastRate.current=target;
-    const parent=holder.current;
-    if(!parent)return;
-    for(const child of parent.children){
-      for(const animation of child.getAnimations?.()||[]){
-        try{animation.playbackRate=target;}catch{}
-      }
-    }
-  },[speed]);
-  return <div ref={holder} className="snow360-mobile-candy-rods" aria-hidden="true"
-    data-snow360-sprinkle-motion="snowboard-radial"
-    style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",zIndex:1,
-      width:"100%",height:"100%",opacity:1,visibility:"visible"}}>
-    {MOBILE_RODS.map(p=><span key={p.id} className="snow360-mobile-candy-rod"
-      style={{position:"absolute",left:"50%",top:"62%",
-        width:`${p.length}px`,height:`${p.thickness}px`,borderRadius:999,
-        backgroundColor:p.color,opacity:1,backfaceVisibility:"hidden",
-        animation:`snow360MobileCandyFly ${p.duration.toFixed(3)}s linear ${p.delay.toFixed(3)}s infinite`,
-        '--sx':`${p.sx}vw`,'--sy':`${p.sy}vh`,
-        '--dx':`${p.dx.toFixed(3)}vw`,'--dy':`${p.dy.toFixed(3)}vh`,
-        '--angle0':`${p.angle}deg`,'--angle1':`${p.endAngle}deg`}}/>) }
-    <style>{`
-      @keyframes snow360MobileCandyFly {
-        from {transform:translate3d(var(--sx),var(--sy),0) scale(.60) rotate(var(--angle0));}
-        to {transform:translate3d(var(--dx),var(--dy),0) scale(1.38) rotate(var(--angle1));}
-      }
-      @media(prefers-reduced-motion:reduce){
-        .snow360-mobile-candy-rod{animation-duration:9s!important;}
-      }
-    `}</style>
-  </div>;
-}
+/** On mobile, sprinkles now exist as real 3D meshes on the snowboard.
+ * This component keeps Scene 1's atmosphere/title and the original desktop Canvas.
+ * No CSS sprinkle overlay is drawn on mobile. */
 
 export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,speed=0,trick="",sprinklesOnly=false}) {
   const canvasRef=useRef(null);
@@ -252,7 +153,7 @@ export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,spee
   // canvas element while the drawing effect is attached to it.
   return <div aria-hidden="true"
     data-snow360-sprinkles={sprinklesOnly?"sky":"candy"}
-    data-snow360-mobile-renderer={mobile?"css":"canvas"}
+    data-snow360-mobile-renderer={mobile?"world-3d":"canvas"}
     className="snow360-candy-world"
     style={{position:"absolute",inset:0,zIndex:1,overflow:"hidden",pointerEvents:"none",
       background:"transparent",opacity:1,isolation:"isolate",width:"100%",height:"100%"}}>
@@ -263,7 +164,7 @@ export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,spee
       <div style={{position:"absolute",inset:0,opacity:.52*backgroundFade,
         background:"linear-gradient(125deg,rgba(251,190,225,.12),transparent 37%,transparent 65%,rgba(255,232,174,.14))"}}/>
     </>}
-    {mobile ? <MobileCandySprinkles speed={speed}/> : <canvas ref={canvasRef}
+    {!mobile && <canvas ref={canvasRef}
       style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block"}}/>}
     {!sprinklesOnly&&remaining>7.6&&<div className="snow360-candy-title"
       style={{position:"absolute",top:"34%",left:"50%",transform:"translateX(-50%)",

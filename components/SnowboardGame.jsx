@@ -35,6 +35,7 @@ import Snow64StarTokens from "./Snow64StarTokens";
 import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
 import Snow64IcecreamPowerAura from "./Snow64IcecreamPowerAura";
 import Snow360IcecreamPowerScene from "./Snow360IcecreamPowerScene";
+import Snow360IcecreamBoardSprinkles from "./Snow360IcecreamBoardSprinkles";
 import Snow360IcecreamSkyScene, { Snow360IcecreamSkyClouds } from "./Snow360IcecreamSkyScene";
 import { playSnow64Sound, playSnow64FrostMusic as playSnow64IcecreamPowerMusic, unlockSnow64Audio, setSnow64AudioEnabled, updateSnow64AudioFrame, shutdownSnow64Audio } from "./snow64Audio";
 
@@ -2103,6 +2104,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
       </group>
     </group>
   </group>
+  {/* Mobile ONLY: genuine world-space candy rods emitted from the exact snowboard.
+      Desktop retains its original Canvas sprinkle effect unchanged. */}
+  {mobile && <Snow360IcecreamBoardSprinkles boardRef={board} stateRef={stateRef} phase={phase} />}
   </>;
 }
 
