@@ -54,7 +54,7 @@ const ICECREAM_HOVER_BOB = 0.12;
 // Two equally likely power sequences: 1 = original sprinkle rush, 2 = sky-cloud Big Air.
 // The sky sequence rises above the slope, cruises through genuine 3D cloud GLBs,
 // and lowers gradually before the normal two-second collision shield begins.
-const ICECREAM_SKY_SCENE_CHANCE = 0.6; // 0 = only Scene 1, 1 = only Scene 2 (for testing).
+const ICECREAM_SKY_SCENE_CHANCE = 0.50; // 0 = only Scene 1, 1 = only Scene 2 (for testing).
 const ICECREAM_SKY_HEIGHT = 14.5;
 const ICECREAM_SKY_TAKEOFF_SECONDS = 1.65;
 const ICECREAM_SKY_LANDING_SECONDS = 2.65;
@@ -2876,11 +2876,17 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       </Canvas>}
     </div>
     <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
-    {phase==="playing" && hud.powerRemaining>0 && (
-      hud.icecreamScene===2
-        ? <Snow360IcecreamSkyScene remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>
-        : <Snow360IcecreamPowerScene remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>
-    )}
+    {/* Render the original opaque, long sprinkle particles in BOTH scenes.
+        Sky Surf keeps its complete cloud/mote camera and atmosphere; its
+        sprinkles-only layer adds no second title, gradients or other visuals.
+        Scene 1 still renders the full original Candy World overlay. */}
+    {phase==="playing" && hud.powerRemaining>0 && <>
+      {hud.icecreamScene===2 && <Snow360IcecreamSkyScene
+        remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}/>}
+      <Snow360IcecreamPowerScene
+        remaining={hud.powerRemaining} mobile={mobile===true} speed={hud.speed} trick={hud.trick}
+        sprinklesOnly={hud.icecreamScene===2}/>
+    </>}
     {/* Mobile: an ultra-compact SPEED / TIME / SCORE rail at top-right, about
         as tall as the visible logo. Distance hangs below the rail without
         stretching its cards. Desktop keeps the original horizontal HUD. */}

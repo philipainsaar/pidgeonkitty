@@ -13,7 +13,7 @@ import { useEffect, useRef } from "react";
  */
 export const SNOW360_CANDY_WORLD = {
   desktopSprinkles: 190,
-  mobileSprinkles: 75,
+  mobileSprinkles: 105, // Extra visibility on small screens without crowding the rider.
   desktopFps: 60,
   mobileFps: 35,
 };
@@ -37,7 +37,7 @@ function newSprinkle(w, h, burst=false) {
     color:pick(COLORS), glow:Math.random()>.89,
   };
 }
-function renderFrame(ctx,w,h,sprinkles,dt,speed,reduceMotion) {
+function renderFrame(ctx,w,h,sprinkles,dt,speed,reduceMotion,mobile) {
   ctx.clearRect(0,0,w,h);
   const pace=reduceMotion?.23:clamp(.62+speed/52,.62,2.3);
   const centerX=w*.5,centerY=h*.50;
@@ -58,7 +58,9 @@ function renderFrame(ctx,w,h,sprinkles,dt,speed,reduceMotion) {
     // No distance fading: they stay visible over snow and pastel skies.
     ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);
     ctx.globalAlpha=1;
-    ctx.lineWidth=p.width;ctx.lineCap="round";
+    // Maintain the ORIGINAL 6–15-unit rod lengths. Small-screen rods get
+    // a minimum 4.2 CSS-pixel thickness so they remain visible over bright sky.
+    ctx.lineWidth=mobile?Math.max(4.2,p.width):p.width;ctx.lineCap="round";
     ctx.strokeStyle=p.color;
     ctx.beginPath();ctx.moveTo(-p.length*.5,0);ctx.lineTo(p.length*.5,0);ctx.stroke();
     if(p.glow) {
@@ -70,7 +72,7 @@ function renderFrame(ctx,w,h,sprinkles,dt,speed,reduceMotion) {
   }
 }
 
-export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,speed=0,trick=""}) {
+export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,speed=0,trick="",sprinklesOnly=false}) {
   const canvasRef=useRef(null);
   const gameRef=useRef({speed,remaining});
   const trickRef=useRef("");
@@ -91,19 +93,30 @@ export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,spee
     if(!ctx)return;
     const motion=window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const reduceMotion=Boolean(motion?.matches);
-    let w=0,h=0,last=0,lastDraw=0,raf=0,seenBurst=0;
+    let w=0,h=0,last=0,lastDraw=0,raf=0,seenBurst=0,dprUsed=0;
     let sprinkles=[];
     const resize=()=>{
+      // A newly mounted absolutely positioned Canvas can briefly report 0x0
+      // on mobile Safari. Use its parent/viewport until layout catches up.
+      // ResizeObserver then applies the true dimensions on first layout.
       const rect=canvas.getBoundingClientRect();
-      w=Math.max(1,Math.round(rect.width));h=Math.max(1,Math.round(rect.height));
+      const parentRect=canvas.parentElement?.getBoundingClientRect();
+      const nextW=Math.max(1,Math.round(rect.width>2?rect.width:parentRect?.width>2?parentRect.width:window.innerWidth));
+      const nextH=Math.max(1,Math.round(rect.height>2?rect.height:parentRect?.height>2?parentRect.height:window.innerHeight));
       const dpr=Math.min(window.devicePixelRatio||1,mobile?1.15:1.5);
+      if(w===nextW && h===nextH && dprUsed===dpr)return;
+      w=nextW;h=nextH;dprUsed=dpr;
       canvas.width=Math.max(1,Math.round(w*dpr));
       canvas.height=Math.max(1,Math.round(h*dpr));
       ctx.setTransform(dpr,0,0,dpr,0,0);
       sprinkles=Array.from({length:reduceMotion?22:mobile?SNOW360_CANDY_WORLD.mobileSprinkles:SNOW360_CANDY_WORLD.desktopSprinkles},
         (_,i)=>newSprinkle(w,h,i<32));
     };
-    resize();window.addEventListener("resize",resize,{passive:true});
+    resize();
+    const sizeObserver=typeof ResizeObserver!=="undefined"?new ResizeObserver(resize):null;
+    sizeObserver?.observe(canvas);
+    window.addEventListener("resize",resize,{passive:true});
+    window.visualViewport?.addEventListener("resize",resize,{passive:true});
     const tick=(now)=>{
       raf=window.requestAnimationFrame(tick);
       const fps=reduceMotion?18:mobile?SNOW360_CANDY_WORLD.mobileFps:SNOW360_CANDY_WORLD.desktopFps;
@@ -116,15 +129,26 @@ export default function Snow360IcecreamPowerScene({remaining=0,mobile=false,spee
         // A second burst around the middle for each new automatic trick.
         for(let i=0;i<Math.min(sprinkles.length,45);i++) sprinkles[i]=newSprinkle(w,h,true);
       }
-      renderFrame(ctx,w,h,sprinkles,dt,current.speed,reduceMotion);
+      renderFrame(ctx,w,h,sprinkles,dt,current.speed,reduceMotion,mobile);
     };
     raf=window.requestAnimationFrame(tick);
-    return()=>{window.cancelAnimationFrame(raf);window.removeEventListener("resize",resize);};
+    return()=>{
+      window.cancelAnimationFrame(raf);
+      sizeObserver?.disconnect();
+      window.removeEventListener("resize",resize);
+      window.visualViewport?.removeEventListener("resize",resize);
+    };
   },[mobile]);
 
   if(remaining<=0)return null;
+  // Scene 2: reuse ONLY the original candy rods. Its sky overlay supplies
+  // the title and color treatment; do not add a duplicate screen tint/title.
+  if(sprinklesOnly)return <canvas ref={canvasRef} aria-hidden="true"
+    className="snow360-candy-sprinkles-only" data-snow360-sprinkles="sky"
+    style={{position:"absolute",inset:0,zIndex:2,width:"100%",height:"100%",
+      display:"block",pointerEvents:"none"}}/>;
   const backgroundFade=clamp(remaining/.7,0,1);
-  return <div aria-hidden="true" className="snow360-candy-world"
+  return <div aria-hidden="true" data-snow360-sprinkles="candy" className="snow360-candy-world"
     style={{position:"absolute",inset:0,zIndex:2,overflow:"hidden",pointerEvents:"none",opacity:1,
       isolation:"isolate"}}>
     {/* Leave the center clear so the rider and world stay readable. */}
