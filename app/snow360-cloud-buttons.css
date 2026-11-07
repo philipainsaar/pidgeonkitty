@@ -1,164 +1,285 @@
-/* SNOW360: shared fluffy cloud button visuals.
- * Art: original user-supplied transparent PNGs.
- * Visual layer only: no controls, event handlers, gameplay or settings modified.
- * Does not style invisible touch zones or the in-game HUD.
- */
+/* SNOW360 all-menu cloud buttons V3.
+   Latest GitHub main already imports this sheet from app/layout.jsx.
+   This visual layer uses four real transparent PNG frames sized by shape.
+   Existing click handlers, gameplay, keyboard and touch controls are untouched.
+*/
 :root {
-  --snow360-cloud-frame: url("/images/snow360-cloud-frame.png");
-  --snow360-cloud-play: url("/images/snow360-cloud-play.png");
+  --snow-cloud-wide: url('/images/snow360-cloud-wide.png');    /* 3:1, PLAY/RESTART/RESUME */
+  --snow-cloud-medium: url('/images/snow360-cloud-medium.png');/* 2:1, choices */
+  --snow-cloud-small: url('/images/snow360-cloud-compact.png');/* 16:9, short toggles */
+  --snow-cloud-round: url('/images/snow360-cloud-round.png');  /* 1:1, Settings/icons */
+  --snow-cloud-text: #fffaff;
+  --snow-cloud-outline: #f84d9b;
 }
 
-/* Menu, restart, sound, N64, rider and accessible trick buttons.
-   The frame PNG has a transparent center; content remains real HTML. */
-.snow360-start-floating button:not(.snow360-secret-star):not([aria-label="Play Snow360"]):not([aria-label="Loading course"]),
-main[data-game-phase] button:not(.snow360-mini-pause):not(.snow360-secret-star) {
-  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
-  border-color: transparent !important;
-  border-radius: 999px !important;
-  color: #38536e !important;
-  font-family: Fredoka, var(--snow360-fredoka), system-ui, sans-serif !important;
-  font-weight: 900 !important;
-  text-shadow: 0 1px 1px rgba(255,255,255,.98), 0 0 8px rgba(255,255,255,.9) !important;
-  box-shadow: none !important;
-  filter: drop-shadow(0 3px 7px rgba(107,75,127,.16));
-  -webkit-tap-highlight-color: transparent;
-  transition: filter .17s ease, transform .16s ease !important;
-}
-
-/* Welcome play: exact requested image #2. Preserve the real button, play()
-   handler, disabled readiness state and accessible aria-label. */
-.snow360-start-floating button[aria-label="Play Snow360"],
-.snow360-start-floating button[aria-label="Loading course"] {
-  flex: 1 1 0 !important;
-  width: auto !important;
-  min-width: 0 !important;
-  min-height: 112px !important;
-  height: 112px !important;
-  padding: 0 !important;
-  background: var(--snow360-cloud-play) center / 100% 100% no-repeat !important;
+/* Each actual <button> stays the native interactive element.
+   Use contain instead of stretch: pearls and cloud fibers keep their proportions. */
+.snow360-start-floating button,
+main[data-game-phase] button,
+[aria-label="Snow360 loading screen"] button,
+[data-snow64-reactive-music="true"] button {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background: transparent var(--snow-cloud-medium) center / contain no-repeat !important;
   border: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;
-  color: transparent !important;
-  font-size: 0 !important;
-  text-shadow: none !important;
-  white-space: nowrap;
-  cursor: pointer;
-  filter: drop-shadow(0 6px 12px rgba(107,68,126,.2));
+  color: var(--snow-cloud-text) !important;
+  font-family: Fredoka, var(--snow360-fredoka), system-ui, sans-serif !important;
+  font-weight: 1000 !important;
+  font-style: normal !important;
+  letter-spacing: .045em !important;
+  -webkit-text-stroke: .55px var(--snow-cloud-outline);
+  text-shadow: 0 1px 0 #ffe1f3, 0 2px 1px #ef4e96, 0 3px 4px #c33281, 0 0 7px #fff5fb !important;
+  filter: drop-shadow(0 4px 7px #95658b33);
   -webkit-tap-highlight-color: transparent;
-  transition: transform .16s ease, filter .16s ease !important;
+  touch-action: manipulation;
+  transition: transform .17s ease, filter .17s ease !important;
 }
-.snow360-start-floating button[aria-label="Loading course"] {
+.snow360-start-floating button:not(:disabled):hover,
+main[data-game-phase] button:not(:disabled):hover,
+[aria-label="Snow360 loading screen"] button:not(:disabled):hover {
+  filter: brightness(1.07) saturate(1.07) drop-shadow(0 6px 12px #e58abd55) !important;
+}
+.snow360-start-floating button:not(:disabled):active,
+main[data-game-phase] button:not(:disabled):active,
+[aria-label="Snow360 loading screen"] button:not(:disabled):active {
+  transform: scale(.965) !important;
+}
+.snow360-start-floating button:focus-visible,
+main[data-game-phase] button:focus-visible,
+[aria-label="Snow360 loading screen"] button:focus-visible {
+  outline: 3px solid #a485ff !important;
+  outline-offset: 3px !important;
+}
+.snow360-start-floating button:disabled,
+main[data-game-phase] button:disabled {
+  opacity: .64 !important;
+  filter: grayscale(.15) saturate(.75) !important;
   cursor: wait !important;
-  opacity: .58 !important;
-  filter: grayscale(.18) saturate(.7) !important;
+}
+.snow360-start-floating button[aria-pressed="true"],
+main[data-game-phase] button[aria-pressed="true"] {
+  filter: saturate(1.12) drop-shadow(0 5px 8px #ff93ce88) !important;
 }
 
-/* Tiny matching cloud frame for the Welcome Settings gear. */
+/* Welcome: one generous 3:1 PLAY plaque plus a genuine round Settings button. */
+.snow360-start-floating {
+  width: min(94vw, 440px) !important;
+  max-width: 440px !important;
+}
+.snow360-start-floating > div:last-child {
+  align-items: center !important;
+  gap: 5px !important;
+}
+.snow360-start-floating button[aria-label="Play Snow360"],
+.snow360-start-floating button[aria-label="Loading course"] {
+  position: relative !important;
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  width: auto !important;
+  height: 109px !important;
+  min-height: 109px !important;
+  padding: 0 !important;
+  background: transparent var(--snow-cloud-wide) center / contain no-repeat !important;
+  font-size: 0 !important;
+  color: transparent !important;
+  -webkit-text-stroke: 0 !important;
+  text-shadow: none !important;
+  white-space: nowrap !important;
+}
+.snow360-start-floating button[aria-label="Play Snow360"]::after,
+.snow360-start-floating button[aria-label="Loading course"]::after {
+  content: 'PLAY';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px 1px;
+  color: #fffaff;
+  font: 1000 clamp(23px, 3.8vw, 38px)/1 Fredoka, var(--snow360-fredoka), system-ui, sans-serif;
+  letter-spacing: .09em;
+  -webkit-text-stroke: 1px #f34b91;
+  text-shadow: 0 2px 0 #ffd6ed, 0 3px 0 #ed4992, 0 5px 6px #b32d73;
+  pointer-events: none;
+}
+.snow360-start-floating button[aria-label="Loading course"]::after { content: 'LOADING'; font-size: clamp(16px,3vw,27px); }
 .snow360-start-floating button[aria-controls="snow360-intro-settings"] {
-  flex: 0 0 83px !important;
-  width: 83px !important;
-  height: 79px !important;
-  min-height: 79px !important;
+  flex: 0 0 94px !important;
+  width: 94px !important;
+  height: 94px !important;
+  min-height: 94px !important;
   align-self: center !important;
-  padding: 4px 7px 0 !important;
-  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  color: #6b5792 !important;
+  padding: 8px 12px !important;
   gap: 0 !important;
+  background: transparent var(--snow-cloud-round) center / contain no-repeat !important;
+  color: #fffaff !important;
 }
 .snow360-start-floating button[aria-controls="snow360-intro-settings"] svg {
-  width: 21px;
-  height: 21px;
+  width: 24px !important;
+  height: 24px !important;
+  stroke: #fff6fe !important;
+  filter: drop-shadow(0 2px 1px #e94499);
 }
 .snow360-start-floating button[aria-controls="snow360-intro-settings"] span {
   font-size: 7px !important;
-  line-height: 1.05;
+  -webkit-text-stroke: .25px #f34b91;
+  line-height: 1.05 !important;
 }
 
-/* Expanded welcome settings: actual toggle controls, no new window. */
-#snow360-intro-settings button:not(.snow360-secret-star),
+/* Welcome settings toggles: keep actual label, selected state, and full hitbox. */
+#snow360-intro-settings button:not(.snow360-secret-star) {
+  min-height: 57px !important;
+  padding: 12px 13px !important;
+  font-size: 10px !important;
+  line-height: 1.12 !important;
+  background: transparent var(--snow-cloud-small) center / contain no-repeat !important;
+}
+#snow360-intro-settings [role="group"] button,
+#snow360-intro-settings button.snow360-secret-rider {
+  min-height: 57px !important;
+  background: transparent var(--snow-cloud-wide) center / contain no-repeat !important;
+  font-size: 10px !important;
+}
+#snow360-intro-settings .snow360-secret-star,
+main .snow360-secret-star {
+  width: 43px !important;
+  height: 43px !important;
+  min-height: 43px !important;
+  padding: 0 !important;
+  background: transparent var(--snow-cloud-round) center / contain no-repeat !important;
+  font-size: 18px !important;
+}
+#snow360-intro-settings .snow360-secret-star span,
+main .snow360-secret-star span { -webkit-text-stroke: 0 !important; }
+
+/* PAUSE -> RESUME and GAME OVER -> RESTART.  Both use the same wide pink badge.
+   Original buttons remain native, with their original onclick/keyboard semantics. */
+main[data-game-phase="paused"] [role="dialog"] button,
+main[data-game-phase="finished"] [role="dialog"] button {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: 0 0 auto !important;
+  width: min(83vw, 366px) !important;
+  min-width: 0 !important;
+  height: clamp(94px, 12vh, 124px) !important;
+  min-height: 94px !important;
+  padding: 0 !important;
+  background: transparent var(--snow-cloud-wide) center / contain no-repeat !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  -webkit-text-stroke: 0 !important;
+  text-shadow: none !important;
+}
+main[data-game-phase="paused"] [role="dialog"] button::after,
+main[data-game-phase="finished"] [role="dialog"] button::after {
+  content: 'RESTART';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #fffaff;
+  font: 1000 clamp(23px, 3.6vw, 37px)/1 Fredoka, var(--snow360-fredoka), system-ui, sans-serif;
+  letter-spacing: .07em;
+  -webkit-text-stroke: 1px #f34b91;
+  text-shadow: 0 2px 0 #ffd6ed,0 4px 0 #ee4992,0 5px 8px #b32d73;
+  pointer-events: none;
+}
+main[data-game-phase="paused"] [role="dialog"] button::after {content: 'RESUME';}
+
+/* Other game menus: short choices, audio toggles, N64, secret rider, retry. */
 main [data-snow64-settings="true"] button,
 main [data-snow64-reactive-music="true"] button,
-main .snow360-secret-rider {
-  min-height: 45px !important;
-  padding: 10px 13px !important;
-  font-size: clamp(9px, 1vw, 12px) !important;
-  letter-spacing: .015em !important;
-  line-height: 1.15 !important;
-}
-#snow360-intro-settings button[aria-pressed="true"],
-main [data-snow64-settings="true"] button[aria-pressed="true"],
-main [data-snow64-reactive-music="true"] button[aria-pressed="true"] {
-  filter: drop-shadow(0 3px 6px rgba(239, 114, 184, .32)) saturate(1.12) !important;
-}
-
-/* Resume and Ride Again: same fluffy border with the original real text. */
-main [role="dialog"] button {
-  min-width: min(78vw, 285px) !important;
-  min-height: clamp(94px, 11vh, 118px) !important;
-  padding: 18px 29px !important;
-  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
-  font-size: clamp(15px, 2.1vw, 19px) !important;
-  color: #41587a !important;
-  border: none !important;
-}
-
-/* Keep small trick buttons easy to hit. Cloud trims are just decoration. */
-main .snow64-button-pad button:not(.snow360-mini-pause) {
-  padding: 3px !important;
-  min-height: 36px;
-  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
+main .snow360-secret-rider,
+[data-snow64-reactive-music="true"] button,
+[aria-label="Snow360 loading screen"] button {
+  min-height: 58px !important;
+  padding: 12px 14px !important;
+  background: transparent var(--snow-cloud-small) center / contain no-repeat !important;
   border: 0 !important;
-  border-radius: 8px !important;
-  color: #35516e !important;
+  border-radius: 0 !important;
+  font-size: clamp(9px, 1.2vw, 13px) !important;
+  line-height: 1.13 !important;
+}
+main [data-snow64-settings="true"] [role="group"] button {
+  background: transparent var(--snow-cloud-wide) center / contain no-repeat !important;
+  min-height: 66px !important;
+}
+
+/* 11 small trick icons use the 1:1 cloud asset: never squash a wide image
+   into a tall 4-column grid.  Hitboxes remain the exact gameplay controls. */
+main .snow64-button-pad button.snow64-iconbtn {
+  min-width: 0 !important;
+  min-height: 44px !important;
+  padding: 3px 0 !important;
+  background: transparent var(--snow-cloud-round) center / contain no-repeat !important;
+  border: 0 !important;
+  border-radius: 0 !important;
   box-shadow: none !important;
+  color: #fffaff !important;
+  -webkit-text-stroke: .15px #ec5997 !important;
+  text-shadow: 0 1px 1px #ec5997 !important;
+}
+main .snow64-button-pad button.snow64-iconbtn svg {
+  max-width: 64%;
+  max-height: 23px;
+  filter: drop-shadow(0 1px 1px #f04e96);
+}
+main .snow64-button-pad button.snow64-iconbtn span {
+  font-weight: 1000 !important;
+  color: #fffaff !important;
+  text-shadow: 0 1px 1px #ec5997 !important;
 }
 
-/* The 34px mobile pause button stays compact and accessible; a cloud-pink
-   pearl tint keeps it in the visual family without obscuring the icon. */
+/* Keep the requested mobile Pause button genuinely small. */
 main button.snow360-mini-pause {
-  background: linear-gradient(135deg, #fff9fc 0%, #ffc4e4 60%, #c8eaff 100%) !important;
-  border: 2px solid rgba(255, 255, 255, .96) !important;
-  color: #764c83 !important;
-  box-shadow: 0 2px 9px rgba(100,74,131,.22) !important;
+  width: 38px !important;
+  height: 38px !important;
+  padding: 0 !important;
+  background: transparent var(--snow-cloud-round) center / contain no-repeat !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  display: grid !important;
+  place-items: center !important;
+  color: #fffaff !important;
 }
-
-.snow360-start-floating button:not(:disabled):hover,
-main[data-game-phase] button:not(:disabled):hover {
-  filter: drop-shadow(0 4px 10px rgba(244, 128, 207, .3)) brightness(1.04);
-}
-.snow360-start-floating button:not(:disabled):active,
-main[data-game-phase] button:not(:disabled):active {
-  transform: scale(.966) !important;
-}
-.snow360-start-floating button:focus-visible,
-main[data-game-phase] button:focus-visible {
-  outline: 3px solid #d68eff !important;
-  outline-offset: 3px !important;
-}
+main button.snow360-mini-pause svg { width: 12px; height: 13px; filter: drop-shadow(0 1px 2px #e53c8b); }
 
 @media (max-width: 720px) {
+  .snow360-start-floating { width: min(95vw, 377px) !important; }
   .snow360-start-floating button[aria-label="Play Snow360"],
   .snow360-start-floating button[aria-label="Loading course"] {
-    height: 101px !important;
-    min-height: 101px !important;
+    height: 88px !important;
+    min-height: 88px !important;
   }
   .snow360-start-floating button[aria-controls="snow360-intro-settings"] {
-    width: 74px !important;
-    height: 73px !important;
-    min-height: 73px !important;
-    flex-basis: 74px !important;
+    flex-basis: 77px !important;
+    width: 77px !important;
+    height: 77px !important;
+    min-height: 77px !important;
   }
-  main [role="dialog"] button { min-height: 92px !important; }
-  #snow360-intro-settings button:not(.snow360-secret-star) {
-    min-height: 41px !important;
-    padding: 8px 10px !important;
+  .snow360-start-floating button[aria-controls="snow360-intro-settings"] svg { width: 20px !important; height: 20px !important; }
+  .snow360-start-floating button[aria-controls="snow360-intro-settings"] span { font-size: 6px !important; }
+  main[data-game-phase="paused"] [role="dialog"] button,
+  main[data-game-phase="finished"] [role="dialog"] button {
+    height: 107px !important;
+    min-height: 107px !important;
   }
+  #snow360-intro-settings button:not(.snow360-secret-star) { min-height: 52px !important; }
 }
-
+@media (max-width: 370px) {
+  .snow360-start-floating { width: min(97vw, 337px) !important; }
+  .snow360-start-floating button[aria-controls="snow360-intro-settings"] { flex-basis: 69px !important; width: 69px !important; height: 69px !important; min-height: 69px !important; }
+  .snow360-start-floating button[aria-label="Play Snow360"],
+  .snow360-start-floating button[aria-label="Loading course"] { height: 79px !important; min-height: 79px !important; }
+}
 @media (prefers-reduced-motion: reduce) {
   .snow360-start-floating button,
-  main[data-game-phase] button { transition: none !important; }
+  main[data-game-phase] button,
+  [aria-label="Snow360 loading screen"] button { transition: none !important; }
 }

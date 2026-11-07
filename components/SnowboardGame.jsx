@@ -2856,7 +2856,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
               fontSize:mobile?16:18,letterSpacing:".055em",
               boxShadow:"0 8px 26px rgba(27,36,75,.26),inset 0 2px 0 rgba(255,255,255,.65)",
               cursor:"pointer",touchAction:"manipulation"}}>
-            {phase==="paused" ? "▶ RESUME" : "↻ RIDE AGAIN"}
+            {phase==="paused" ? "RESUME" : "RESTART"}
           </button>
           <div style={{fontSize:mobile?10:12,fontWeight:800,letterSpacing:".045em",
             color:"#f4faff",textShadow:"0 2px 8px rgba(26,36,69,.55)"}}>
@@ -2914,7 +2914,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
           {onRiderChange && <Snow360RiderSecret rider={rider} onChange={onRiderChange}/>}
           {riderError && <div role="alert">The rider could not load. <button type="button" onClick={retryRider}>Retry rider</button></div>}
         </div>}
-        <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{!riderReady?"LOADING RIDER…":phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RIDE AGAIN"}</div>
+        <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{!riderReady?"LOADING RIDER…":phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RESTART"}</div>
         <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>{trickMode==="draw"?"RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS":"RIGHT HALF: TAP TO JUMP · USE THE ICONS FOR ALL TRICKS"}</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>{trickMode==="draw"?"1–0 / F = TRICKS":"TAP ICON BUTTONS OR USE 1–0 / F FOR TRICKS"} &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
