@@ -2016,12 +2016,30 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
 function Loading() {
   return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
 }
-// The old scene mounted BOTH the classic explosion renderer and the custom
-// ShatterBurst renderer for the same Frost Shroom collision. Besides doubling
-// the render cost, the classic renderer deleted events at 1.12s, truncating
-// the custom 1.75s shatter. Exactly one renderer is active at a time.
+// Only one explosion renderer is active at a time. A crystal shatter clone
+// used to copy a MeshBasicMaterial and then add a custom `emissive` property.
+// MeshBasicMaterial's shader has NO `emissive` uniform, so Three.js crashed at
+// refreshUniformsCommon (Cannot read properties of undefined, reading 'value')
+// as soon as that shard became visible. Normalize those cached shard materials
+// BEFORE mounting the custom obstacle shatter renderer. MeshBasicMaterial is
+// already unlit, so removing the unsupported property preserves its glow.
 function Snow360FrostShatterEffects({stateRef,mobile}){
   const customObstacles=useSnow64Obstacles();
+  useMemo(()=>{
+    if(!customObstacles?.variants)return;
+    for(const asset of customObstacles.variants.values()){
+      for(const shard of asset?.shards||[]){
+        const materials=Array.isArray(shard.material)?shard.material:[shard.material];
+        for(const material of materials){
+          if(material?.isMeshBasicMaterial && material.emissive){
+            delete material.emissive;
+            delete material.emissiveIntensity;
+            material.needsUpdate=true;
+          }
+        }
+      }
+    }
+  },[customObstacles]);
   if(customObstacles)return <Snow64ObstacleShatterVFX stateRef={stateRef} groundY={groundY} mobile={mobile}/>;
   return <Snow64ExplosionVFX stateRef={stateRef} mobile={mobile}/>;
 }

@@ -1,5 +1,6 @@
 import { Fredoka, Lilita_One } from "next/font/google";
 import "./snow360-fonts.css";
+import "./snow360-cloud-buttons.css";
 
 // Fonts are automatically optimized and self-hosted by Next.js on build.
 // Keep them on <html> so both the welcome screen and the actual game use them.

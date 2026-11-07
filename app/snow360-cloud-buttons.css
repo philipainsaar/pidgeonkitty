@@ -1,0 +1,164 @@
+/* SNOW360: shared fluffy cloud button visuals.
+ * Art: original user-supplied transparent PNGs.
+ * Visual layer only: no controls, event handlers, gameplay or settings modified.
+ * Does not style invisible touch zones or the in-game HUD.
+ */
+:root {
+  --snow360-cloud-frame: url("/images/snow360-cloud-frame.png");
+  --snow360-cloud-play: url("/images/snow360-cloud-play.png");
+}
+
+/* Menu, restart, sound, N64, rider and accessible trick buttons.
+   The frame PNG has a transparent center; content remains real HTML. */
+.snow360-start-floating button:not(.snow360-secret-star):not([aria-label="Play Snow360"]):not([aria-label="Loading course"]),
+main[data-game-phase] button:not(.snow360-mini-pause):not(.snow360-secret-star) {
+  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
+  border-color: transparent !important;
+  border-radius: 999px !important;
+  color: #38536e !important;
+  font-family: Fredoka, var(--snow360-fredoka), system-ui, sans-serif !important;
+  font-weight: 900 !important;
+  text-shadow: 0 1px 1px rgba(255,255,255,.98), 0 0 8px rgba(255,255,255,.9) !important;
+  box-shadow: none !important;
+  filter: drop-shadow(0 3px 7px rgba(107,75,127,.16));
+  -webkit-tap-highlight-color: transparent;
+  transition: filter .17s ease, transform .16s ease !important;
+}
+
+/* Welcome play: exact requested image #2. Preserve the real button, play()
+   handler, disabled readiness state and accessible aria-label. */
+.snow360-start-floating button[aria-label="Play Snow360"],
+.snow360-start-floating button[aria-label="Loading course"] {
+  flex: 1 1 0 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  min-height: 112px !important;
+  height: 112px !important;
+  padding: 0 !important;
+  background: var(--snow360-cloud-play) center / 100% 100% no-repeat !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  text-shadow: none !important;
+  white-space: nowrap;
+  cursor: pointer;
+  filter: drop-shadow(0 6px 12px rgba(107,68,126,.2));
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .16s ease, filter .16s ease !important;
+}
+.snow360-start-floating button[aria-label="Loading course"] {
+  cursor: wait !important;
+  opacity: .58 !important;
+  filter: grayscale(.18) saturate(.7) !important;
+}
+
+/* Tiny matching cloud frame for the Welcome Settings gear. */
+.snow360-start-floating button[aria-controls="snow360-intro-settings"] {
+  flex: 0 0 83px !important;
+  width: 83px !important;
+  height: 79px !important;
+  min-height: 79px !important;
+  align-self: center !important;
+  padding: 4px 7px 0 !important;
+  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: #6b5792 !important;
+  gap: 0 !important;
+}
+.snow360-start-floating button[aria-controls="snow360-intro-settings"] svg {
+  width: 21px;
+  height: 21px;
+}
+.snow360-start-floating button[aria-controls="snow360-intro-settings"] span {
+  font-size: 7px !important;
+  line-height: 1.05;
+}
+
+/* Expanded welcome settings: actual toggle controls, no new window. */
+#snow360-intro-settings button:not(.snow360-secret-star),
+main [data-snow64-settings="true"] button,
+main [data-snow64-reactive-music="true"] button,
+main .snow360-secret-rider {
+  min-height: 45px !important;
+  padding: 10px 13px !important;
+  font-size: clamp(9px, 1vw, 12px) !important;
+  letter-spacing: .015em !important;
+  line-height: 1.15 !important;
+}
+#snow360-intro-settings button[aria-pressed="true"],
+main [data-snow64-settings="true"] button[aria-pressed="true"],
+main [data-snow64-reactive-music="true"] button[aria-pressed="true"] {
+  filter: drop-shadow(0 3px 6px rgba(239, 114, 184, .32)) saturate(1.12) !important;
+}
+
+/* Resume and Ride Again: same fluffy border with the original real text. */
+main [role="dialog"] button {
+  min-width: min(78vw, 285px) !important;
+  min-height: clamp(94px, 11vh, 118px) !important;
+  padding: 18px 29px !important;
+  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
+  font-size: clamp(15px, 2.1vw, 19px) !important;
+  color: #41587a !important;
+  border: none !important;
+}
+
+/* Keep small trick buttons easy to hit. Cloud trims are just decoration. */
+main .snow64-button-pad button:not(.snow360-mini-pause) {
+  padding: 3px !important;
+  min-height: 36px;
+  background: var(--snow360-cloud-frame) center / 100% 100% no-repeat !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  color: #35516e !important;
+  box-shadow: none !important;
+}
+
+/* The 34px mobile pause button stays compact and accessible; a cloud-pink
+   pearl tint keeps it in the visual family without obscuring the icon. */
+main button.snow360-mini-pause {
+  background: linear-gradient(135deg, #fff9fc 0%, #ffc4e4 60%, #c8eaff 100%) !important;
+  border: 2px solid rgba(255, 255, 255, .96) !important;
+  color: #764c83 !important;
+  box-shadow: 0 2px 9px rgba(100,74,131,.22) !important;
+}
+
+.snow360-start-floating button:not(:disabled):hover,
+main[data-game-phase] button:not(:disabled):hover {
+  filter: drop-shadow(0 4px 10px rgba(244, 128, 207, .3)) brightness(1.04);
+}
+.snow360-start-floating button:not(:disabled):active,
+main[data-game-phase] button:not(:disabled):active {
+  transform: scale(.966) !important;
+}
+.snow360-start-floating button:focus-visible,
+main[data-game-phase] button:focus-visible {
+  outline: 3px solid #d68eff !important;
+  outline-offset: 3px !important;
+}
+
+@media (max-width: 720px) {
+  .snow360-start-floating button[aria-label="Play Snow360"],
+  .snow360-start-floating button[aria-label="Loading course"] {
+    height: 101px !important;
+    min-height: 101px !important;
+  }
+  .snow360-start-floating button[aria-controls="snow360-intro-settings"] {
+    width: 74px !important;
+    height: 73px !important;
+    min-height: 73px !important;
+    flex-basis: 74px !important;
+  }
+  main [role="dialog"] button { min-height: 92px !important; }
+  #snow360-intro-settings button:not(.snow360-secret-star) {
+    min-height: 41px !important;
+    padding: 8px 10px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snow360-start-floating button,
+  main[data-game-phase] button { transition: none !important; }
+}
