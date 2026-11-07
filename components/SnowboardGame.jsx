@@ -2574,7 +2574,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     useGLTF.clear(mobile?profile.mobile:profile.desktop);
     setRiderError(null);setLoadedRider(null);setAssetAttempt(n=>n+1);
   };
-  // Default to clean HD. The retro filter is opt-in on the title screen only.
+  // Optional pastel rainbow Colorama: a full-scene false-color gradient map, without lowering 3D resolution.
   const [retro,setRetro]=useState(false);
   // Default to classic drawing; selectable on the start / new-run screen.
   const [trickMode,setTrickMode]=useState("draw");
@@ -2672,7 +2672,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",blur);};
   },[act,start,pause]);
   const currentBest=Math.max(best,hud.peakScore);
-  return <main data-rider={rider} data-rider-ready={riderReady} data-game-phase={phase}
+  return <main data-rider={rider} data-rider-ready={riderReady} data-game-phase={phase} data-colorama={retro?"on":"off"}
     onClickCapture={e=>{
       // Desktop pointer clicks leave native buttons focused, which causes the
       // global key handler to ignore its subsequent keydown events. Remove
@@ -2682,6 +2682,31 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     }}
     onContextMenu={e=>{if(mobile)e.preventDefault();}} style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif",touchAction:mobile?"none":"auto",overscrollBehavior:"none",userSelect:mobile?"none":"auto",WebkitUserSelect:mobile?"none":"auto"}}>
     <style>{`
+      /* Snow360 Colorama: video-inspired RGB false-color, softened to candy pastels.
+         The filter changes only composite pixels, never scene geometry or materials. */
+      /* Typed custom angles interpolate smoothly even with SVG url() filters.
+         Animating filter:url(...) directly would snap between color states. */
+      @property --snow360-colorama-hue {
+        syntax: "<angle>";
+        inherits: false;
+        initial-value: 0deg;
+      }
+      @keyframes snow360ColoramaPastelRainbow {
+        from { --snow360-colorama-hue: 0deg; }
+        to   { --snow360-colorama-hue: 360deg; }
+      }
+      main[data-colorama="on"], .snow360-colorama-preview {
+        filter: url(#snow360-pastel-colorama)
+          hue-rotate(var(--snow360-colorama-hue)) saturate(1.06) !important;
+        animation: snow360ColoramaPastelRainbow 9.5s linear infinite !important;
+      }
+      main[data-colorama="off"] { animation: none !important; filter: none !important; }
+      @media (prefers-reduced-motion: reduce) {
+        main[data-colorama="on"], .snow360-colorama-preview {
+          animation: none !important;
+          filter: url(#snow360-pastel-colorama) hue-rotate(56deg) saturate(1.06) !important;
+        }
+      }
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
       @keyframes snowboardFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
       @keyframes snow64MagicSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
@@ -2749,15 +2774,35 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       .snow64-trick{font-size:clamp(18px,3vw,40px);font-weight:1000;font-style:italic;color:#ffe581;text-shadow:3px 3px #194764;letter-spacing:.035em}
       @media(max-width:680px){.snow64-label{font-size:8px}.snow64-panel{padding:5px 8px}.snow64-hud{gap:5px!important}}
     `}</style>
+    {/* SVG gradient-map definition, with no visible SVG or extra WebGL draws.
+        Each pixel is recolored by brightness: lavender -> cyan -> mint ->
+        peach -> pink -> pearly highlights. A slow hue cycle makes it rainbow. */}
+    <svg aria-hidden="true" focusable="false"
+      style={{position:"absolute",width:0,height:0,overflow:"hidden",pointerEvents:"none"}}>
+      <defs>
+        <filter id="snow360-pastel-colorama" x="0" y="0" width="100%" height="100%"
+          colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" values={
+            "0.2126 0.7152 0.0722 0 0 " +
+            "0.2126 0.7152 0.0722 0 0 " +
+            "0.2126 0.7152 0.0722 0 0 " +
+            "0 0 0 1 0"
+          } />
+          <feComponentTransfer>
+            <feFuncR type="table" tableValues="0.37 0.55 0.45 0.63 0.73 0.95 1 0.97 1" />
+            <feFuncG type="table" tableValues="0.30 0.48 0.73 0.88 0.94 0.77 0.69 0.85 0.96" />
+            <feFuncB type="table" tableValues="0.71 0.80 0.91 0.95 0.79 0.68 0.80 0.90 1" />
+          </feComponentTransfer>
+        </filter>
+      </defs>
+    </svg>
     <div style={{position:"absolute",inset:0,zIndex:0}}>
-      {mobile!==null && <Canvas frameloop={renderActive?"always":"demand"} key={retro ? "retro" : "hd"} dpr={retro?[.75,mobile?1:1.12]:[1,mobile?1.1:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:!retro, powerPreference:"high-performance"}}>
+      {mobile!==null && <Canvas frameloop={renderActive?"always":"demand"} key="snow360-hd" dpr={[1,mobile?1.1:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:true, powerPreference:"high-performance"}}>
         <Scene rider={rider} assetAttempt={assetAttempt} onRiderReady={onRiderReady} onRiderError={onRiderError} mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>
     <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
     {phase==="playing" && <FrostMagicOverlay remaining={hud.powerRemaining||0} mobile={mobile===true}/>}
-    {/* Original retro filter, enabled only by the optional title-screen setting. */}
-    {retro && <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1,opacity:.13,background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#002c3b 4px)"}}/>}
     {/* Mobile: an ultra-compact SPEED / TIME / SCORE rail at top-right, about
         as tall as the visible logo. Distance hangs below the rail without
         stretching its cards. Desktop keeps the original horizontal HUD. */}
@@ -2930,7 +2975,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
             style={{padding:"8px 14px",border:"2px solid #d7f4ff",borderRadius:9,
               background:retro?"#f7cc8d":"#163d59",color:retro?"#223448":"#f3fbff",
               font:"900 11px system-ui,sans-serif",letterSpacing:".055em",cursor:"pointer",touchAction:"manipulation"}}>
-            N64 FILTER: {retro?"ON":"OFF"}
+            COLORAMA: {retro?"ON":"OFF"}
           </button>
           {onRiderChange && <Snow360RiderSecret rider={rider} onChange={onRiderChange}/>}
           {riderError && <div role="alert">The rider could not load. <button type="button" onClick={retryRider}>Retry rider</button></div>}

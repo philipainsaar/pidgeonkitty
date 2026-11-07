@@ -146,7 +146,7 @@ export default function Snow64Welcome(){
         const clickContaining=value=>buttons.find(b=>b.textContent?.includes(value))?.click();
         if(trickButtons)clickContaining("TRICK BUTTONS");
         if(!soundOn)clickContaining("SOUND & MUSIC: ON");
-        if(retro)clickContaining("N64 FILTER: OFF");
+        if(retro)clickContaining("COLORAMA: OFF");
       }
       if(!musicOn)reactiveButton?.click();
       raf=requestAnimationFrame(()=>{
@@ -184,14 +184,12 @@ export default function Snow64Welcome(){
       {mobile!==null&&<Canvas dpr={[.85,mobile?1:1.4]}
         camera={{position:[-4,4.15,13.6],fov:49,near:.08,far:230}}
         gl={{antialias:true,alpha:false,powerPreference:"high-performance"}}
+        className={retro?"snow360-colorama-preview":undefined}
         style={{position:"absolute",inset:0,pointerEvents:"none",
           opacity:assetsReady?1:0,transition:"opacity .72s ease-out"}}>
         <WelcomeScene rider={rider} onError={setIntroError} mobile={mobile}
           stage={stage} onComplete={onComplete}/>
       </Canvas>}
-      {retro&&<div aria-hidden="true" style={{position:"absolute",inset:0,zIndex:1,
-        pointerEvents:"none",background:"repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#23546833 4px)",
-        opacity:.55}}/>}
       <style>{`
         @keyframes snow360LogoHover {0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-5px)}}
         .snow360-start-logo {animation:snow360LogoHover 6s ease-in-out infinite;}
@@ -247,7 +245,7 @@ export default function Snow64Welcome(){
               checked={soundOn} onClick={()=>setSoundOn(v=>!v)}/>
             <WelcomeIconToggle symbol="♫" label="Music"
               checked={musicOn} onClick={()=>setMusicOn(v=>!v)}/>
-            <WelcomeIconToggle symbol="▧" label="N64 filter"
+            <WelcomeIconToggle symbol="▧" label="Pastel rainbow Colorama"
               checked={retro} onClick={()=>setRetro(v=>!v)}/>
           </div>
           <Snow360RiderSecret rider={rider} onChange={setRider} tone="light"/>
