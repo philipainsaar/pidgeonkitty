@@ -2298,16 +2298,24 @@ const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
     jumpHeld.current=null;
     sendJump(clamp((performance.now()-held.start-120)/750,0,1));
   };
-  return <div role="group" aria-label="Snowboard trick buttons" className="snow64-button-pad"
+  // Floating trick icons only. No rectangular window, title or visible labels.
+  // On touch screens the twelve native buttons form one narrow scrollable strip
+  // down the RIGHT edge. Scroll only when the screen is too short to show all.
+  return <div role="group" aria-label="Snowboard trick buttons"
+    className={`snow64-button-pad ${mobile?"snow64-button-pad--mobile":"snow64-button-pad--desktop"}`}
     onPointerDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
-    style={{position:"absolute",right:mobile?"max(8px, env(safe-area-inset-right))":18,
-      bottom:mobile?"max(40px, env(safe-area-inset-bottom))":26,zIndex:7,
-      width:mobile?"clamp(144px, 45vw, 190px)":238,
-      padding:mobile?5:8,borderRadius:13,border:"1px solid #e1faffb8",
-      background:"linear-gradient(160deg,#113e56de,#0e2749e6)",
-      boxShadow:"0 5px 16px #03273a80",touchAction:"manipulation",userSelect:"none",WebkitUserSelect:"none"}}>
-    <div style={{fontSize:mobile?8:10,fontWeight:950,color:"#b3efff",letterSpacing:".1em",textAlign:"center",marginBottom:5}}>✦ TRICK BUTTONS ✦</div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:mobile?3:5}}>
+    style={{position:"absolute",right:mobile?"max(3px, env(safe-area-inset-right))":18,
+      top:mobile?"max(126px, calc(50% - 276px))":undefined,
+      bottom:mobile?undefined:26,zIndex:7,
+      width:mobile?52:238,
+      maxHeight:mobile?"calc(100dvh - 172px)":undefined,
+      overflowY:mobile?"auto":"visible",overflowX:mobile?"hidden":"visible",
+      padding:mobile?"3px 3px":"0",borderRadius:0,border:"none",
+      background:"transparent",boxShadow:"none",
+      touchAction:mobile?"pan-y":"manipulation",overscrollBehavior:"contain",
+      userSelect:"none",WebkitUserSelect:"none",boxSizing:"border-box"}}>
+    <div style={{display:"grid",gridTemplateColumns:mobile?"minmax(0,1fr)":"repeat(4,minmax(0,1fr))",
+      gap:mobile?3:5,width:"100%"}}>
       {SNOW64_BUTTON_TRICKS.map(t=><button key={t.key} type="button"
         aria-label={`Perform ${t.full}`} title={`${t.full} · ${t.key.toUpperCase()}`}
         className="snow64-iconbtn" onPointerDown={e=>e.stopPropagation()}
@@ -2317,7 +2325,6 @@ const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
           background:"linear-gradient(#2d657d,#194860)",border:"1px solid #9ce5f5a8",borderRadius:8,
           boxShadow:"inset 0 1px #ffffff50,0 2px #09283d",cursor:"pointer",touchAction:"manipulation"}}>
         <Snow64TrickGlyph kind={t.icon} level={t.key}/>
-        <span style={{fontSize:mobile?7.5:9,fontWeight:950,lineHeight:1.05,letterSpacing:"-.015em"}}>{t.label}</span>
       </button>)}
       <button type="button" className="snow64-iconbtn" aria-label="Ollie jump; hold to charge" title="OLLIE · Hold to charge"
         onPointerDown={jumpDown} onPointerUp={jumpUp} onPointerCancel={()=>{jumpHeld.current=null;}}
@@ -2327,8 +2334,7 @@ const Snow64TrickButtonPad = memo(function Snow64TrickButtonPad({act,mobile}) {
           display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
           background:"linear-gradient(#ffeb9c,#f6ad79)",border:"1px solid #fff6c1",borderRadius:8,
           boxShadow:"inset 0 1px #ffffffa8,0 2px #75384c",cursor:"pointer",touchAction:"manipulation"}}>
-        <span aria-hidden="true" style={{fontSize:25,fontWeight:1000,lineHeight:"23px"}}>↑</span>
-        <span style={{fontSize:mobile?7.5:9,fontWeight:950,lineHeight:1.05}}>OLLIE</span>
+        <span aria-hidden="true" style={{fontSize:25,fontWeight:700,lineHeight:"23px"}}>↑</span>
       </button>
     </div>
   </div>;

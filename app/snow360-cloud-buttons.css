@@ -385,3 +385,139 @@ main button.snow360-mini-pause svg { width: 12px; height: 13px; filter: drop-sha
   main[data-game-phase] button,
   [aria-label="Snow360 loading screen"] button { transition: none !important; }
 }
+
+
+/* V5: Floating icon-only trick controls, with no dark container or caption.
+   Overrides only decorative styling. Native action handlers/aria-labels remain. */
+main .snow64-button-pad,
+main .snow64-button-pad--mobile,
+main .snow64-button-pad--desktop {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+main .snow64-button-pad button.snow64-iconbtn {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 0 !important;
+  padding: 2px !important;
+  font-size: 0 !important;
+  line-height: 1 !important;
+  background: transparent var(--snow-cloud-round) center / contain no-repeat !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  color: #fff7fd !important;
+}
+main .snow64-button-pad button.snow64-iconbtn svg {
+  width: 25px;
+  height: 25px;
+  max-width: 70%;
+  max-height: 70%;
+  flex-shrink: 0;
+}
+main .snow64-button-pad button.snow64-iconbtn > span {
+  font-size: 25px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  filter: drop-shadow(0 1px 1px #e95399);
+}
+main .snow64-button-pad--mobile {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+main .snow64-button-pad--mobile::-webkit-scrollbar { display: none; }
+main .snow64-button-pad--mobile button.snow64-iconbtn {
+  width: 46px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  padding: 2px !important;
+}
+main .snow64-button-pad--desktop button.snow64-iconbtn {
+  min-height: 53px !important;
+}
+/* V5: PidgeonKitty secret must be secret. Only a faint, bare ✧ text trigger,
+   and no PNG frame around the hidden rider choices after opening it. */
+#snow360-intro-settings .snow360-secret-star,
+.snow360-start-floating .snow360-secret-star,
+main .snow360-secret-star {
+  display: inline-flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  width: 44px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  padding: 0 !important;
+  margin: 0 auto !important;
+  background: none !important;
+  color: #627991 !important;
+  opacity: .18 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  filter: none !important;
+  text-shadow: none !important;
+  -webkit-text-stroke: 0 !important;
+}
+#snow360-intro-settings .snow360-secret-star span,
+main .snow360-secret-star span {
+  font-size: 17px !important;
+  line-height: 1 !important;
+  filter: none !important;
+  text-shadow: none !important;
+}
+#snow360-intro-settings .snow360-secret-star:is(:hover,:focus-visible),
+main .snow360-secret-star:is(:hover,:focus-visible),
+#snow360-intro-settings .snow360-secret-star[aria-expanded="true"] {
+  opacity: .85 !important;
+}
+#snow360-intro-settings .snow360-secret-rider,
+.snow360-start-floating [data-snow360-rider-secret="true"] button.snow360-secret-rider {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #506b8d !important;
+  padding: 4px 6px !important;
+  min-height: 36px !important;
+  font-size: clamp(11px, 2.6vw, 13px) !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+  filter: none !important;
+}
+#snow360-intro-settings .snow360-secret-rider[aria-pressed="true"] {
+  color: #d16fa5 !important;
+  text-decoration: underline !important;
+  text-decoration-thickness: 2px !important;
+  text-underline-offset: 3px !important;
+}
+
+/* Match the ID-scoped Welcome settings grid rules with greater specificity. */
+#snow360-intro-settings [data-snow360-rider-secret="true"] [role="group"] button.snow360-secret-rider {
+  background-image: none !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  min-height: 36px !important;
+  padding: 4px 6px !important;
+  color: #506b8d !important;
+  font-family: Fredoka, system-ui, sans-serif !important;
+  font-weight: 700 !important;
+  font-size: clamp(11px, 2.6vw, 13px) !important;
+  text-shadow: none !important;
+}
+#snow360-intro-settings [data-snow360-rider-secret="true"] [role="group"] button.snow360-secret-rider[aria-pressed="true"] {
+  color: #d16fa5 !important;
+  text-decoration: underline !important;
+  text-decoration-thickness: 2px !important;
+  text-underline-offset: 3px !important;
+}
