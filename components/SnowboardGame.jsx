@@ -710,6 +710,26 @@ function Snowboard({plush=false}) {
   </group>;
 }
 
+/** Seven player-selectable camera views. The three classic perspectives keep
+ * their original positions. New angles share the same follow/transition code.
+ * Power-up cinematic camera shots temporarily override these presets, then
+ * return to the selected view at the end of Ice-cream Power.
+ */
+const SNOW360_CAMERA_VIEW_NAMES = [
+  "Classic", "Chase", "Wide", "Left side", "Right side", "Top-down", "Front",
+];
+function snow360CameraOffset(mode, mobile) {
+  switch (mode) {
+    case 1: return mobile ? [-.25, 2.65, 7.6] : [-.7, 3.15, 10.5];
+    case 2: return [-6.1, 4.2, 12.5];
+    case 3: return [-9.6, 3.15, -1.3]; // left side, looking across the board
+    case 4: return [9.6, 3.15, -1.3];  // matching right-side view
+    case 5: return [0, 15.0, -1.0];  // near-vertical top-down camera
+    case 6: return [0, 3.2, -10.2]; // front, looking uphill at the rider
+    default: return [-3.0, 2.25, 5.6];
+  }
+}
+
 function initialState(cameraMode = 0) {
   return {
     x:0,z:0,air:0,worldY:0,vy:0,speed:15.8,velX:0,steer:0,t:0,launchSource:"none",launchSpeed:0,
@@ -733,6 +753,7 @@ function initialState(cameraMode = 0) {
 function safeHud(s) {
   return {
     speed:Math.round(s.speed*3.6),
+    cameraMode:s.cameraMode,
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.max(0,Math.floor(-s.z)), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
     powerRemaining:s.powerTime, icecreamScene:s.powerTime>0?s.icecreamScene:0, shieldRemaining:s.icecreamCollisionGrace, icecreamPowerReady:!!s.icecreamPower, rockShattered:s.rockShattered,
@@ -1190,7 +1211,15 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     if(phaseRef.current!=="paused")s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*(icecreamDesiredVelX!==null?9:6)));
     const queue=queueRef.current.splice(0);
     for (const command of queue) {
-      if (command.type === "camera") s.cameraMode = (s.cameraMode + 1) % 3;
+      if (command.type === "camera") {
+        s.cameraMode = (s.cameraMode + 1) % SNOW360_CAMERA_VIEW_NAMES.length;
+        // Each preset starts at its intended angle rather than inheriting a
+        // manually dragged orbit from the previous camera. Smooth interpolation
+        // of the actual camera position still happens below.
+        cameraOrbitRef.current.yaw = 0;
+        cameraOrbitRef.current.pitch = 0;
+        cameraOrbitRef.current.dragging = false;
+      }
       if (!playing || s.recovery) continue;
       if (command.type === "jump" && !s.inAir && !s.icecreamHover && s.jumpCooldown <= 0) {
         const boost=clamp(command.boost || 0,0,1);
@@ -1811,8 +1840,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     // distance and FOV for the entire wipeout, chase, hop and kick-off.
     // Follow the actual fallen rider, not s.x/s.z, so the crash stays in frame.
     // Distant loose boards may leave frame; tight rider framing is intentional.
-    const offsets=[[-3.0,2.25,5.6],mobile?[-.25,2.65,7.6]:[-.7,3.15,10.5],[-6.1,4.2,12.5]];
-    const off=offsets[s.cameraMode];
+    const off=snow360CameraOffset(s.cameraMode,mobile);
     const followLift=Math.max(0,visualY-cy+(s.icecreamExitLift||0));
     const normalLook=new THREE.Vector3(s.x,cy+1.14+followLift*.92,s.z-1.3);
     const relX=off[0]+s.steer*.4;
@@ -1822,8 +1850,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     const horizontal=Math.hypot(relX,relZ);
     const orbit=cameraOrbitRef.current;
     const baseAzimuth=Math.atan2(relX,relZ)+orbit.yaw;
-    const baseElevation=clamp(Math.atan2(relY,horizontal)+orbit.pitch,.12,1.18);
-    const baseFov=(mobile?43:42)+Math.max(0,s.speed-20)*.16;
+    // Near-vertical top view needs a higher elevation limit than the normal
+    // 68-degree orbit clamp. Stop shy of 90 degrees to avoid an up-vector flip.
+    const isTopView=s.cameraMode===5;
+    const baseElevation=clamp(Math.atan2(relY,horizontal)+orbit.pitch,.12,isTopView?1.54:1.18);
+    const baseFov=(mobile?43:42)+Math.max(0,s.speed-20)*.16
+      +(isTopView?7:(s.cameraMode===3||s.cameraMode===4?4:0));
     crashCameraBlend.current=lerp(crashCameraBlend.current,s.recovery?1:0,
       Math.min(1,dt*(s.recovery?10:4)));
     const crashBlend=crashCameraBlend.current;
@@ -3090,22 +3122,42 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     {/* Keep the downhill view clean. The bottom BEST/TOKENS and keyboard hint
         lines are hidden; values and keyboard shortcuts still work normally. */}
     {mobile && phase==="playing" &&
-      <button type="button" className="snow360-mini-pause"
-        aria-label="Pause Snow360" title="Pause"
-        onPointerDown={e=>e.stopPropagation()}
-        onClick={e=>{e.stopPropagation();pause();}}
-        style={{position:"absolute",left:"max(10px, env(safe-area-inset-left))",
-          bottom:"max(12px, env(safe-area-inset-bottom))",zIndex:10,
-          width:34,height:34,padding:0,display:"grid",placeItems:"center",
-          borderRadius:"50%",border:"1.5px solid rgba(255,255,255,.91)",
-          background:"linear-gradient(125deg,rgba(255,237,200,.91),rgba(255,212,227,.93),rgba(211,231,255,.94))",
-          color:"#425676",boxShadow:"0 3px 12px rgba(38,62,101,.22),inset 0 1px 0 #ffffffaa",
-          cursor:"pointer",touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}>
-        <svg aria-hidden="true" width="12" height="13" viewBox="0 0 12 13" fill="currentColor">
-          <rect x="1.1" y="1.4" width="3.2" height="10.2" rx="1"/>
-          <rect x="7.7" y="1.4" width="3.2" height="10.2" rx="1"/>
-        </svg>
-      </button>}
+      <div aria-label="Pause and camera controls" style={{
+        position:"absolute",left:"max(10px, env(safe-area-inset-left))",
+        bottom:"max(12px, env(safe-area-inset-bottom))",zIndex:10,
+        display:"flex",alignItems:"center",gap:6,pointerEvents:"auto",
+      }}>
+        <button type="button" className="snow360-mini-pause"
+          aria-label="Pause Snow360" title="Pause"
+          onPointerDown={e=>e.stopPropagation()}
+          onClick={e=>{e.stopPropagation();pause();}}
+          style={{width:34,height:34,padding:0,display:"grid",placeItems:"center",
+            borderRadius:"50%",border:"1.5px solid rgba(255,255,255,.91)",
+            background:"linear-gradient(125deg,rgba(255,237,200,.91),rgba(255,212,227,.93),rgba(211,231,255,.94))",
+            color:"#425676",boxShadow:"0 3px 12px rgba(38,62,101,.22),inset 0 1px 0 #ffffffaa",
+            cursor:"pointer",touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}>
+          <svg aria-hidden="true" width="12" height="13" viewBox="0 0 12 13" fill="currentColor">
+            <rect x="1.1" y="1.4" width="3.2" height="10.2" rx="1"/>
+            <rect x="7.7" y="1.4" width="3.2" height="10.2" rx="1"/>
+          </svg>
+        </button>
+        <button type="button" className="snow360-mini-camera"
+          aria-label={`Change camera view. Current: ${SNOW360_CAMERA_VIEW_NAMES[hud.cameraMode ?? 1]}.`}
+          title={`Camera: ${SNOW360_CAMERA_VIEW_NAMES[hud.cameraMode ?? 1]} (${(hud.cameraMode ?? 1)+1}/7)`}
+          onPointerDown={e=>e.stopPropagation()}
+          onClick={e=>{e.stopPropagation();act({type:"camera"});}}
+          style={{width:30,height:30,padding:0,display:"grid",placeItems:"center",
+            borderRadius:"50%",border:"1.5px solid rgba(255,255,255,.91)",
+            background:"linear-gradient(125deg,rgba(234,236,255,.95),rgba(255,219,238,.94),rgba(207,244,248,.94))",
+            color:"#425676",boxShadow:"0 3px 12px rgba(38,62,101,.20),inset 0 1px 0 #ffffffaa",
+            cursor:"pointer",touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}>
+          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4.5 7.5h3l1.6-2h5.8l1.6 2h3A1.5 1.5 0 0 1 21 9v8.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5V9a1.5 1.5 0 0 1 1.5-1.5Z"/>
+            <circle cx="12" cy="13" r="3.5"/>
+          </svg>
+        </button>
+      </div>}
   </main>;
 }
 
