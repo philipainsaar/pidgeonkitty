@@ -2621,8 +2621,11 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
   const act=useCallback((command)=>{queue.current.push(command);},[]);
   useEffect(()=>{
     const down=e=>{
-      // Let the title-screen N64 filter button handle Enter/Space itself.
-      if (e.target?.closest?.("button")) return;
+      // A focused gameplay trick icon must NOT disable keyboard carving/tricks.
+      // Keep native keyboard activation for menu buttons, but allow the game
+      // shortcuts while a trick icon has focus during active riding.
+      const focusedButton=e.target?.closest?.("button");
+      if(focusedButton && !(lastPhase.current==="playing" && focusedButton.closest(".snow64-button-pad"))) return;
       const key=e.key.toLowerCase();
       const block=[" ","arrowleft","arrowright","arrowup","arrowdown"];
       if(block.includes(key))e.preventDefault();
@@ -2656,7 +2659,15 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",blur);};
   },[act,start,pause]);
   const currentBest=Math.max(best,hud.peakScore);
-  return <main data-rider={rider} data-rider-ready={riderReady} data-game-phase={phase} onContextMenu={e=>{if(mobile)e.preventDefault();}} style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif",touchAction:mobile?"none":"auto",overscrollBehavior:"none",userSelect:mobile?"none":"auto",WebkitUserSelect:mobile?"none":"auto"}}>
+  return <main data-rider={rider} data-rider-ready={riderReady} data-game-phase={phase}
+    onClickCapture={e=>{
+      // Desktop pointer clicks leave native buttons focused, which causes the
+      // global key handler to ignore its subsequent keydown events. Remove
+      // pointer-created focus only, preserving Tab/keyboard accessibility and
+      // existing trick, Ollie hold, pause and settings click handlers.
+      if(e.detail>0) e.target?.closest?.("button")?.blur();
+    }}
+    onContextMenu={e=>{if(mobile)e.preventDefault();}} style={{position:"fixed",inset:0,overflow:"hidden",background:"#bedae7",color:"#ffffff",fontFamily:"Arial, Helvetica, sans-serif",touchAction:mobile?"none":"auto",overscrollBehavior:"none",userSelect:mobile?"none":"auto",WebkitUserSelect:mobile?"none":"auto"}}>
     <style>{`
       @keyframes snowboardPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
       @keyframes snowboardFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}

@@ -54,11 +54,12 @@ const FLOATING_PILL = {
   touchAction:"manipulation",textShadow:"0 1px 0 #ffffffa6",
 };
 
-function WelcomeToggle({label,checked,onClick}) {
+/** Unicode-only, fully accessible pink/gray cloud settings controls. */
+function WelcomeIconToggle({symbol,label,checked,onClick}) {
   return <button type="button" onClick={onClick} aria-pressed={checked}
-    style={{...FLOATING_PILL,padding:"8px 11px",minHeight:33,
-      background:checked?"linear-gradient(125deg,#c4f6e0ef,#e7e9ffef)":"linear-gradient(125deg,#ffebefef,#e8eaffef)"}}>
-    {label}: {checked?"ON":"OFF"}
+    aria-label={`${label}: ${checked?"on":"off"}`} title={`${label}: ${checked?"ON":"OFF"}`}
+    className={`snow360-settings-icon-btn ${checked?"is-on":"is-off"}`}>
+    <span className="snow360-settings-icon-glyph" aria-hidden="true">{symbol}</span>
   </button>;
 }
 
@@ -215,7 +216,14 @@ export default function Snow64Welcome(){
             objectFit:"contain",userSelect:"none"}}/>
       </div>
 
-      {stage==="ready" ? <div className="snow360-start-floating" style={{
+      {stage==="ready" ? <div className="snow360-start-floating"
+        onClickCapture={e=>{
+          // Keep desktop keyboard shortcuts available after selecting a mode:
+          // pointer-activated buttons must not retain keyboard focus.
+          // Keyboard/Tab activation (detail 0) keeps normal accessible focus.
+          if(e.detail>0) e.target?.closest?.("button")?.blur();
+        }}
+        style={{
         position:"absolute",zIndex:5,left:"50%",
         bottom:mobile?"max(15px,env(safe-area-inset-bottom))":"clamp(18px,4.7vh,65px)",
         transform:"translateX(-50%)",width:mobile?"min(83vw,330px)":"min(320px,88vw)",
@@ -228,23 +236,19 @@ export default function Snow64Welcome(){
           style={{display:settingsOpen?"flex":"none",flexDirection:"column",gap:9,
             maxHeight:mobile?"min(49dvh,360px)":"min(50dvh,380px)",
             overflowY:"auto",scrollbarWidth:"thin",padding:"2px 5px 6px"}}>
-          <div className="snow360-settings-trick-row" role="group" aria-label="Trick controls"
-            style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
-            <button type="button" aria-pressed={!trickButtons} onClick={()=>setTrickButtons(false)}
-              style={{...FLOATING_PILL,padding:"10px 3px",fontSize:10,
-                background:!trickButtons?"linear-gradient(120deg,#ffe0a8,#ffd9ce)":FLOATING_PILL.background}}>
-              ✎ DRAW TRICKS
-            </button>
-            <button type="button" aria-pressed={trickButtons} onClick={()=>setTrickButtons(true)}
-              style={{...FLOATING_PILL,padding:"10px 3px",fontSize:10,
-                background:trickButtons?"linear-gradient(120deg,#ffe0a8,#ffd9ce)":FLOATING_PILL.background}}>
-              ▦ TRICK BUTTONS
-            </button>
-          </div>
-          <div className="snow360-settings-toggle-row" style={{display:"flex",gap:5,justifyContent:"center",flexWrap:"wrap"}}>
-            <WelcomeToggle label="SFX" checked={soundOn} onClick={()=>setSoundOn(v=>!v)}/>
-            <WelcomeToggle label="MUSIC" checked={musicOn} onClick={()=>setMusicOn(v=>!v)}/>
-            <WelcomeToggle label="N64 FILTER" checked={retro} onClick={()=>setRetro(v=>!v)}/>
+          {/* Every option is a circular Unicode-only cloud. The selected
+              trick-control mode is pink; unselected and OFF toggles are gray. */}
+          <div className="snow360-settings-icon-grid" role="group" aria-label="Welcome settings">
+            <WelcomeIconToggle symbol="✎" label="Draw tricks"
+              checked={!trickButtons} onClick={()=>setTrickButtons(false)}/>
+            <WelcomeIconToggle symbol="▦" label="Trick buttons"
+              checked={trickButtons} onClick={()=>setTrickButtons(true)}/>
+            <WelcomeIconToggle symbol="⌁" label="Sound effects"
+              checked={soundOn} onClick={()=>setSoundOn(v=>!v)}/>
+            <WelcomeIconToggle symbol="♫" label="Music"
+              checked={musicOn} onClick={()=>setMusicOn(v=>!v)}/>
+            <WelcomeIconToggle symbol="▧" label="N64 filter"
+              checked={retro} onClick={()=>setRetro(v=>!v)}/>
           </div>
           <Snow360RiderSecret rider={rider} onChange={setRider} tone="light"/>
         </div>
