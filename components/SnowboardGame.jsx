@@ -692,6 +692,7 @@ function initialState(cameraMode = 0) {
     mushroom:null, mushroomTime:0, mushroomCooldownTime:-200, mushroomCooldownDistance:-1000,
     mushroomCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
     frostHover:false, frostAutoIndex:0, frostPaidTricks:0, frostCollisionGrace:0,
+    frostEnter:0, frostExitLift:0,
     frostCarveStart:0, frostCarveCenter:0, frostCarveDirection:1, frostRockTargetId:null,
     scoreGainEvents:[],
     rockExplosions:[], rockShattered:0,
@@ -767,6 +768,10 @@ function snowRemountMotion(rec, rider, board, returnTo) {
  */
 const FROST_CAMERA_INTRO_SECONDS = 1.15;
 const FROST_CAMERA_RETURN_SECONDS = 3;
+// Preserve the character's last automatic trick before the magic expires.
+const FROST_AUTO_TRICK_END_BUFFER = 1.45;
+// Keep dramatic camera shots out of the ice-cream-tree trunks and raised banks.
+const FROST_CAMERA_SAFE_X = 12.25;
 const FROST_CAMERA_SHOTS = [
   // Trick details: low front/side angles with both bindings visible.
   {kind:"trick",yaw:2.10,elevation:.15,radius:4.65,lookHeight:.38},
@@ -893,8 +898,12 @@ function beginFrostHover(s, supportHeight) {
   s.frostCollisionGrace = 0;
   s.recovery = null;
   s.inAir = true;
-  s.worldY = Math.max(s.worldY, supportHeight + FROST_HOVER_HEIGHT);
-  s.air = Math.max(FROST_HOVER_HEIGHT, s.worldY - supportHeight);
+  // Enter smoothly. Teleporting the physical board up by 1.28m in one frame
+  // made the rider and camera visibly pop at the start of Frost Shroom.
+  s.frostEnter = 0;
+  s.frostExitLift = 0;
+  s.worldY = Math.max(s.worldY, supportHeight + .08);
+  s.air = Math.max(.08, s.worldY - supportHeight);
   s.peakAir = s.air;
   s.vy = 0;
   s.flightTime = 0;
@@ -917,6 +926,10 @@ function beginFrostHover(s, supportHeight) {
 
 function finishFrostHover(s, supportHeight) {
   if (!s.frostHover) return;
+  // Physically end hover immediately, but visually ease the last meter back to
+  // the snow. Collision detection remains at the real ground surface.
+  s.frostExitLift = clamp(s.worldY - supportHeight, 0, 2.0);
+  s.frostEnter = 0;
   s.frostHover = false;
   s.frostCollisionGrace = FROST_POST_SHIELD_SECONDS;
   s.inAir = false;
@@ -1148,6 +1161,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
 
     if (playing) {
       s.t += dt;
+      // The rendered board drops gently after boost without changing collision
+      // math. Clearing the offset exponentially prevents a final visible snap.
+      if(!s.frostHover && s.frostExitLift>0){
+        s.frostExitLift *= Math.exp(-dt*7.0);
+        if(s.frostExitLift<.006)s.frostExitLift=0;
+      }
       // Endless survival timer: drains every frame, even while chasing a lost board.
       s.drainRate=snowDrainPerSecond(Math.max(0,-s.z));
       s.score=Math.max(0,s.score-s.drainRate*dt);
@@ -1319,14 +1338,19 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
           const flipProgress = s.trick ? clamp(s.trick.t / s.trick.duration,0,1) : 0;
           const flipLift = s.trick?.flip ? Math.sin(Math.PI * flipProgress) * .85 : 0;
           const hoverFloor = snowSurfaceAt(s.x,s.z,localChunks,groundY).height;
-          const hoverTarget = hoverFloor + FROST_HOVER_HEIGHT + Math.sin(s.t * 6.8) * FROST_HOVER_BOB + flipLift;
-          s.worldY = lerp(s.worldY, hoverTarget, Math.min(1,dt * 12));
+          // Ease to full hover over 0.5 seconds. Preserve the existing gentle
+          // bob and flip lift once the entrance is complete.
+          s.frostEnter=Math.min(1,(s.frostEnter||0)+dt/.50);
+          const hoverBlend=smoothstep(s.frostEnter);
+          const hoverTarget=hoverFloor+.08+(FROST_HOVER_HEIGHT-.08)*hoverBlend
+            + Math.sin(s.t*6.8)*FROST_HOVER_BOB*hoverBlend + flipLift*hoverBlend;
+          s.worldY=lerp(s.worldY,hoverTarget,Math.min(1,dt*15));
           s.air = Math.max(0, s.worldY - hoverFloor);
           s.peakAir = Math.max(s.peakAir,s.air);
           s.flightTime += dt;
           // Keep a maximum of one ahead: manual mobile/keyboard input is still
           // accepted and starts right after the current animation finishes.
-          if (!s.trick && s.airQueue.length === 0) {
+          if (s.powerTime>FROST_AUTO_TRICK_END_BUFFER && !s.trick && s.airQueue.length === 0) {
             const key = FROST_AUTO_TRICKS[s.frostAutoIndex++ % FROST_AUTO_TRICKS.length];
             const definition = TRICKS.find(t => t.key === key);
             if (definition) enqueueAirTrick(s,definition);
@@ -1510,7 +1534,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
       }
     }
     if (root.current && stance.current && board.current && riderCarrier.current && riderModel.current) {
-      root.current.position.set(s.x, visualY + .14, s.z);
+      root.current.position.set(s.x, visualY + .14 + (s.frostHover?0:(s.frostExitLift||0)), s.z);
       // During a wipeout the normal board disappears; a second, physically
       // independent copy renders in world space until the rider remounts.
       board.current.visible = !s.recovery;
@@ -1708,7 +1732,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     // Distant loose boards may leave frame; tight rider framing is intentional.
     const offsets=[[-3.0,2.25,5.6],mobile?[-.25,2.65,7.6]:[-.7,3.15,10.5],[-6.1,4.2,12.5]];
     const off=offsets[s.cameraMode];
-    const followLift=Math.max(0,visualY-cy);
+    const followLift=Math.max(0,visualY-cy+(s.frostExitLift||0));
     const normalLook=new THREE.Vector3(s.x,cy+1.14+followLift*.92,s.z-1.3);
     const relX=off[0]+s.steer*.4;
     const relY=off[1]-1.14;
@@ -1892,8 +1916,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
       look.y+Math.sin(elevation)*radius,
       look.z+Math.cos(azimuth)*projected,
     );
-    // Cinematic orbit must not put the lens beneath a raised snowbank.
-    if(frostMix>0)dest.y=Math.max(dest.y,groundY(dest.x,dest.z)+.75);
+    // Cinematic orbit stays inside the open riding corridor. Low-angle camera
+    // cuts used to enter the Sundae tree trunks or snowbanks near either wall.
+    if(frostMix>0){
+      dest.x=clamp(dest.x,-FROST_CAMERA_SAFE_X,FROST_CAMERA_SAFE_X);
+      dest.y=Math.max(dest.y,groundY(dest.x,dest.z)+1.12);
+    }
     const targetLook=camera.userData._look || (camera.userData._look=look.clone());
     // V28: eliminate the fast-movement camera lag. At Frost Shroom speed
     // (~60 world units/sec), smoothing the camera's WORLD position by 9/sec
@@ -1943,7 +1971,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
       // rock, while the board passes through the frame and shards explode.
       // The subsequent shot cuts back to the tracking camera automatically.
       const p=impactFocus;
-      camera.position.set(p.x+p.side*3.9,p.y+2.55,p.z-4.45);
+      const eyeX=clamp(p.x+p.side*3.9,-FROST_CAMERA_SAFE_X,FROST_CAMERA_SAFE_X);
+      const eyeZ=p.z-4.45;
+      camera.position.set(eyeX,Math.max(p.y+2.55,groundY(eyeX,eyeZ)+1.12),eyeZ);
       targetLook.set(p.x,p.y+.55,p.z);
       camera.lookAt(targetLook);
       camera.fov=mobile?55:51;
@@ -1986,6 +2016,16 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
 function Loading() {
   return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
 }
+// The old scene mounted BOTH the classic explosion renderer and the custom
+// ShatterBurst renderer for the same Frost Shroom collision. Besides doubling
+// the render cost, the classic renderer deleted events at 1.12s, truncating
+// the custom 1.75s shatter. Exactly one renderer is active at a time.
+function Snow360FrostShatterEffects({stateRef,mobile}){
+  const customObstacles=useSnow64Obstacles();
+  if(customObstacles)return <Snow64ObstacleShatterVFX stateRef={stateRef} groundY={groundY} mobile={mobile}/>;
+  return <Snow64ExplosionVFX stateRef={stateRef} mobile={mobile}/>;
+}
+
 function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
   return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
     <Snow360PerformanceRecorder phase={phase} stateRef={stateRef}/>
@@ -1999,8 +2039,7 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
     <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef} mobile={mobile}/>
-    <Snow64ExplosionVFX stateRef={stateRef} mobile={mobile}/>
-    <Snow64ObstacleShatterVFX stateRef={stateRef} groundY={groundY} mobile={mobile}/>
+    <Snow360FrostShatterEffects stateRef={stateRef} mobile={mobile}/>
     <FrostMushroom stateRef={stateRef}/>
     <Mountains stateRef={stateRef}/>
     <Snow360RiderBoundary key={`${rider}:${mobile}:${assetAttempt}`} onError={onRiderError}>
