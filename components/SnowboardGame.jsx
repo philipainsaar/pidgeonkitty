@@ -238,7 +238,7 @@ function Ramp({ x, z, index, height = 1.12, length = 3, superAir = false }) {
   );
 }
 
-/** Ice-cream Power collectible: optimized GLB, candy orb outline, no washed-out center. */
+/** Ice-cream Power: larger PBR GLB in a bright Fresnel bubble with a perfectly clear center. */
 function IcecreamPowerCollectible({stateRef,mobile=false}) {
   const asset=useSnowModel("icecreamPower");
   const group=useRef(null);
@@ -248,13 +248,13 @@ function IcecreamPowerCollectible({stateRef,mobile=false}) {
     const item=stateRef.current.icecreamPower;
     g.visible=!!item;
     if(!item)return;
-    g.position.set(item.x,groundY(item.x,item.z)+.92+Math.sin(clock.elapsedTime*3.5)*.20,item.z);
+    g.position.set(item.x,groundY(item.x,item.z)+1.05+Math.sin(clock.elapsedTime*3.0)*.18,item.z);
     g.rotation.y=clock.elapsedTime*1.4;
   });
   return <group ref={group} visible={false}>
     <Snow64IcecreamPowerAura mobile={mobile}/>
-    {asset ? <group position={[0,-.30,0]}>
-      <SnowGLBVisual asset={asset} type="icecreamPower" dimensions={[1.10,1.55,1.05]}/>
+    {asset ? <group position={[0,-.38,0]}>
+      <SnowGLBVisual asset={asset} type="icecreamPower" dimensions={[1.48,2.10,1.43]}/>
     </group> : <group position={[0,-.22,0]}>
       {/* Low-poly dessert fallback, never the old purple mushroom. */}
       <mesh position={[0,.28,0]} rotation={[0,0,Math.PI]}>
@@ -1412,7 +1412,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
                 const earned=outcome.basePoints*Math.min(5,Math.max(1,s.combo));
                 s.score+=earned;
                 recordSnowPoints(s,earned);
-                const spawnedIcecreamPower=maybeSpawnIcecreamPower(s,localChunks);
+                const spawnedIcecreamPower=maybeSpawnIcecreamPower(s,[...localChunks,getSnowChunk(snowChunkIndex(-s.z)+2)]);
                 const turns=((s.airYaw/Math.PI)%2+2)%2;
                 if(turns>.8&&turns<1.2)s.fakie=!s.fakie;
                 s.lastText=spawnedIcecreamPower ? "✦ RARE ICE-CREAM POWER AHEAD! ✦" : `CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
@@ -1484,7 +1484,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
           for (const chunk of localChunks) for (const coin of chunk.coins) {
             if (collectedRef.current.has(coin.id)) continue;
             if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
-              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; recordSnowPoints(s,TOKEN_POINTS); const spawnedIcecreamPower=maybeSpawnIcecreamPower(s,localChunks); onSound("pickup");
+              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; recordSnowPoints(s,TOKEN_POINTS); const spawnedIcecreamPower=maybeSpawnIcecreamPower(s,[...localChunks,getSnowChunk(snowChunkIndex(-s.z)+2)]); onSound("pickup");
               s.lastText = spawnedIcecreamPower ? "✦ RARE ICE-CREAM POWER AHEAD! ✦" : `SHRED TOKEN +${TOKEN_POINTS}`; s.textUntil = s.t + (spawnedIcecreamPower ? 2 : 1.25);
             }
           }

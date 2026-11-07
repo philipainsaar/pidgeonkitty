@@ -1,76 +1,100 @@
 "use client";
 
-import {useEffect,useMemo,useRef} from "react";
-import {useFrame} from "@react-three/fiber";
+import { useEffect, useMemo } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
-/** Very light rim lighting around Ice-cream Power, never over its center. */
-function makeOrbRimTexture(){
-  const n=96;
-  const bytes=new Uint8Array(n*n*4);
-  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
-    const dx=(x+.5-n/2)/(n/2),dy=(y+.5-n/2)/(n/2);
-    const r=Math.hypot(dx,dy);
-    // Transparent center. No inner additive glow to bleach the ice-cream textures.
-    const rim=Math.exp(-Math.pow((r-.79)/.105,2));
-    const edge=1-THREE.MathUtils.smoothstep(r,.92,1.02);
-    const offset=(x+y*n)*4;
-    bytes[offset]=255;bytes[offset+1]=255;bytes[offset+2]=255;
-    bytes[offset+3]=Math.round(Math.max(0,Math.min(1,rim*edge))*255);
-  }
-  const tex=new THREE.DataTexture(bytes,n,n,THREE.RGBAFormat);
-  tex.magFilter=tex.minFilter=THREE.LinearFilter;
-  tex.wrapS=tex.wrapT=THREE.ClampToEdgeWrapping;
-  tex.generateMipmaps=false;
-  tex.needsUpdate=true;
-  return tex;
+/**
+ * Snow360 Ice-cream Power | SINGLE-BUBBLE FIX.
+ *
+ * The prior version stacked a billboard halo, a glass sphere and a hover ring.
+ * In the brightly lit snowy course, those looked like multiple white bubbles.
+ *
+ * This component renders EXACTLY ONE bubble: one Fresnel-shaded sphere.
+ * No sprite, back shell, ground torus, extra orb, opaque glass or lights.
+ * The center is transparent so the PBR ice-cream GLB remains fully visible.
+ *
+ * Drop-in replacement for components/Snow64IcecreamPowerAura.jsx.
+ * No changes to IcecreamPower.glb, SnowboardGame.jsx or power-up rules.
+ */
+
+function createSingleBubbleMaterial(mobile) {
+  return new THREE.ShaderMaterial({
+    name: "IcecreamPower_SINGLE_ClearPastelBubble",
+    uniforms: {
+      uTime: { value: 0 },
+      uOpacity: { value: mobile ? 0.69 : 0.77 },
+    },
+    vertexShader: `
+      varying vec3 vViewNormal;
+      varying vec3 vToCamera;
+      varying vec3 vLocalPosition;
+      void main() {
+        vec4 p = modelViewMatrix * vec4(position, 1.0);
+        vViewNormal = normalize(normalMatrix * normal);
+        vToCamera = normalize(-p.xyz);
+        vLocalPosition = position;
+        gl_Position = projectionMatrix * p;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uOpacity;
+      varying vec3 vViewNormal;
+      varying vec3 vToCamera;
+      varying vec3 vLocalPosition;
+      void main() {
+        // One continuous Fresnel rim: no second ring, no center shading.
+        float facing = abs(dot(normalize(vViewNormal), normalize(vToCamera)));
+        float rim = pow(1.0 - clamp(facing, 0.0, 1.0), 2.1);
+        if (rim < 0.015) discard;
+
+        // Soft animated candy reflections, kept saturated instead of white.
+        float wave = 0.5 + 0.5 * sin(uTime * 0.58 + vLocalPosition.y * 3.7
+                                      + vLocalPosition.x * 1.9);
+        vec3 pink = vec3(1.0, 0.40, 0.77);
+        vec3 lilac = vec3(0.73, 0.55, 1.0);
+        vec3 mint = vec3(0.48, 0.92, 0.94);
+        vec3 tint = mix(pink, lilac, wave * 0.60);
+        tint = mix(tint, mint, (0.5 + 0.5 * sin(uTime * 0.43 + vLocalPosition.y * 4.0)) * 0.17);
+
+        float pulse = 0.95 + 0.05 * sin(uTime * 2.0);
+        float alpha = clamp(rim * uOpacity * pulse, 0.0, 0.80);
+        gl_FragColor = vec4(tint, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.NormalBlending,
+    side: THREE.FrontSide,
+    toneMapped: false,
+  });
 }
 
-export default function Snow64IcecreamPowerAura({mobile=false}){
-  const rimRef=useRef(null);
-  const outlineRef=useRef(null);
-  const tex=useMemo(makeOrbRimTexture,[]);
-  const glow=useMemo(()=>new THREE.SpriteMaterial({
-    name:"IcecreamPower_Outer_Pink_Rim",
-    map:tex,color:"#ffd3ee",transparent:true,
-    opacity:mobile?.10:.15,
-    depthTest:true,depthWrite:false,
-    blending:THREE.NormalBlending,
-    toneMapped:true,
-  }),[tex,mobile]);
-  const glassLine=useMemo(()=>new THREE.MeshBasicMaterial({
-    name:"IcecreamPower_Glass_Outline_Only",
-    color:"#ffe9fa",transparent:true,opacity:mobile?.12:.17,
-    depthTest:true,depthWrite:false,
-    blending:THREE.NormalBlending,
-    side:THREE.DoubleSide,
-    toneMapped:true,
-  }),[mobile]);
-  const baseLine=useMemo(()=>new THREE.MeshBasicMaterial({
-    name:"IcecreamPower_Pastel_Base_Ring",
-    color:"#ffc1e9",transparent:true,opacity:mobile?.18:.23,
-    depthTest:true,depthWrite:false,
-    blending:THREE.NormalBlending,
-    toneMapped:true,
-  }),[mobile]);
-  useFrame(({clock})=>{
-    const t=clock.elapsedTime;
-    const pulse=1+.018*Math.sin(t*1.5);
-    if(rimRef.current)rimRef.current.scale.set(2.36*pulse,2.36*pulse,1);
-    if(outlineRef.current)outlineRef.current.rotation.z=Math.sin(t*.7)*.05;
-    glow.opacity=(mobile?.10:.15)*(.95+.05*Math.sin(t*1.45));
+export default function Snow64IcecreamPowerAura({ mobile = false }) {
+  const bubbleMaterial = useMemo(() => createSingleBubbleMaterial(mobile), [mobile]);
+
+  useFrame(({ clock }) => {
+    bubbleMaterial.uniforms.uTime.value = clock.elapsedTime;
   });
-  useEffect(()=>()=>{tex.dispose();glow.dispose();glassLine.dispose();baseLine.dispose();},[tex,glow,glassLine,baseLine]);
-  return <group name="IcecreamPower_SubtleClearOrb">
-    {/* Sprite is a hollow rim. No white additive flash or luminous center. */}
-    <sprite ref={rimRef} material={glow} position={[0,.52,-.68]}
-      scale={[2.36,2.36,1]} renderOrder={-1}/>
-    {/* No glass-fill surface; an outline suggests an orb without washing out the model. */}
-    <mesh ref={outlineRef} position={[0,.52,0]} material={glassLine}>
-      <torusGeometry args={[.95,.012,4,44]}/>
-    </mesh>
-    <mesh position={[0,-.26,0]} rotation={[-Math.PI/2,0,0]} material={baseLine}>
-      <torusGeometry args={[.82,.016,4,32]}/>
-    </mesh>
-  </group>;
+
+  useEffect(() => () => bubbleMaterial.dispose(), [bubbleMaterial]);
+
+  // Fits around the 2.10-unit-tall IcecreamPower.glb placed at y=-0.38.
+  // Keep ONE geometry / ONE material / ONE shell only.
+  return (
+    <group name="IcecreamPower_OneClearGlowingBubble">
+      <mesh
+        name="IcecreamPower_SingleBubble"
+        position={[0, 0.66, 0]}
+        scale={[1.48, 1.52, 1.48]}
+        material={bubbleMaterial}
+        renderOrder={3}
+        frustumCulled={false}
+      >
+        <sphereGeometry args={[1, mobile ? 24 : 32, mobile ? 16 : 24]} />
+      </mesh>
+    </group>
+  );
 }

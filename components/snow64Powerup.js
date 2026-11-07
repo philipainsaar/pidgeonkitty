@@ -10,13 +10,15 @@ export function recordSnowPoints(s,amount){
   s.scoreGainEvents=s.scoreGainEvents.filter(e=>s.t-e.at<ICECREAM_GAIN_WINDOW);
 }
 
-/** Pick a reachable collectible spot, safely clear of ramps and rocks. */
+/** Spawn 90-135 downhill units ahead; avoid ramps/rocks in all look-ahead chunks. */
 export function chooseSafeIcecreamPowerSpot(s,chunks=[]){
   const ramps=chunks.flatMap(c=>c.ramps||[]);
   const rocks=chunks.flatMap(c=>c.rocks||[]);
   const sides=((s.icecreamPowerCount||0)%2)?[-1,1]:[1,-1];
   let best=null;
-  for(const dz of [24,30,36,43]){
+  // Start about 4x farther downhill than the old near-rider spawn.
+  // 90-135 world units gives time to see the glowing collectible and steer toward it.
+  for(const dz of [105,120,90,135]){
     const z=s.z-dz;
     for(const side of sides){
       for(const offset of [2.4,3.7,5.2,6.6]){
@@ -25,7 +27,7 @@ export function chooseSafeIcecreamPowerSpot(s,chunks=[]){
         if(lateral<1.65||lateral>6.75)continue;
         if(ramps.some(r=>Math.abs(z-r.z)<(r.length??3)*.5+7&&Math.abs(x-r.x)<5.4))continue;
         if(rocks.some(r=>Math.abs(z-r.z)<(r.size+2.8)&&Math.abs(x-r.x)<(r.size+2.6)))continue;
-        const score=Math.abs(lateral-2.9)*2.7+Math.abs(dz-27)*.11;
+        const score=Math.abs(lateral-2.9)*2.7+Math.abs(dz-105)*.11;
         if(!best||score<best.score)best={x,z,score};
       }
     }
