@@ -1,0 +1,56 @@
+/* SNOW360 V16: pure Unicode trick symbols over your existing pink cloud frames.
+ * Visual-only override. Does not touch gameplay, touch handlers, jump charging,
+ * button accessibility, or the mobile/right-side trick strip.
+ * This stylesheet loads AFTER snow360-cloud-buttons.css in app/layout.jsx.
+ */
+main .snow64-button-pad button.snow64-iconbtn > svg,
+main .snow64-button-pad button.snow64-iconbtn > span {
+  display: none !important;
+}
+
+main .snow64-button-pad button.snow64-iconbtn::before {
+  content: "✧";
+  display: block !important;
+  position: relative !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+  font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "Apple Symbols", "DejaVu Sans", sans-serif !important;
+  font-size: 28px !important;
+  font-style: normal !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  letter-spacing: -0.03em !important;
+  text-align: center !important;
+  color: #fffaff !important;
+  -webkit-text-stroke: 0 !important;
+  text-shadow: 0 1px 2px #d74b9e, 0 0 3px rgba(255,255,255,.55) !important;
+  filter: none !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  font-variant-emoji: text;
+}
+
+/* Spins: a clockwise/turning arrow, with superscripts for repeated turns. */
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform 180 degree spin"]::before {content:"↷";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform 360 degree spin"]::before {content:"⟳";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform 720 degree spin"]::before {content:"⟳²";font-size:23px !important;}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform 1080 degree spin"]::before {content:"⟳³";font-size:23px !important;}
+
+/* Grabs and aerial tricks. These remain one simple scalable Unicode glyph each. */
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform Method grab"]::before {content:"✧";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform Indy grab"]::before {content:"❀";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform Backflip"]::before {content:"⤴";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform Cork 720"]::before {content:"⥀";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform Tail grab"]::before {content:"↙";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform Nose grab"]::before {content:"↗";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform Frontflip"]::before {content:"⤵";}
+main .snow64-button-pad button.snow64-iconbtn[aria-label="Ollie jump; hold to charge"]::before {content:"↑";}
+
+@media (max-width: 720px), (pointer: coarse) {
+  main .snow64-button-pad button.snow64-iconbtn::before {font-size:26px !important;}
+  main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform 720 degree spin"]::before,
+  main .snow64-button-pad button.snow64-iconbtn[aria-label="Perform 1080 degree spin"]::before {font-size:22px !important;}
+}

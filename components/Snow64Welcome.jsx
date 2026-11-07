@@ -228,8 +228,6 @@ export default function Snow64Welcome(){
           style={{display:settingsOpen?"flex":"none",flexDirection:"column",gap:9,
             maxHeight:mobile?"min(49dvh,360px)":"min(50dvh,380px)",
             overflowY:"auto",scrollbarWidth:"thin",padding:"2px 5px 6px"}}>
-          <div className="snow360-settings-heading" style={{font:"700 14px Fredoka,system-ui,sans-serif",color:"#426387",
-            letterSpacing:".16em",textShadow:"0 1px 5px #ffffff"}}>SETTINGS ✦</div>
           <div className="snow360-settings-trick-row" role="group" aria-label="Trick controls"
             style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
             <button type="button" aria-pressed={!trickButtons} onClick={()=>setTrickButtons(false)}
@@ -276,14 +274,10 @@ export default function Snow64Welcome(){
               borderRadius:999,background:settingsOpen
                 ? "linear-gradient(125deg,#ffe4b3,#f7c9e7 57%,#d6d3ff)"
                 : "linear-gradient(125deg,#fce7f6,#e9dfff 57%,#ceeaff)",
-              display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1}}>
-            <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"
-              style={{transform:settingsOpen?"rotate(55deg)":"rotate(0deg)",transition:"transform .35s ease"}}>
-              <path d="M12 2.7 14 3.4l.4 2.1 1.8 1 2.1-.7 1.5 1.6-.8 2 1 1.8 2.1.4.6 2.1-.6 2.1-2.1.4-1 1.8.8 2-1.5 1.6-2.1-.7-1.8 1-.4 2.1-2 .7-2-.7-.4-2.1-1.8-1-2.1.7-1.5-1.6.8-2-1-1.8-2.1-.4-.6-2.1.6-2.1 2.1-.4 1-1.8-.8-2 1.5-1.6 2.1.7 1.8-1 .4-2.1Z"/>
-              <circle cx="12" cy="12" r="3.25"/>
-            </svg>
-            <span style={{font:"900 7px Fredoka,system-ui,sans-serif",letterSpacing:".02em"}}>SETTINGS</span>
+              display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
+              fontFamily:'Arial, "Segoe UI Symbol", sans-serif',fontSize:35,
+              fontWeight:400,lineHeight:1,color:"#fffaff"}}>
+            ❄
           </button>
         </div>
       </div> : <div style={{position:"absolute",left:"50%",bottom:"min(12vh,110px)",

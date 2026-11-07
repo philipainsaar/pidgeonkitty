@@ -2,6 +2,7 @@ import { Fredoka, Lilita_One } from "next/font/google";
 import "./snow360-fonts.css";
 import "./snow360-cloud-buttons.css";
 import "./snow360-hud-effects.css";
+import "./snow360-trick-unicode.css";
 import Snow360HudEffects from "../components/Snow360HudEffects";
 
 // Fonts are optimized and self-hosted by Next.js on build.
