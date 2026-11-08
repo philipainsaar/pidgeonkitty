@@ -206,8 +206,10 @@ export function makeTokenRushSkyStarTrail(state,collected){
   const center=snowChunkIndex(-state.z);
   const chunks=Array.from({length:5},(_,i)=>getSnowModeChunk(center+i,"token")).filter(Boolean);
   const startSpeed=Math.max(0,state.speed||0);
-  const maxSpeed=21.5*tokenRushScoreSpeedScale(state.score)*
-    (state.tokenRushPowerTier===2 && state.tokenStreak>=10 ? 2 : 1);
+  const maxSpeed=state.tokenRushPowerCruise>0
+    ? state.tokenRushPowerCruise
+    : 21.5*tokenRushScoreSpeedScale(state.peakScore)*
+      (state.tokenRushPowerTier===2 && state.tokenStreak>=10 ? 2 : 1);
   const predictedDistance=time=>maxSpeed*time+(startSpeed-maxSpeed)*(1-Math.exp(-2*time))/2;
   const lifts=new Map();
   for(const coin of chunks.flatMap(c=>c.coins)){
@@ -276,14 +278,70 @@ export function getSnowModeChunk(index,mode="standard") {
   return data;
 }
 
+/** Display only the stars in the POWER'S actual short collection queue.
+ * Not the off-route stars in other lanes or distant future chunks.
+ * Physics also checks this list, so no invisible star can award points.
+ */
+export function refreshTokenRushPowerStarQueue(state,chunks,collected){
+  if(!state||state.gameMode!=="token"||state.powerTime<=0||!state.icecreamHover)return false;
+  const previous=state.tokenRushPowerVisibleIds||new Set();
+  const upcoming=[];
+  const seen=new Set();
+  for(const chunk of chunks||[])for(const token of chunk?.coins||[]){
+    if(seen.has(token.id)||token.z>=state.z+1.5 || state.z-token.z>95)continue;
+    seen.add(token.id);
+    if(collected?.has(token.id)||state.missedTokens?.has(token.id)||state.replacedTokens?.has(token.id))continue;
+    // Sky Surf only displays real airborne collectibles along its flight.
+    if(state.icecreamScene===2 && state.tokenRushSkyStarLifts?.size &&
+       !state.tokenRushSkyStarLifts.has(token.id))continue;
+    upcoming.push(token);
+  }
+  upcoming.sort((a,b)=>b.z-a.z);
+  const next=new Set(upcoming.slice(0,3).map(c=>c.id));
+  state.tokenRushRecentPowerPickups ||= new Map();
+  for(const [id,at] of state.tokenRushRecentPowerPickups){
+    if(state.t-at<0.55)next.add(id);
+    else state.tokenRushRecentPowerPickups.delete(id);
+  }
+  const changed=next.size!==previous.size||[...next].some(id=>!previous.has(id));
+  if(changed){
+    state.tokenRushPowerVisibleIds=next;
+    state.tokenOmitVersion=(state.tokenOmitVersion||0)+1;
+  }
+  return changed;
+}
+
 /** The only source of points in Token Rush is collecting a star token. */
 export function collectTokenRush(state){
   state.tokenStreak=(state.tokenStreak||0)+1;
+  state.tokenRushConsecutiveMisses=0;
   // x5 is attained at five uninterrupted real tokens; x10 at ten.
   state.tokenMultiplier=Math.min(10,state.tokenStreak);
   return TOKEN_RUSH_BASE_POINTS*state.tokenMultiplier;
 }
-/** No point deduction: misses/wipeouts remove the streak instead. */
+/** A real missed star during NORMAL Token Rush riding drains the score.
+ * The penalty grows smoothly with the player's best score and pace, rather
+ * than becoming easier if the score was recently depleted. The first few
+ * misses are survivable, but ignoring the route eventually causes game over.
+ * Power-up auto-collection and recovery/wipeouts are deliberately excluded.
+ */
+export function tokenRushMissPenalty(state){
+  const high=Math.max(0,Number(state?.peakScore)||0,Number(state?.score)||0);
+  const momentum=Math.min(1,high/65000);
+  const pace=Math.max(0,tokenRushScoreSpeedScale(high)-1)/0.32;
+  const loss=55+235*momentum+Math.min(145,high/720)+75*pace;
+  return Math.max(55,Math.round(loss/5)*5);
+}
+export function penalizeMissedTokenRush(state){
+  if(!state||state.gameMode!=="token"||state.powerTime>0||state.icecreamHover||state.recovery)return 0;
+  const penalty=tokenRushMissPenalty(state);
+  state.score=Math.max(0,(state.score||0)-penalty);
+  state.tokenRushConsecutiveMisses=(state.tokenRushConsecutiveMisses||0)+1;
+  return penalty;
+}
+
+/** Combo resets on missed stars or wipeouts, but only uncollected normal-play
+ * stars carry the score penalty above. Keep the life system independent. */
 export function missTokenRush(state){
   // Reset the combo AND the temporary powered speed bonus. Earned score
   // remains, so the permanent downhill pace doesn't drop after a miss.
@@ -306,7 +364,7 @@ export function missTokenRush(state){
 /** Smooth arcade difficulty curve based on total earned points.
  * The player gradually builds momentum, rather than changing speed in
  * abrupt combo tiers. Tops out at +32% for fair mobile/desktop play.
- * A broken streak resets the score multiplier but not the lifetime score.
+ * A broken streak resets the score multiplier but not the peak-score pace.
  */
 export function tokenRushScoreSpeedScale(score=0){
   return 1 + 0.32*(1-Math.exp(-Math.max(0,Number(score)||0)/48000));

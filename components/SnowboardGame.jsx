@@ -13,7 +13,7 @@ import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushP
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower, ICECREAM_DURATION } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
-import { getSnowModeChunk, applyTokenRushRecoveryRoute, makeTokenRushRecoveryStraight, makeTokenRushSkyStarTrail, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, maybeSpawnTokenRushIcecreamPower, tokenRushScoreSpeedScale, tokenRushArcadeHandling, tokenRushMagnetCanCollect, sweptStarTokenPickup } from "./snow64TokenRush";
+import { getSnowModeChunk, applyTokenRushRecoveryRoute, makeTokenRushRecoveryStraight, makeTokenRushSkyStarTrail, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, penalizeMissedTokenRush, refreshTokenRushPowerStarQueue, maybeSpawnTokenRushIcecreamPower, tokenRushScoreSpeedScale, tokenRushArcadeHandling, tokenRushMagnetCanCollect, sweptStarTokenPickup } from "./snow64TokenRush";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
@@ -589,7 +589,16 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
     ? applyTokenRushRecoveryRoute(baseData,stateRef.current) : baseData,
     [baseData,gameMode,stateRef,tokenOmitVersion]);
   const visibleCoins=useMemo(()=>gameMode==="token"
-    ? data.coins.filter(coin=>!stateRef.current?.replacedTokens?.has(coin.id))
+    ? data.coins.filter(coin=>{
+        const s=stateRef.current;
+        if(s?.replacedTokens?.has(coin.id))return false;
+        // During Ice Cream Power show ONLY the live collection queue plus
+        // the just-collected stars, so real 3D bursts can finish playing.
+        if(s?.powerTime>0 && s.icecreamHover){
+          return !!s.tokenRushPowerVisibleIds?.has(coin.id);
+        }
+        return true;
+      })
     : data.coins,[data,gameMode,stateRef,tokenOmitVersion]);
   // Reuse the exact original holographic yellow 3D star meshes even in the
   // clouds. The visual groundY includes the same skyLift as the swept
@@ -832,7 +841,10 @@ function initialState(cameraMode = 1, gameMode = "standard") {
     x:0,z:0,air:0,worldY:0,vy:0,speed:15.8,velX:0,steer:0,t:0,launchSource:"none",launchSpeed:0,
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
     peakAir:0, flightTime:0, recovery:null,
-    gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0, tokenRushPowerTier:1, tokenOmitVersion:0, replacedTokens:new Set(),
+    gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0, tokenRushConsecutiveMisses:0,
+    tokenRushPowerTier:1, tokenOmitVersion:0, replacedTokens:new Set(),
+    tokenRushPowerVisibleIds:null, tokenRushRecentPowerPickups:new Map(),
+    tokenRushPowerCruise:0, tokenRushPowerBaseCruise:0,
     tokenRushExitGuideUntil:0, tokenRushExitGuideStart:0,
     tokenRushExitGuideTokensRemaining:0, tokenAbsorbs:[],
     tokenRushStraightStars:new Map(), tokenRushStraightRocks:new Map(),
@@ -856,7 +868,7 @@ function initialState(cameraMode = 1, gameMode = "standard") {
 function safeHud(s) {
   return {
     speed:Math.round(s.speed*3.6),
-    cameraMode:s.cameraMode, gameMode:s.gameMode, tokenStreak:s.tokenStreak, tokenMultiplier:s.tokenMultiplier, tokenOmitVersion:s.tokenOmitVersion||0, tokenRushPowerTier:s.tokenRushPowerTier||0, tokenScoreSpeed:tokenRushScoreSpeedScale(s.score), livesRemaining:Math.max(0,TOKEN_RUSH_MAX_HITS-s.hits),
+    cameraMode:s.cameraMode, gameMode:s.gameMode, tokenStreak:s.tokenStreak, tokenMultiplier:s.tokenMultiplier, tokenOmitVersion:s.tokenOmitVersion||0, tokenRushPowerTier:s.tokenRushPowerTier||0, tokenScoreSpeed:tokenRushScoreSpeedScale(s.peakScore), livesRemaining:Math.max(0,TOKEN_RUSH_MAX_HITS-s.hits),
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.max(0,Math.floor(-s.z)), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
     powerRemaining:s.powerTime, icecreamScene:s.powerTime>0?s.icecreamScene:0, shieldRemaining:s.icecreamCollisionGrace, icecreamPowerReady:!!s.icecreamPower, rockShattered:s.rockShattered, icecreamTokensCollected:s.icecreamTokensCollected||0,
@@ -1148,6 +1160,12 @@ function finishIcecreamHover(s, supportHeight, collected) {
   s.fakie = false;
   if(s.gameMode==="token"){
     s.tokenRushPowerTier=1;
+    s.tokenRushPowerCruise=0;
+    s.tokenRushPowerBaseCruise=0;
+    s.tokenRushPowerVisibleIds=null;
+    s.tokenRushRecentPowerPickups?.clear();
+    // Re-enable the full normal Star route when automatic collection ends.
+    s.tokenOmitVersion=(s.tokenOmitVersion||0)+1;
     // Continue toward the next REAL uncollected stars after hover ends.
     // Unlike the old two-second interpolated-line guide, this is tied to
     // actual collectible targets, decelerates the boost, and then fades out.
@@ -1219,6 +1237,8 @@ function icecreamTokenToChase(s,chunks,collected){
     // chase it, and don't choose a later, nearer-lane token over the next
     // star on the actual slalom course.
     if(collected.has(token.id) || s.missedTokens.has(token.id) || s.replacedTokens?.has(token.id))continue;
+    if(s.gameMode==="token" && s.powerTime>0 && s.tokenRushPowerVisibleIds &&
+       !s.tokenRushPowerVisibleIds.has(token.id))continue;
     const ahead=s.z-token.z;
     if(ahead < -1.5 || ahead > 85)continue;
     if(ahead < nearestAhead){nearestAhead=ahead;candidate=token;}
@@ -1253,10 +1273,10 @@ function tokenRushExitCarveVelocity(s,chunks,collected){
     TOKEN_RUSH_EXIT_MAX_LATERAL_SPEED);
 }
 
-function tokenRushRouteX(chunks,nextZ,fallback,skipped){
+function tokenRushRouteX(chunks,nextZ,fallback,skipped,allowed=null){
   let uphill=null,downhill=null;
   for(const chunk of chunks)for(const coin of chunk.coins){
-    if(skipped?.has(coin.id))continue;
+    if(skipped?.has(coin.id) || (allowed && !allowed.has(coin.id)))continue;
     if(coin.z>=nextZ && (!uphill || coin.z<uphill.z))uphill=coin;
     if(coin.z<=nextZ && (!downhill || coin.z>downhill.z))downhill=coin;
   }
@@ -1424,6 +1444,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       ? nearby.current.chunks.map(chunk=>applyTokenRushRecoveryRoute(chunk,s))
       : nearby.current.chunks;
     const playing=phaseRef.current==="playing";
+    if(playing && s.gameMode==="token" && s.icecreamHover && s.powerTime>0){
+      refreshTokenRushPowerStarQueue(s,localChunks,collectedRef.current);
+    }
     const left=keyRef.current.left?1:0,right=keyRef.current.right?1:0;
     const tuck=(keyRef.current.tuck || keyRef.current.touchTuck) && playing;
     let steerWanted=playing?clamp(right-left+(keyRef.current.steerAnalog||0),-1,1):0;
@@ -1498,8 +1521,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         s.icecreamExitLift *= Math.exp(-dt*(s.gameMode==="token"?3.8:7.0));
         if(s.icecreamExitLift<.006)s.icecreamExitLift=0;
       }
-      // Standard: the original score-drain survival. Token Rush: score is
-      // earned ONLY by picking up tokens; three wipeouts end the run instead.
+      // Standard retains continuous score-drain survival. Token Rush gains
+      // points from tokens but loses points when stars are missed during
+      // normal riding; score zero or three wipeouts can end the run.
       s.drainRate=s.gameMode==="token" ? 0 : snowDrainPerSecond(Math.max(0,-s.z));
       if(s.gameMode!=="token")s.score=Math.max(0,s.score-s.drainRate*dt);
       // Arcade warning only applies to Standard mode.
@@ -1575,7 +1599,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         if (s.powerTime > 0 && !s.icecreamHover) {
           beginIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
         }
-        const scoreSpeed=s.gameMode==="token"?tokenRushScoreSpeedScale(s.score):1;
+        const scoreSpeed=s.gameMode==="token"?tokenRushScoreSpeedScale(s.peakScore):1;
         // Arcade physics: normal pace grows gradually with *total score*.
         // Only a ten-star streak unlocks the temporary x2 Ice-cream boost.
         // No stacking (x4/x10), and breaking the streak removes it instantly.
@@ -1585,7 +1609,10 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         // instead of dropping the target by x2 on the exact expiry frame.
         // Never change Standard mode's speed curve.
         const tokenNormalCruise=(tuck ? (mobile ? 42 : 38) : 21.5)*scoreSpeed;
-        const tokenBoostCruise=21.5*scoreSpeed*tokenPowerBoost;
+        // Both Token Rush scenes use one identical powered cruise target.
+        // Camera/cloud-flight visuals do not alter horizontal speed.
+        const tokenBoostCruise=s.gameMode==="token" && s.powerTime>0 && s.tokenRushPowerCruise>0
+          ? s.tokenRushPowerCruise : 21.5*scoreSpeed*tokenPowerBoost;
         const boostWeight=s.gameMode==="token"&&s.powerTime>0
           ? smoothstep(s.powerTime/TOKEN_RUSH_POWER_BRAKE_SECONDS) : 0;
         const targetSpeed=s.gameMode==="token"
@@ -1603,7 +1630,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           : (s.powerTime>0 ? 3.6 : tuck ? (mobile?2.1:1.35) : 0.5);
         s.speed=lerp(s.speed,targetSpeed,Math.min(1,dt*acceleration));
         const tokenHandling=s.gameMode==="token"
-          ? tokenRushArcadeHandling(s.score) : null;
+          ? tokenRushArcadeHandling(s.peakScore) : null;
         // Icecream Hover is flagged as inAir for tricks, but it should steer like
         // a powerful snowboard, not inherit the weak normal airborne steering.
         const poweredCarve=s.icecreamHover && s.powerTime>0;
@@ -1629,7 +1656,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           // Leave the existing successful powered slalom path untouched.
           // The new live-star correction applies only AFTER power expires.
           const poweredPathX=tokenRushRouteX(localChunks,
-            s.z-s.speed*dt,s.x,s.replacedTokens);
+            s.z-s.speed*dt,s.x,s.replacedTokens,s.tokenRushPowerVisibleIds);
           const lateralLimit=TOKEN_RUSH_POWER_MAX_LATERAL_SPEED*dt;
           s.velX=clamp(poweredPathX-s.x,-lateralLimit,lateralLimit)/Math.max(.001,dt);
         }else if(tokenExitAssist){
@@ -1886,6 +1913,8 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
             // Missed coins must never turn into pickup bursts or count later.
             if (collectedRef.current.has(coin.id) || s.missedTokens.has(coin.id)
               || s.replacedTokens?.has(coin.id)) continue;
+            if(s.gameMode==="token" && s.powerTime>0 && s.icecreamHover &&
+               !s.tokenRushPowerVisibleIds?.has(coin.id))continue;
             // Test the actual board path, not the camera or a wide screen box.
             // A swept test still catches fast legitimate contacts between frames.
             const finish={x:s.x,z:s.z,y:s.worldY};
@@ -1898,6 +1927,10 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
                 // suction trail. No screen/camera-based pickup distances.
                 s.tokenAbsorbs ||= [];
                 s.tokenAbsorbs.push({id:coin.id,x:coin.x,z:coin.z,skyLift:coin.skyLift||0,at:s.t});
+                if(s.powerTime>0 && s.icecreamHover){
+                  s.tokenRushRecentPowerPickups ||= new Map();
+                  s.tokenRushRecentPowerPickups.set(coin.id,s.t);
+                }
                 const earned=collectTokenRush(s);
                 s.score+=earned;
                 if(s.powerTime<=0 && s.tokenRushExitGuideUntil>s.t &&
@@ -1935,11 +1968,22 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         if(s.gameMode==="token")for(const chunk of localChunks)for(const coin of chunk.coins){
           if(!collectedRef.current.has(coin.id) && !s.missedTokens.has(coin.id)
             && !s.replacedTokens?.has(coin.id) && s.z<coin.z-3){
-            // NEVER put a missed coin into collectedRef: the star renderer
-            // interprets that flag as an actual pickup and plays its pop VFX.
-            // Keep the missed coin visible behind the rider until chunk unload.
+            // A missed star never enters collectedRef, so there is no fake
+            // pickup burst. During Ice Cream Power, hidden/off-route stars
+            // expire silently: automatic gameplay cannot drain the score.
             s.missedTokens.add(coin.id);
-            if(s.tokenStreak>0){missTokenRush(s);s.lastText="STREAK LOST • COLLECT THE NEXT TOKEN!";s.textUntil=s.t+1.0;}
+            if(s.powerTime>0 || s.icecreamHover){
+              if(s.tokenRushPowerVisibleIds?.has(coin.id)){
+                s.tokenRushPowerVisibleIds.delete(coin.id);
+                s.tokenOmitVersion=(s.tokenOmitVersion||0)+1;
+              }
+            }else{
+              const penalty=penalizeMissedTokenRush(s);
+              missTokenRush(s);
+              s.lastText=`✦ MISSED STAR -${penalty} • STREAK RESET ✦`;
+              s.textUntil=s.t+1.35;
+              onSound("danger");
+            }
           }
         }
         // Floating rare icecreamPower: collected by crossing its actual position.
@@ -1950,19 +1994,27 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           // x2 exists ONLY for a ten-star streak. Picking up the reward
           // doesn't create additional fake points or stack speed tiers.
           const pickedPowerTier=s.gameMode==="token" && s.tokenStreak>=10 ? 2 : 1;
-          if(s.gameMode==="token")s.tokenRushPowerTier=pickedPowerTier;
+          if(s.gameMode==="token"){
+            s.tokenRushPowerTier=pickedPowerTier;
+            // Snapshot exactly ONE cruise for Scene 1 and Scene 2. Collecting
+            // stars mid-boost must not change the powered speed target.
+            s.tokenRushPowerBaseCruise=21.5*tokenRushScoreSpeedScale(s.peakScore);
+            s.tokenRushPowerCruise=s.tokenRushPowerBaseCruise*pickedPowerTier;
+          }
           activateIcecreamPower(s);
           beginIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
           if(s.gameMode==="token" && s.icecreamScene===2){
             makeTokenRushSkyStarTrail(s,collectedRef.current);
           }
           if(s.gameMode==="token"){
+            s.tokenRushPowerVisibleIds=new Set();
+            s.tokenRushRecentPowerPickups=new Map();
             // PREPARE the post-power stars NOW, not at the end of the boost.
             // Project forward using the same bounded arcade speed/response
             // model as physics. At this point they are hundreds of metres
             // downhill, beyond current visibility and collection checks.
-            const baseCruise=21.5*tokenRushScoreSpeedScale(s.score);
-            const cruise=baseCruise*(s.tokenRushPowerTier===2&&s.tokenStreak>=10?2:1);
+            const baseCruise=s.tokenRushPowerBaseCruise;
+            const cruise=s.tokenRushPowerCruise;
             const poweredSeconds=Math.max(0,ICECREAM_DURATION-TOKEN_RUSH_POWER_BRAKE_SECONDS);
             const rampDistance=cruise*poweredSeconds+
               (s.speed-cruise)*(1-Math.exp(-2*poweredSeconds))/2;
@@ -1970,6 +2022,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
             const predictedExitZ=s.z-Math.max(0,rampDistance+brakingDistance);
             s.tokenRushExitRoutePrepared=makeTokenRushRecoveryStraight(
               s,collectedRef.current,predictedExitZ)>0;
+            // The route was just pre-staged. Select the first genuinely
+            // reachable stars *at their final world positions* for display.
+            const activeChunks=Array.from({length:5},(_,i)=>
+              getSnowModeChunk(snowChunkIndex(-s.z)+i,"token"))
+              .filter(Boolean).map(chunk=>applyTokenRushRecoveryRoute(chunk,s));
+            refreshTokenRushPowerStarQueue(s,activeChunks,collectedRef.current);
           }
           if(s.gameMode!=="token")s.score+=450;
           s.lastText=s.gameMode==="token"
@@ -1983,7 +2041,14 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         }
       }
       s.peakScore=Math.max(s.peakScore,s.score);
-      if((s.gameMode==="token" && s.hits>=TOKEN_RUSH_MAX_HITS) || (s.gameMode!=="token" && s.score<=0)){
+      if((s.gameMode==="token" && (
+          s.hits>=TOKEN_RUSH_MAX_HITS ||
+          // Token Rush score now IS a survival resource during normal play.
+          // No instant death at initial 0 points: allow four chances to
+          // catch a first Star, then the fifth miss ends the empty run.
+          (s.coins>0 && s.score<=0) ||
+          (s.coins===0 && (s.tokenRushConsecutiveMisses||0)>=5)
+        )) || (s.gameMode!=="token" && s.score<=0)){
         if(s.gameMode!=="token")s.score=0;
         phaseRef.current="finished";
         onSound("finish");
@@ -2285,9 +2350,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
     // close-ups, rear high-speed chase, and rock-shatter action shots.
     const director=icecreamCamera.current;
     const icecreamActive=playing && s.icecreamHover && s.powerTime>0 && !s.recovery;
-    // Token Rush Scene 2 deliberately retains the player's chosen camera
-    // while the board and cloud GLBs still move through the sky.
-    const allowIcecreamCamera=icecreamActive && !(s.gameMode==="token" && s.icecreamScene===2);
+    // BOTH Token Rush Ice Cream scenes preserve the selected 1..7 camera.
+    // Standard keeps its original cinematic director in both scenes.
+    const allowIcecreamCamera=icecreamActive && s.gameMode!=="token";
     let icecreamMix=0;
     let icecreamCut=false;
     let icecreamAnchorValid=false;
