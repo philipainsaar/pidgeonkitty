@@ -44,3 +44,58 @@ export function missTokenRush(state){
   state.tokenMultiplier=1;
   state.tokenMisses=(state.tokenMisses||0)+1;
 }
+
+/** Independent safe downhill placement for Token Rush. Unlike the old short
+ * spawn distances, this stays 90–135 units ahead on every installed version.
+ * Use the same open lanes and rock/ramp clearances as Snow360 Ice-cream Power.
+ */
+function chooseSafeTokenRushPowerSpot(s,chunks){
+  const ramps=chunks.flatMap(c=>c?.ramps||[]);
+  const rocks=chunks.flatMap(c=>c?.rocks||[]);
+  const sides=(s.icecreamPowerCount||0)%2 ? [-1,1] : [1,-1];
+  let best=null;
+  for(const dz of [105,120,90,135]){
+    const z=s.z-dz;
+    for(const side of sides)for(const offset of [2.4,3.7,5.2,6.6]){
+      const x=Math.max(-8.65,Math.min(8.65,s.x+side*offset));
+      const lateral=Math.abs(x-s.x);
+      if(lateral<1.65 || lateral>6.75)continue;
+      if(ramps.some(r=>Math.abs(z-r.z)<(r.length??3)*.5+7 && Math.abs(x-r.x)<5.4))continue;
+      if(rocks.some(r=>Math.abs(z-r.z)<(r.size+2.8) && Math.abs(x-r.x)<(r.size+2.6)))continue;
+      const score=Math.abs(lateral-2.9)*2.7+Math.abs(dz-105)*.11;
+      if(!best || score<best.score)best={x,z,score};
+    }
+  }
+  return best ? {x:best.x,z:best.z} : null;
+}
+
+/** Rare Token Rush Ice-cream collectible, earned entirely through token pickups.
+ * Uses the existing distant (90–135m) safe-spawn placement and cooldown.
+ * Standard mode continues using its original score-surge spawn logic.
+ */
+export function maybeSpawnTokenRushIcecreamPower(s,chunks=[]){
+  if(!s || s.gameMode!=="token" || s.icecreamPower || s.powerTime>0 || s.recovery)return false;
+  const distance=Math.max(0,-s.z);
+  if(distance<85 || (s.coins||0)<(s.tokenRushNextPowerAt??5))return false;
+  if(s.t-(s.icecreamPowerCooldownTime??-999)<27)return false;
+  if(distance-(s.icecreamPowerCooldownDistance??-999)<300)return false;
+  const spot=chooseSafeTokenRushPowerSpot(s,chunks.filter(Boolean));
+  if(!spot)return false;
+  s.icecreamPower=spot;
+  s.icecreamPowerCount=(s.icecreamPowerCount||0)+1;
+  s.icecreamPowerCooldownTime=s.t;
+  s.icecreamPowerCooldownDistance=distance;
+  s.tokenRushNextPowerAt=(s.coins||0)+10;
+  return true;
+}
+
+/** Magnetic pickup while the *real* Scene 1 Ice-cream boost is active.
+ * The look-ahead catches tokens reliably at high powered speed and the lateral
+ * radius covers the full token course. Every collectible still scores via
+ * collectTokenRush, and each ID can be collected only once.
+ */
+export function tokenRushMagnetCanCollect(s,coin){
+  if(!s || s.gameMode!=="token" || !s.icecreamHover || s.powerTime<=0 || s.recovery || !coin)return false;
+  const ahead=s.z-coin.z;
+  return ahead>=-3.5 && ahead<=13 && Math.abs(s.x-coin.x)<=20;
+}

@@ -13,7 +13,7 @@ import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushP
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower, ICECREAM_DURATION } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
-import { getSnowModeChunk, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush } from "./snow64TokenRush";
+import { getSnowModeChunk, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, maybeSpawnTokenRushIcecreamPower, tokenRushMagnetCanCollect } from "./snow64TokenRush";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
@@ -736,14 +736,14 @@ function initialState(cameraMode = 0, gameMode = "standard") {
     x:0,z:0,air:0,worldY:0,vy:0,speed:15.8,velX:0,steer:0,t:0,launchSource:"none",launchSpeed:0,
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
     peakAir:0, flightTime:0, recovery:null,
-    gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0,
+    gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0, tokenRushNextPowerAt:5,
     combo:0, score:gameMode==="token"?0:SNOW_INITIAL_SCORE, peakScore:gameMode==="token"?0:SNOW_INITIAL_SCORE, drainRate:gameMode==="token"?0:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, airQueue:[], completedAirTricks:[], airYaw:0, airPitch:0,
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
     armedTrick:null, // Gesture drawn shortly before takeoff, activated on the next jump/ramp.
     launchSuper:false,
     icecreamPower:null, icecreamPowerTime:0, icecreamPowerCooldownTime:-200, icecreamPowerCooldownDistance:-1000,
-    icecreamPowerCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false,
+    icecreamPowerCount:0, powerTime:0, powerAutoJumpDelay:0, powerTricksScheduled:false, icecreamTokensCollected:0, icecreamTokenTargetId:null,
     icecreamHover:false, icecreamScene:0, icecreamAutoIndex:0, icecreamPaidTricks:0, icecreamCollisionGrace:0,
     icecreamEnter:0, icecreamExitLift:0,
     icecreamCarveStart:0, icecreamCarveCenter:0, icecreamCarveDirection:1, icecreamRockTargetId:null,
@@ -758,7 +758,7 @@ function safeHud(s) {
     cameraMode:s.cameraMode, gameMode:s.gameMode, tokenStreak:s.tokenStreak, tokenMultiplier:s.tokenMultiplier, livesRemaining:Math.max(0,TOKEN_RUSH_MAX_HITS-s.hits),
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.max(0,Math.floor(-s.z)), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
-    powerRemaining:s.powerTime, icecreamScene:s.powerTime>0?s.icecreamScene:0, shieldRemaining:s.icecreamCollisionGrace, icecreamPowerReady:!!s.icecreamPower, rockShattered:s.rockShattered,
+    powerRemaining:s.powerTime, icecreamScene:s.powerTime>0?s.icecreamScene:0, shieldRemaining:s.icecreamCollisionGrace, icecreamPowerReady:!!s.icecreamPower, rockShattered:s.rockShattered, icecreamTokensCollected:s.icecreamTokensCollected||0,
     air:s.inAir, airHeight:s.air, peakAir:s.peakAir, pose:s.currentPose,
     recovery:recoveryStage(s.recovery),
     // Visual feedback for cloud trick icons follows the REAL animation, not
@@ -1007,6 +1007,8 @@ function beginIcecreamHover(s, supportHeight) {
   // Keep the first turn continuous with the rider's current course position.
   // Outside edges begin by turning toward the center of the mountain.
   s.icecreamRockTargetId = null;
+  s.icecreamTokenTargetId = null;
+  s.icecreamTokensCollected = 0;
   s.icecreamCarveStart = s.t;
   s.icecreamCarveCenter = clamp(s.x, -4, 4);
   s.icecreamCarveDirection = s.x > 5 ? -1 : s.x < -5 ? 1 : (Math.random() < .5 ? -1 : 1);
@@ -1073,6 +1075,25 @@ function icecreamRockToChase(s, chunks) {
   return candidate;
 }
 
+/** Follow the next uncollected token rather than targeting rocks in Token Rush.
+ * The magnet collects close tokens even if the rider is a lane away, so steering
+ * remains smooth and playful instead of jerking sideways at every pickup.
+ */
+function icecreamTokenToChase(s,chunks,collected){
+  let locked=null,candidate=null,best=Infinity;
+  for(const chunk of chunks) for(const token of chunk.coins){
+    if(collected.has(token.id)) continue;
+    const ahead=s.z-token.z;
+    if(ahead < -2 || ahead > 85)continue;
+    if(token.id===s.icecreamTokenTargetId){locked=token;continue;}
+    const rating=ahead+Math.abs(token.x-s.x)*3.5;
+    if(rating<best){candidate=token;best=rating;}
+  }
+  if(locked && s.z-locked.z>-3)return locked;
+  s.icecreamTokenTargetId=candidate?.id||null;
+  return candidate;
+}
+
 /**
  * Slalom when the course is clear, purposeful turns toward reachable rocks.
  * The approach estimates time to contact, so the character reaches the target
@@ -1080,7 +1101,7 @@ function icecreamRockToChase(s, chunks) {
  * reduced for a reliable shatter, then carving resumes toward the next rock.
  * Player touch/keyboard steering still overrides this automatic steering.
  */
-function icecreamAutoCarveVelocity(s,chunks){
+function icecreamAutoCarveVelocity(s,chunks,collected){
   const age=Math.max(0,s.t-(s.icecreamCarveStart??s.t));
   const omega=2*Math.PI/ICECREAM_CARVE_PERIOD;
   const phase=age*omega;
@@ -1089,7 +1110,7 @@ function icecreamAutoCarveVelocity(s,chunks){
   const center=s.icecreamCarveCenter??clamp(s.x,-4,4);
   const waveX=center+dir*ICECREAM_CARVE_AMPLITUDE*Math.sin(phase)*fade;
   const waveSpeed=dir*ICECREAM_CARVE_AMPLITUDE*omega*Math.cos(phase)*fade;
-  const target=icecreamRockToChase(s,chunks);
+  const target=s.gameMode==="token" ? icecreamTokenToChase(s,chunks,collected) : icecreamRockToChase(s,chunks);
   if(target){
     const ahead=Math.max(0,s.z-target.z);
     const untilImpact=Math.max(.14,(ahead-1.0)/Math.max(s.speed,25));
@@ -1209,7 +1230,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       // A player steering deliberately can still override it at any time.
       icecreamDesiredVelX=Math.abs(steerWanted)>.18
         ? steerWanted * 13.2
-        : icecreamAutoCarveVelocity(s,localChunks);
+        : icecreamAutoCarveVelocity(s,localChunks,collectedRef.current);
       steerWanted=clamp(icecreamDesiredVelX/13.2,-1,1);
     }
     if(phaseRef.current!=="paused")s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*(icecreamDesiredVelX!==null?9:6)));
@@ -1455,24 +1476,26 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           s.air = Math.max(0, s.worldY - hoverFloor);
           s.peakAir = Math.max(s.peakAir,s.air);
           s.flightTime += dt;
-          // Keep a maximum of one ahead: manual mobile/keyboard input is still
-          // accepted and starts right after the current animation finishes.
-          if (s.powerTime>ICECREAM_AUTO_TRICK_END_BUFFER && !s.trick && s.airQueue.length === 0) {
-            const key = ICECREAM_AUTO_TRICKS[s.icecreamAutoIndex++ % ICECREAM_AUTO_TRICKS.length];
-            const definition = TRICKS.find(t => t.key === key);
-            if (definition) enqueueAirTrick(s,definition);
-          }
-          advanceAirTricks(s,dt);
-          // Completed auto/manual magic tricks immediately earn points without
-          // requiring a landing, so no partial trick can cause a powered wipeout.
-          while (s.icecreamPaidTricks < s.completedAirTricks.length) {
-            const finished = s.completedAirTricks[s.icecreamPaidTricks++];
-            const bonus = Math.round(finished.points * 0.75);
-            s.score += bonus;
-            s.combo += 1;
-            s.lastText = `✦ ICE-CREAM ${finished.name}! +${bonus} ✦`;
-            s.textUntil = s.t + .85;
-            onSound("magicTrick");
+          // Standard alone gets the original automated aerial tricks and
+          // trick-score bonuses. Token Rush uses this same Scene 1 hover and
+          // sprinkle effect, but only collects real star tokens for points.
+          if(s.gameMode!=="token"){
+            // Keep a maximum of one ahead: manual input still works after a trick.
+            if (s.powerTime>ICECREAM_AUTO_TRICK_END_BUFFER && !s.trick && s.airQueue.length === 0) {
+              const key = ICECREAM_AUTO_TRICKS[s.icecreamAutoIndex++ % ICECREAM_AUTO_TRICKS.length];
+              const definition = TRICKS.find(t => t.key === key);
+              if (definition) enqueueAirTrick(s,definition);
+            }
+            advanceAirTricks(s,dt);
+            while (s.icecreamPaidTricks < s.completedAirTricks.length) {
+              const finished = s.completedAirTricks[s.icecreamPaidTricks++];
+              const bonus = Math.round(finished.points * 0.75);
+              s.score += bonus;
+              s.combo += 1;
+              s.lastText = `✦ ICE-CREAM ${finished.name}! +${bonus} ✦`;
+              s.textUntil = s.t + .85;
+              onSound("magicTrick");
+            }
           }
         } else if(s.inAir && !s.recovery){
           // Standard non-magical jumps retain the original gravity and risky
@@ -1517,6 +1540,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
             // avoiding a crash loop on the very next frame after recovery.
             if (s.consumedRocks.has(rock.id)) continue;
             const powered = s.icecreamHover && s.powerTime > 0;
+            // Token Rush Ice-cream Power never destroys rocks or awards rock
+            // points. The hover protects the rider until the normal shield.
+            if(powered && s.gameMode==="token")continue;
             // Sky riders are metres above snow-level rocks, so the cloud
             // sequence should never shatter a rock far below the board.
             if (powered && s.icecreamScene===2 && s.air>3.2) continue;
@@ -1566,13 +1592,21 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         if (!s.recovery) {
           for (const chunk of localChunks) for (const coin of chunk.coins) {
             if (collectedRef.current.has(coin.id)) continue;
-            if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
+            const magnet=tokenRushMagnetCanCollect(s,coin);
+            if (magnet || (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28)) {
               collectedRef.current.add(coin.id); s.coins++;
               if(s.gameMode==="token"){
                 const earned=collectTokenRush(s);
                 s.score+=earned;
-                s.lastText=`✦ TOKEN +${earned}  •  ×${s.tokenMultiplier} STREAK ✦`;
-                s.textUntil=s.t+1.35;
+                if(magnet)s.icecreamTokensCollected++;
+                // Real tokens remain the *only* point source in Token Rush.
+                const spawnedIcecreamPower=maybeSpawnTokenRushIcecreamPower(s,[
+                  ...localChunks,getSnowModeChunk(snowChunkIndex(-s.z)+2,s.gameMode),
+                ]);
+                s.lastText=spawnedIcecreamPower ? "✦ RARE ICE-CREAM TOKEN POWER AHEAD! ✦"
+                  : magnet ? `✦ TOKEN MAGNET +${earned} • ×${s.tokenMultiplier} ✦`
+                  : `✦ TOKEN +${earned}  •  ×${s.tokenMultiplier} STREAK ✦`;
+                s.textUntil=s.t+(spawnedIcecreamPower?2.0:1.15);
                 onSound("pickup");
               }else{
                 s.score+=TOKEN_POINTS;
@@ -1594,16 +1628,18 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           }
         }
         // Floating rare icecreamPower: collected by crossing its actual position.
-        if (s.gameMode!=="token" && !s.recovery && icecreamPowerCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
-          // Pick a scene afresh for EVERY collected power-up; neither one is
-          // forced or disabled. Scene 1 is the previous thick-sprinkle scene.
-          s.icecreamScene=Math.random()<ICECREAM_SKY_SCENE_CHANCE?2:1;
+        if (!s.recovery && icecreamPowerCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
+          // Token Rush always chooses Scene 1. Standard retains the original
+          // randomized Scene 1 / Scene 2 selection and automatic tricks.
+          s.icecreamScene=s.gameMode==="token" ? 1 : (Math.random()<ICECREAM_SKY_SCENE_CHANCE?2:1);
           activateIcecreamPower(s);
           beginIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
-          s.score+=450; // bonus is intentionally not counted toward the next icecreamPower spawn
-          s.lastText=s.icecreamScene===2
-            ? "✦ ICE-CREAM SKY SURF! BIG AIR CLOUDS! ✦"
-            : "✦ ICE-CREAM POWER! SUPER SPEED + AUTO TRICKS! ✦";
+          if(s.gameMode!=="token")s.score+=450;
+          s.lastText=s.gameMode==="token"
+            ? "✦ ICE-CREAM TOKEN MAGNET! AUTO-COLLECT STARS! ✦"
+            : s.icecreamScene===2
+              ? "✦ ICE-CREAM SKY SURF! BIG AIR CLOUDS! ✦"
+              : "✦ ICE-CREAM POWER! SUPER SPEED + AUTO TRICKS! ✦";
           s.textUntil=s.t+2.4;
           onSound("power");
         }
@@ -1941,7 +1977,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       const newImpact=s.rockShattered>director.lastShatterCount;
       director.lastShatterCount=s.rockShattered;
       const skyScene=s.icecreamScene===2;
-      const rockFocus=skyScene?null:icecreamRockCameraTarget(s,localChunks);
+      const rockFocus=(skyScene||s.gameMode==="token")?null:icecreamRockCameraTarget(s,localChunks);
       const cinematicPhase=s.t-director.startAt>=ICECREAM_CAMERA_INTRO_SECONDS &&
         s.powerTime>ICECREAM_CAMERA_RETURN_SECONDS;
       const impactCut=!skyScene && cinematicPhase && s.powerTime>ICECREAM_CAMERA_RETURN_SECONDS+ICECREAM_IMPACT_SHOT_SECONDS+.12 &&
@@ -3076,7 +3112,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     {/* Mobile trick/score/combo notices are anchored just below the compact top HUD,
         instead of hovering over the rider and snowboard. Desktop is unchanged. */}
     {phase==="playing" && <div className="snow360-air-notices" style={{position:"absolute",zIndex:3,top:mobile?"clamp(168px, 20dvh, 190px)":145,left:"50%",transform:"translateX(-50%)",textAlign:"center",pointerEvents:"none",maxWidth:mobile?"94vw":undefined}}>
-      {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#ffe0f5",textShadow:"1px 2px #854d77",letterSpacing:".07em"}}>✦ ICE-CREAM POWER {hud.powerRemaining.toFixed(1)}s • {hud.rockShattered||0} ROCKS ✦</div>}
+      {hud.powerRemaining>0 && <div style={{font:"900 13px system-ui",color:"#ffe0f5",textShadow:"1px 2px #854d77",letterSpacing:".07em"}}>✦ ICE-CREAM POWER {hud.powerRemaining.toFixed(1)}s • {gameMode==="token" ? `${hud.icecreamTokensCollected||0} TOKENS` : `${hud.rockShattered||0} ROCKS`} ✦</div>}
       {hud.powerRemaining<=0 && hud.shieldRemaining>0 && <div style={{font:"900 12px system-ui",color:"#ffe0f5",textShadow:"1px 2px #854d77",letterSpacing:".08em"}}>✦ ICE-CREAM SHIELD {hud.shieldRemaining.toFixed(1)}s ✦</div>}
       {hud.trick&&<div className="snow64-trick" style={{animation:"snowboardFloat .5s ease-in-out infinite"}}>{hud.trick}</div>}
       {hud.air && <div style={{fontWeight:900,color:"#d7f8ff",textShadow:"2px 2px #285467",fontSize:12}}>AIR {hud.airHeight.toFixed(1)}m · PEAK {hud.peakAir.toFixed(1)}m</div>}
@@ -3174,7 +3210,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       <div style={{maxWidth:mobile?560:1060,width:"min(100%,1060px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
         <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>{gameMode==="token"?"TOKEN RUSH • COLLECT & SURVIVE":"ARCADE FREESTYLE • WINTER CUP"}</div>
         <Snow360Logo startScreen mobile={mobile===true} />
-        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?(gameMode==="token"?"TOKEN RUSH! No ramps, no tricks, only carving and Ollies. Collect tokens to earn points and build a token multiplier. Three wipeouts end the run!":"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!"):phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`${gameMode==="token"?"THREE WIPEOUTS!":"SCORE DEPLETED!"} Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
+        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?(gameMode==="token"?"TOKEN RUSH! No ramps or tricks, just carving, Ollies and tokens. Ice-cream Power automatically collects stars using Scene 1! Three wipeouts end the run.":"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!"):phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`${gameMode==="token"?"THREE WIPEOUTS!":"SCORE DEPLETED!"} Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST PEAK: {currentBest.toLocaleString()} PTS</div>}
         {phase==="paused"&&<button type="button" aria-pressed={soundOn}
           onClick={e=>{e.stopPropagation();const next=!soundRef.current;soundRef.current=next;
