@@ -24,6 +24,36 @@ function tokenForRow(row) {
   return lane===undefined ? null : {id:`coin-${row}`,row,x:lanes[lane],z};
 }
 
+/** Select ONLY the Rock1..Rock7 meshes in snow64-obstacles.glb.
+ * The game's shared obstacle library maps a rock's ID to a mesh via FNV-1a.
+ * Token Rush uses a separate numeric ID range per original rock row.
+ * This keeps all IDs unique while the existing obstacle library selects only
+ * its seven rock meshes; Standard's IDs and library are never modified.
+ */
+const TOKEN_ROCK_VARIANT_START = 2; // NAMES[2] = Rock1
+const TOKEN_ROCK_VARIANT_END = 8;   // NAMES[8] = Rock7
+function obstacleHash(id) {
+  let h=2166136261;
+  for(let i=0;i<id.length;i++)h=Math.imul(h^id.charCodeAt(i),16777619);
+  return h>>>0;
+}
+function tokenRushGLBRock(rock) {
+  const match=/^rock-(\d+)$/.exec(rock.id);
+  if(!match)return null;
+  const row=Number(match[1]);
+  const initial=(row*3+5)%16;
+  for(let i=0;i<16;i++){
+    const offset=(initial+i)%16;
+    const id=`rock-${row*16+offset}`;
+    const variant=obstacleHash(id)%12;
+    if(variant>=TOKEN_ROCK_VARIANT_START && variant<=TOKEN_ROCK_VARIANT_END){
+      return {...rock,id};
+    }
+  }
+  // Never substitute a crystal even if all variant candidates fail.
+  return null;
+}
+
 export function getSnowModeChunk(index,mode="standard") {
   if(mode!=="token")return getSnowChunk(index);
   if(index<0)return null;
@@ -52,9 +82,10 @@ export function getSnowModeChunk(index,mode="standard") {
       candyCanes.push({id:`cane-${row}-${side}`,x,z,side,phase:row*.19+side*1.7});
     }
   }
-  // Only collision rocks. No ramps and no random crystal/obstacle library in
-  // Token Rush; the renderer selects the dedicated snow64-rock.glb mesh.
-  const data={...base,ramps:[],coins,candyCanes};
+  // Real visible/collidable Rock1..Rock7 variants from snow64-obstacles.glb.
+  // No crystals, no RockCrystal families, and never the old snow64-rock.glb.
+  const rocks=base.rocks.map(tokenRushGLBRock).filter(Boolean);
+  const data={...base,rocks,ramps:[],coins,candyCanes};
   cache.set(index,data);
   while(cache.size>12)cache.delete(cache.keys().next().value);
   return data;

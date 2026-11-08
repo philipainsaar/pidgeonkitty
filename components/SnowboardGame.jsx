@@ -519,7 +519,8 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
     <Terrain index={index} mobile={mobile} />
     <Snow64CloudLayer index={index} mobile={mobile} groundY={groundY} ramps={data.ramps} />
     <group name="Snow360Trees"><Snow64SundaeTrees trees={data.trees} groundY={groundY} mobile={mobile} /></group>
-    {obstacleLibrary && gameMode !== "token" ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
+    {obstacleLibrary ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
+      : gameMode === "token" ? null // Token Rush uses ONLY snow64-obstacles.glb rocks, never the old separate rock GLB.
       : rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
       hidden={r=>stateRef.current.consumedRocks.has(r.id)}
       pose={r=>({position:[r.x,groundY(r.x,r.z),r.z],rotation:[0,.8,0],
@@ -1550,12 +1551,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
             // sequence should never shatter a rock far below the board.
             if (powered && s.icecreamScene===2 && s.air>3.2) continue;
             if (!powered && s.hitRocks.has(rock.id)) continue;
-            // Token Rush renders ONLY regular rocks, so use the same rock
-            // geometry for collisions. Never retain invisible crystal-shaped
-            // hitboxes from Standard's randomized obstacle library.
-            const obstacle=s.gameMode==="token" ? null : getSnow64ObstacleParams(rock);
+            // Token Rush renders only Rock1..Rock7 from the SAME obstacle GLB.
+            // Use its exact oriented mesh-part bounds, not a generic dodecahedron
+            // or a nearby-but-invisible crystal-shaped hitbox.
+            const obstacle=getSnow64ObstacleParams(rock);
             const contact = s.gameMode==="token"
-              ? sweptRockHit(from,end,rock,groundY,.32)
+              ? snow64ObstacleHit(from,end,rock,groundY,.32) === true
               : powered
                 ? (snow64ObstacleHit(from,end,rock,groundY,.62,true)
                   ?? icecreamPathHit(from,end,rock,rock.size*1.18+.9))
