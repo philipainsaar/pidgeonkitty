@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useProgress } from "@react-three/drei";
 import { createPortal } from "react-dom";
 
@@ -19,6 +19,8 @@ import { createPortal } from "react-dom";
 function Snow360WelcomeModeButtons() {
   const [host, setHost] = useState(null);
   const [mode, setMode] = useState("standard");
+  const [modeAnnouncement, setModeAnnouncement] = useState(null);
+  const announcementTimer = useRef(null);
 
   useEffect(() => {
     let saved="standard";
@@ -45,10 +47,94 @@ function Snow360WelcomeModeButtons() {
     document.documentElement.dataset.snow360Mode=next;
     try { sessionStorage.setItem("snow360-game-mode",next); } catch {}
     window.dispatchEvent(new CustomEvent("snow360-mode-change",{detail:{gameMode:next}}));
+    // A tiny THPS-style trick popup, only when one of the numbered modes is tapped.
+    if(announcementTimer.current) window.clearTimeout(announcementTimer.current);
+    setModeAnnouncement({name:next==="token"?"Star Rush":"Tricky Tricks",key:Date.now()});
+    announcementTimer.current=window.setTimeout(()=>setModeAnnouncement(null),1450);
   };
+
+  useEffect(()=>()=>{
+    if(announcementTimer.current)window.clearTimeout(announcementTimer.current);
+  },[]);
+  useEffect(()=>{
+    if(!host)return;
+    const play=host.querySelector('button[aria-label="Play Snow360"]');
+    if(!play)return;
+    const clearAnnouncement=()=>{
+      if(announcementTimer.current)window.clearTimeout(announcementTimer.current);
+      setModeAnnouncement(null);
+    };
+    play.addEventListener("click",clearAnnouncement);
+    return()=>play.removeEventListener("click",clearAnnouncement);
+  },[host]);
+
+  // The Welcome scene is a separate component and remains unchanged. Update
+  // its existing GET READY text node, without removing/replacing a React DOM
+  // element, so the usual LET'S RIDE handoff and intro animation still work.
+  useEffect(()=>{
+    const welcomeRoot=host?.parentElement;
+    if(!welcomeRoot)return;
+    const desired=mode==="token"?"GET READY FOR STARS! ☆":"GET READY FOR TRICKS! ❆";
+    const updateReadyText=()=>{
+      const candidates=welcomeRoot.querySelectorAll('div[style*="bottom: min(12vh"]');
+      for(const el of candidates){
+        for(const node of el.childNodes){
+          if(node.nodeType===3 && node.nodeValue?.includes("GET READY!")){
+            node.nodeValue=desired;
+          }
+        }
+      }
+    };
+    // Welcome mounts its intro label only after PLAY, so listen for that
+    // specific DOM change instead of polling or introducing a second banner.
+    const observer=new MutationObserver(updateReadyText);
+    observer.observe(welcomeRoot,{childList:true,subtree:true,characterData:true});
+    updateReadyText();
+    return()=>observer.disconnect();
+  },[host,mode]);
 
   return <>
     <style>{`
+      /* Small Lilita One popup, styled like the game's pastel trick names. */
+      @keyframes snow360WelcomeModePop {
+        0% { opacity:0; translate:0 13px; scale:.84; }
+        18% { opacity:1; translate:0 0; scale:1.10; }
+        30% { scale:1; }
+        78% { opacity:1; translate:0 0; }
+        100% { opacity:0; translate:0 -13px; scale:.98; }
+      }
+      .snow360-welcome-mode-announcement {
+        position:absolute;
+        z-index:9;
+        left:50%;
+        bottom:clamp(160px, 26vh, 290px);
+        transform:translateX(-50%);
+        max-width:92vw;
+        text-align:center;
+        white-space:nowrap;
+        pointer-events:none;
+        user-select:none;
+        color:#aeeaff;
+        font-family:var(--snow360-lilita), Lilita One, Impact, sans-serif !important;
+        font-size:clamp(25px, 5vw, 43px) !important;
+        font-weight:400 !important;
+        letter-spacing:.012em;
+        line-height:1.12;
+        -webkit-text-stroke:clamp(1.2px, .2vw, 2.4px) #192d42;
+        paint-order:stroke fill;
+        text-shadow:2px 3px 0 #132c42,0 4px 9px #10283f88;
+        animation:snow360WelcomeModePop 1.45s ease both,
+          snow360TrickPastel 12s ease-in-out infinite;
+      }
+      @media(max-width:720px),(pointer:coarse) {
+        .snow360-welcome-mode-announcement {
+          bottom:clamp(135px, 25vh, 245px);
+          font-size:clamp(23px, 6.2vw, 34px) !important;
+        }
+      }
+      @media(prefers-reduced-motion:reduce){
+        .snow360-welcome-mode-announcement { animation:none !important; }
+      }
       /* Identical PNG and ON/OFF color treatment to the settings toggles. */
       .snow360-start-floating .snow360-mode-picker {
         order: -1 !important;
@@ -124,6 +210,12 @@ function Snow360WelcomeModeButtons() {
         }
       }
     `}</style>
+    {host?.parentElement && modeAnnouncement && createPortal(
+      <div key={modeAnnouncement.key} className="snow360-welcome-mode-announcement"
+        role="status" aria-live="polite" aria-atomic="true">
+        {modeAnnouncement.name}
+      </div>,host.parentElement
+    )}
     {host && createPortal(
       <div className="snow360-mode-picker" role="group" aria-label="Choose game mode">
         <button type="button" className="snow360-mode-choice" aria-label="Mode 1: Standard Downhill Freestyle"
