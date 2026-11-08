@@ -9,29 +9,57 @@ export const TOKEN_RUSH_BASE_POINTS=100;
 const lanes=[-7.4,-3.8,0,3.8,7.4];
 const path=[1,2,3,2,1,0,1,2,3,4,3,2];
 const cache=new Map();
-export function getSnowModeChunk(index,mode="standard"){
+/** Return the actual token position for any global token row. Sharing this
+ * lookup with corner-marker placement keeps the candy canes on the real route
+ * even when a rock forces one token into a safer adjacent lane.
+ */
+function tokenForRow(row) {
+  if(row<=5 || row%3!==0) return null;
+  const z=8-row*SNOW_ROW_STEP-1.2;
+  const preferred=path[Math.floor(row/3)%path.length];
+  const order=[preferred,preferred-1,preferred+1,preferred-2,preferred+2,0,4,2];
+  const source=getSnowChunk(Math.floor(row/SNOW_CHUNK_ROWS));
+  const lane=order.find(i=>i>=0&&i<lanes.length&&!
+    source.rocks.some(rock=>Math.abs(rock.z-z)<3.1&&Math.abs(rock.x-lanes[i])<rock.size+2.3));
+  return lane===undefined ? null : {id:`coin-${row}`,row,x:lanes[lane],z};
+}
+
+export function getSnowModeChunk(index,mode="standard") {
   if(mode!=="token")return getSnowChunk(index);
   if(index<0)return null;
   if(cache.has(index))return cache.get(index);
   const base=getSnowChunk(index);
   const coins=[];
+  const candyCanes=[];
   for(let local=0;local<SNOW_CHUNK_ROWS;local++){
     const row=index*SNOW_CHUNK_ROWS+local;
-    if(row<=5 || row%3!==0)continue;
-    const z=8-row*SNOW_ROW_STEP-1.2;
-    const preferred=path[Math.floor(row/3)%path.length];
-    // If a rock shares the token row, move to the nearest safe lane.
-    const order=[preferred,preferred-1,preferred+1,preferred-2,preferred+2,0,4,2];
-    const safe=order.find(i=>i>=0&&i<lanes.length&&!
-      base.rocks.some(rock=>Math.abs(rock.z-z)<3.1&&Math.abs(rock.x-lanes[i])<rock.size+2.3));
-    if(safe===undefined)continue;
-    coins.push({id:`coin-${row}`,x:lanes[safe],z});
+    const coin=tokenForRow(row);
+    if(!coin)continue;
+    coins.push({id:coin.id,x:coin.x,z:coin.z});
+    const before=tokenForRow(row-3);
+    const after=tokenForRow(row+3);
+    if(!before||!after)continue;
+    const enter=Math.sign(coin.x-before.x);
+    const leave=Math.sign(after.x-coin.x);
+    // Two candy-cane signposts frame each actual slalom corner.
+    if(enter===0 || leave===0 || enter===leave)continue;
+    for(const side of [-1,1]){
+      const x=coin.x+side*2.43;
+      const z=coin.z+2.9;
+      if(Math.abs(x)>10.6)continue;
+      // Markers are decorative, but avoid intersecting collision rocks.
+      if(base.rocks.some(rock=>Math.hypot(rock.x-x,rock.z-z)<rock.size+0.75))continue;
+      candyCanes.push({id:`cane-${row}-${side}`,x,z,side,phase:row*.19+side*1.7});
+    }
   }
-  const data={...base,ramps:[],coins};
+  // Only collision rocks. No ramps and no random crystal/obstacle library in
+  // Token Rush; the renderer selects the dedicated snow64-rock.glb mesh.
+  const data={...base,ramps:[],coins,candyCanes};
   cache.set(index,data);
   while(cache.size>12)cache.delete(cache.keys().next().value);
   return data;
 }
+
 /** The only source of points in Token Rush is collecting a star token. */
 export function collectTokenRush(state){
   state.tokenStreak=(state.tokenStreak||0)+1;
@@ -89,13 +117,29 @@ export function maybeSpawnTokenRushIcecreamPower(s,chunks=[]){
   return true;
 }
 
-/** Magnetic pickup while the *real* Scene 1 Ice-cream boost is active.
- * The look-ahead catches tokens reliably at high powered speed and the lateral
- * radius covers the full token course. Every collectible still scores via
- * collectTokenRush, and each ID can be collected only once.
+/** Swept *physical* star/board contact. Never uses camera distance.
+ * Token centers hover 1.3m above the snow, with a visible ~.5m half width.
+ * A compact radius avoids triggering the burst when the rider is in a nearby
+ * lane. The sweep prevents skipping legitimate stars at high speed/mobile fps.
  */
-export function tokenRushMagnetCanCollect(s,coin){
-  if(!s || s.gameMode!=="token" || !s.icecreamHover || s.powerTime<=0 || s.recovery || !coin)return false;
-  const ahead=s.z-coin.z;
-  return ahead>=-3.5 && ahead<=13 && Math.abs(s.x-coin.x)<=20;
+export function sweptStarTokenPickup(from,to,coin,terrainHeight,radius=.80){
+  if(!from||!to||!coin||typeof terrainHeight!=="function")return false;
+  const dx=to.x-from.x,dz=to.z-from.z;
+  const len2=dx*dx+dz*dz;
+  const t=len2>1e-9 ? Math.max(0,Math.min(1,((coin.x-from.x)*dx+(coin.z-from.z)*dz)/len2)) : 0;
+  const x=from.x+dx*t,z=from.z+dz*t;
+  if((x-coin.x)**2+(z-coin.z)**2>radius*radius)return false;
+  const boardY=from.y+(to.y-from.y)*t;
+  const surface=terrainHeight(coin.x,coin.z);
+  // Grounded/ollie/hover contact is possible, but not a distant overhead jump.
+  return Number.isFinite(boardY) && boardY>=surface-.50 && boardY<=surface+2.12;
+}
+
+/** Token Rush power is still automatic: the board steers toward the next coin.
+ * However the pickup itself MUST happen near the board, not 13m ahead and
+ * 20m sideways. This prevents pickups that appear to happen at the camera.
+ */
+export function tokenRushMagnetCanCollect(s,coin,from,to,terrainHeight){
+  if(!s||s.gameMode!=="token"||!s.icecreamHover||s.powerTime<=0||s.recovery)return false;
+  return sweptStarTokenPickup(from,to,coin,terrainHeight,1.02);
 }

@@ -13,7 +13,7 @@ import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushP
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower, ICECREAM_DURATION } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
-import { getSnowModeChunk, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, maybeSpawnTokenRushIcecreamPower, tokenRushMagnetCanCollect } from "./snow64TokenRush";
+import { getSnowModeChunk, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, maybeSpawnTokenRushIcecreamPower, tokenRushMagnetCanCollect, sweptStarTokenPickup } from "./snow64TokenRush";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
@@ -33,6 +33,7 @@ import Snow360CloudRamp from "./Snow360CloudRamps";
 import Snow64CloudLayer from "./Snow64CloudLayer";
 import Snow64SundaeTrees from "./Snow64SundaeTrees";
 import Snow64StarTokens from "./Snow64StarTokens";
+import Snow360TokenRushCandyCanes from "./Snow360TokenRushCandyCanes";
 import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
 import Snow64IcecreamPowerAura from "./Snow64IcecreamPowerAura";
 import Snow360IcecreamPowerScene from "./Snow360IcecreamPowerScene";
@@ -518,7 +519,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
     <Terrain index={index} mobile={mobile} />
     <Snow64CloudLayer index={index} mobile={mobile} groundY={groundY} ramps={data.ramps} />
     <group name="Snow360Trees"><Snow64SundaeTrees trees={data.trees} groundY={groundY} mobile={mobile} /></group>
-    {obstacleLibrary ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
+    {obstacleLibrary && gameMode !== "token" ? <Snow64ObstacleField rocks={data.rocks} stateRef={stateRef} groundY={groundY} data={obstacleLibrary}/>
       : rockModel ? <SnowGLBInstances asset={rockModel} type="rock" items={data.rocks}
       hidden={r=>stateRef.current.consumedRocks.has(r.id)}
       pose={r=>({position:[r.x,groundY(r.x,r.z),r.z],rotation:[0,.8,0],
@@ -526,6 +527,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
       : data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
     {data.ramps.map(r=><Snow360CloudRamp key={r.id} {...r} groundHeight={groundY(r.x,r.z)} />)}
     <Snow64StarTokens items={data.coins} groundY={groundY} collectedRef={collectedRef} />
+    {gameMode === "token" && <Snow360TokenRushCandyCanes markers={data.candyCanes} groundY={groundY} />}
     {data.banners.map(c=><CourseMarker key={c.id} {...c} mobile={mobile} />)}
   </>;
 });
@@ -749,7 +751,7 @@ function initialState(cameraMode = 0, gameMode = "standard") {
     icecreamCarveStart:0, icecreamCarveCenter:0, icecreamCarveDirection:1, icecreamRockTargetId:null,
     scoreGainEvents:[],
     rockExplosions:[], rockShattered:0,
-    consumedRamps:new Set(),consumedRocks:new Set(),hitRocks:new Set(),
+    consumedRamps:new Set(),consumedRocks:new Set(),hitRocks:new Set(),missedTokens:new Set(),
   };
 }
 function safeHud(s) {
@@ -1076,8 +1078,8 @@ function icecreamRockToChase(s, chunks) {
 }
 
 /** Follow the next uncollected token rather than targeting rocks in Token Rush.
- * The magnet collects close tokens even if the rider is a lane away, so steering
- * remains smooth and playful instead of jerking sideways at every pickup.
+ * Pickups require real close snowboard contact; the automatic steering
+ * targets tokens early so the powered rider can reach each star in time.
  */
 function icecreamTokenToChase(s,chunks,collected){
   let locked=null,candidate=null,best=Infinity;
@@ -1218,6 +1220,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       pruneSnowVisited(s.consumedRocks,chunkIndex);
       pruneSnowVisited(s.hitRocks,chunkIndex);
       pruneSnowVisited(collectedRef.current,chunkIndex);
+      pruneSnowVisited(s.missedTokens,chunkIndex);
     }
     const localChunks=nearby.current.chunks;
     const playing=phaseRef.current==="playing";
@@ -1547,12 +1550,17 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
             // sequence should never shatter a rock far below the board.
             if (powered && s.icecreamScene===2 && s.air>3.2) continue;
             if (!powered && s.hitRocks.has(rock.id)) continue;
-            const obstacle=getSnow64ObstacleParams(rock);
-            const contact = powered
-              ? (snow64ObstacleHit(from,end,rock,groundY,.62,true)
-                ?? icecreamPathHit(from,end,rock,rock.size*1.18+.9))
-              : (snow64ObstacleHit(from,end,rock,groundY,.32)
-                ?? sweptRockHit(from,end,rock,groundY,.32));
+            // Token Rush renders ONLY regular rocks, so use the same rock
+            // geometry for collisions. Never retain invisible crystal-shaped
+            // hitboxes from Standard's randomized obstacle library.
+            const obstacle=s.gameMode==="token" ? null : getSnow64ObstacleParams(rock);
+            const contact = s.gameMode==="token"
+              ? sweptRockHit(from,end,rock,groundY,.32)
+              : powered
+                ? (snow64ObstacleHit(from,end,rock,groundY,.62,true)
+                  ?? icecreamPathHit(from,end,rock,rock.size*1.18+.9))
+                : (snow64ObstacleHit(from,end,rock,groundY,.32)
+                  ?? sweptRockHit(from,end,rock,groundY,.32));
             if (contact) {
               if(powered) {
                 // Destruction is exclusive to the active Ice-cream Power.
@@ -1591,9 +1599,14 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         }
         if (!s.recovery) {
           for (const chunk of localChunks) for (const coin of chunk.coins) {
-            if (collectedRef.current.has(coin.id)) continue;
-            const magnet=tokenRushMagnetCanCollect(s,coin);
-            if (magnet || (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28)) {
+            // Missed coins must never turn into pickup bursts or count later.
+            if (collectedRef.current.has(coin.id) || s.missedTokens.has(coin.id)) continue;
+            // Test the actual board path, not the camera or a wide screen box.
+            // A swept test still catches fast legitimate contacts between frames.
+            const finish={x:s.x,z:s.z,y:s.worldY};
+            const normal=sweptStarTokenPickup(from,finish,coin,groundY,.80);
+            const magnet=tokenRushMagnetCanCollect(s,coin,from,finish,groundY);
+            if (normal || magnet) {
               collectedRef.current.add(coin.id); s.coins++;
               if(s.gameMode==="token"){
                 const earned=collectTokenRush(s);
@@ -1622,8 +1635,11 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         // Token Rush: passing a token breaks the streak. Once marked visited,
         // a missed token will not repeatedly reset the multiplier on later frames.
         if(s.gameMode==="token")for(const chunk of localChunks)for(const coin of chunk.coins){
-          if(!collectedRef.current.has(coin.id) && s.z<coin.z-3){
-            collectedRef.current.add(coin.id);
+          if(!collectedRef.current.has(coin.id) && !s.missedTokens.has(coin.id) && s.z<coin.z-3){
+            // NEVER put a missed coin into collectedRef: the star renderer
+            // interprets that flag as an actual pickup and plays its pop VFX.
+            // Keep the missed coin visible behind the rider until chunk unload.
+            s.missedTokens.add(coin.id);
             if(s.tokenStreak>0){missTokenRush(s);s.lastText="STREAK LOST • COLLECT THE NEXT TOKEN!";s.textUntil=s.t+1.0;}
           }
         }
