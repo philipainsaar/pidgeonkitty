@@ -13,7 +13,7 @@ import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushP
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower, ICECREAM_DURATION } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
-import { getSnowModeChunk, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, maybeSpawnTokenRushIcecreamPower, tokenRushScoreSpeedScale, tokenRushArcadeHandling, tokenRushMagnetCanCollect, sweptStarTokenPickup } from "./snow64TokenRush";
+import { getSnowModeChunk, applyTokenRushRecoveryRoute, makeTokenRushRecoveryStraight, makeTokenRushSkyStarTrail, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, maybeSpawnTokenRushIcecreamPower, tokenRushScoreSpeedScale, tokenRushArcadeHandling, tokenRushMagnetCanCollect, sweptStarTokenPickup } from "./snow64TokenRush";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
@@ -64,9 +64,9 @@ const ICECREAM_SKY_LANDING_SECONDS = 2.65;
 const ICECREAM_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-safe after Ice-cream Power.
 // Keep steering through the FIRST real tokens as the faster boost slows down.
 // This is a finite hands-off handoff, not permanent auto-play.
-const TOKEN_RUSH_EXIT_GUIDE_SECONDS = 3.15;
-const TOKEN_RUSH_EXIT_GUIDE_STARS = 2;
-const TOKEN_RUSH_EXIT_MAX_LATERAL_SPEED = 19.0;
+const TOKEN_RUSH_EXIT_GUIDE_SECONDS = 1.65;
+const TOKEN_RUSH_EXIT_GUIDE_STARS = 1;
+const TOKEN_RUSH_EXIT_MAX_LATERAL_SPEED = 10.0;
 // V33: powered snowboarding gets its own visible left/right slalom movement.
 // The old hover movement used the much weaker airborne steering limit (5).
 const ICECREAM_CARVE_AMPLITUDE = 4.45;
@@ -556,7 +556,7 @@ function Snow360TokenAbsorption({stateRef}){
       if(p>=1)continue;
       // Ease into the rider's current board position in world coordinates.
       const ease=p*p*(3-2*p);
-      const sourceY=groundY(ev.x,ev.z)+1.30;
+      const sourceY=groundY(ev.x,ev.z)+1.30+(ev.skyLift||0);
       const destinationY=s.worldY+.66;
       dummy.position.set(lerp(ev.x,s.x,ease),
         lerp(sourceY,destinationY,ease)+Math.sin(p*Math.PI)*.42,
@@ -577,10 +577,24 @@ function Snow360TokenAbsorption({stateRef}){
 }
 
 const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mobile, gameMode, tokenOmitVersion}) {
-  const data = useMemo(() => getSnowModeChunk(index,gameMode), [index,gameMode]);
+  const baseData = useMemo(() => getSnowModeChunk(index,gameMode), [index,gameMode]);
+  // The renderer and collision logic share one per-run token/rock route.
+  // Curved landing previews and airborne Sky Surf stars are BOTH resolved
+  // here, without mutating the cached endless-course chunks.
+  const data = useMemo(() => gameMode==="token"
+    ? applyTokenRushRecoveryRoute(baseData,stateRef.current) : baseData,
+    [baseData,gameMode,stateRef,tokenOmitVersion]);
   const visibleCoins=useMemo(()=>gameMode==="token"
     ? data.coins.filter(coin=>!stateRef.current?.replacedTokens?.has(coin.id))
     : data.coins,[data,gameMode,stateRef,tokenOmitVersion]);
+  // Reuse the exact original holographic yellow 3D star meshes even in the
+  // clouds. The visual groundY includes the same skyLift as the swept
+  // collision test, with no duplicate overlay or bonus-token geometry.
+  const skyTokenLiftByXZ=useMemo(()=>new Map(visibleCoins
+    .filter(c=>Number.isFinite(c.skyLift))
+    .map(c=>[`${c.x}|${c.z}`,c.skyLift])),[visibleCoins]);
+  const tokenGroundY=useCallback((x,z)=>groundY(x,z)+
+    (skyTokenLiftByXZ.get(`${x}|${z}`)||0),[skyTokenLiftByXZ]);
   const rockModel=useSnowModel("rock");
   const obstacleLibrary=useSnow64Obstacles();
   return <>
@@ -595,7 +609,7 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
         dimensions:[r.size*2,r.size*1.6,r.size*2.2]})}/>
       : data.rocks.map(r=><Rock key={r.id} {...r} stateRef={stateRef} />)}
     {data.ramps.map(r=><Snow360CloudRamp key={r.id} {...r} groundHeight={groundY(r.x,r.z)} />)}
-    <Snow64StarTokens items={visibleCoins} groundY={groundY} collectedRef={collectedRef} />
+    <Snow64StarTokens items={visibleCoins} groundY={tokenGroundY} collectedRef={collectedRef} />
     {gameMode === "token" && <Snow360TokenRushCandyCanes markers={data.candyCanes} groundY={groundY} />}
     {data.banners.map(c=><CourseMarker key={c.id} {...c} mobile={mobile} />)}
   </>;
@@ -810,6 +824,8 @@ function initialState(cameraMode = 1, gameMode = "standard") {
     gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0, tokenRushPowerTier:1, tokenOmitVersion:0, replacedTokens:new Set(),
     tokenRushExitGuideUntil:0, tokenRushExitGuideStart:0,
     tokenRushExitGuideTokensRemaining:0, tokenAbsorbs:[],
+    tokenRushStraightStars:new Map(), tokenRushStraightRocks:new Map(),
+    tokenRushStraightStartZ:null, tokenRushStraightLastZ:null, tokenRushSkyStarLifts:new Map(),
     combo:0, score:gameMode==="token"?0:SNOW_INITIAL_SCORE, peakScore:gameMode==="token"?0:SNOW_INITIAL_SCORE, drainRate:gameMode==="token"?0:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, airQueue:[], completedAirTricks:[], airYaw:0, airPitch:0,
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
@@ -1086,6 +1102,14 @@ function beginIcecreamHover(s, supportHeight) {
     // A new boost owns the board: cancel the previous exit guide completely.
     s.tokenRushExitGuideUntil=0;
     s.tokenRushExitGuideTokensRemaining=0;
+    // A fresh power starts with the normal route, not stale landing shifts.
+    if(s.tokenRushStraightStars?.size || s.tokenRushStraightRocks?.size){
+      s.tokenRushStraightStars.clear();
+      s.tokenRushStraightRocks.clear();
+      s.tokenRushStraightStartZ=null;
+      s.tokenRushStraightLastZ=null;
+      s.tokenOmitVersion=(s.tokenOmitVersion||0)+1;
+    }
   }
   s.icecreamCarveStart = s.t;
   s.icecreamCarveCenter = clamp(s.x, -4, 4);
@@ -1093,7 +1117,7 @@ function beginIcecreamHover(s, supportHeight) {
   resetAirTrickChain(s);
 }
 
-function finishIcecreamHover(s, supportHeight) {
+function finishIcecreamHover(s, supportHeight, collected) {
   if (!s.icecreamHover) return;
   // Physically end hover immediately, but visually ease the last meter back to
   // the snow. Collision detection remains at the real ground surface.
@@ -1117,6 +1141,11 @@ function finishIcecreamHover(s, supportHeight) {
     s.tokenRushExitGuideStart=s.t;
     s.tokenRushExitGuideUntil=s.t+TOKEN_RUSH_EXIT_GUIDE_SECONDS;
     s.tokenRushExitGuideTokensRemaining=TOKEN_RUSH_EXIT_GUIDE_STARS;
+    // Bring the next REAL stars further downhill without changing their
+    // lateral curves. Clean the flight-only elevations before laying out
+    // this new safe post-power preview route.
+    s.tokenRushSkyStarLifts?.clear();
+    makeTokenRushRecoveryStraight(s,collected);
   }
   // Hand control back gracefully instead of carrying a full-powered sideways
   // slalom velocity into the 2-second normal-riding collision shield.
@@ -1127,7 +1156,7 @@ function finishIcecreamHover(s, supportHeight) {
   s.icecreamPaidTricks = 0;
   s.icecreamRockTargetId = null;
   resetAirTrickChain(s);
-  s.lastText = s.gameMode==="token" ? "STAR ROUTE • SMOOTH LANDING" : "ICE-CREAM SHIELD • 2s SAFE LANDING";
+  s.lastText = s.gameMode==="token" ? "LOOK AHEAD • STEER THE CURVE" : "ICE-CREAM SHIELD • 2s SAFE LANDING";
   s.textUntil = s.t + 1.1;
 }
 
@@ -1361,7 +1390,22 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       pruneSnowVisited(s.missedTokens,chunkIndex);
       pruneSnowVisited(s.replacedTokens,chunkIndex);
     }
-    const localChunks=nearby.current.chunks;
+    // Release the per-run post-power lane only after it is hundreds of metres
+    // behind all rendered course chunks. This avoids popping tokens/rocks back
+    // to their default positions while they are still on camera, and avoids
+    // cloning chunk arrays for the rest of an endless Token Rush session.
+    if(s.gameMode==="token" && s.tokenRushStraightStars?.size &&
+       Number.isFinite(s.tokenRushStraightLastZ) &&
+       s.z < s.tokenRushStraightLastZ-360){
+      s.tokenRushStraightStars.clear();
+      s.tokenRushStraightRocks?.clear();
+      s.tokenRushStraightStartZ=null;
+      s.tokenRushStraightLastZ=null;
+      s.tokenOmitVersion=(s.tokenOmitVersion||0)+1;
+    }
+    const localChunks=s.gameMode==="token" && (s.tokenRushStraightStars?.size || s.tokenRushSkyStarLifts?.size)
+      ? nearby.current.chunks.map(chunk=>applyTokenRushRecoveryRoute(chunk,s))
+      : nearby.current.chunks;
     const playing=phaseRef.current==="playing";
     const left=keyRef.current.left?1:0,right=keyRef.current.right?1:0;
     const tuck=(keyRef.current.tuck || keyRef.current.touchTuck) && playing;
@@ -1448,7 +1492,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       s.icecreamCollisionGrace=Math.max(0,s.icecreamCollisionGrace-dt);
       s.powerTime=Math.max(0,s.powerTime-dt);
       if (s.powerTime <= 0 && s.icecreamHover) {
-        finishIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
+        finishIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height,collectedRef.current);
         onSound("powerEnd");
       }
       s.powerAutoJumpDelay=Math.max(0,s.powerAutoJumpDelay-dt);
@@ -1568,7 +1612,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           const timeLeft=s.tokenRushExitGuideUntil-s.t;
           const fadeOut=clamp(timeLeft/.70,0,1);
           const guideVelocity=tokenRushExitCarveVelocity(s,localChunks,collectedRef.current);
-          const blended=lerp(lateralTarget,guideVelocity,fadeOut);
+          const blended=lerp(lateralTarget,guideVelocity,fadeOut*.28);
           s.velX=lerp(s.velX,blended,Math.min(1,dt*13));
           // The board visibly banks into the guided turns instead of sliding
           // sideways while its steering pose suggests it is going straight.
@@ -1824,7 +1868,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
                 // Only real close passes create a short, world-space candy
                 // suction trail. No screen/camera-based pickup distances.
                 s.tokenAbsorbs ||= [];
-                s.tokenAbsorbs.push({id:coin.id,x:coin.x,z:coin.z,at:s.t});
+                s.tokenAbsorbs.push({id:coin.id,x:coin.x,z:coin.z,skyLift:coin.skyLift||0,at:s.t});
                 const earned=collectTokenRush(s);
                 s.score+=earned;
                 if(s.powerTime<=0 && s.tokenRushExitGuideUntil>s.t &&
@@ -1871,18 +1915,22 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         }
         // Floating rare icecreamPower: collected by crossing its actual position.
         if (!s.recovery && icecreamPowerCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
-          // Token Rush always chooses Scene 1. Standard retains the original
-          // randomized Scene 1 / Scene 2 selection and automatic tricks.
-          s.icecreamScene=s.gameMode==="token" ? 1 : (Math.random()<ICECREAM_SKY_SCENE_CHANCE?2:1);
+          // Both modes now choose randomly. Token Rush Scene 2 flies through
+          // the real clouds and absorbs AIRBORNE tokens without camera cuts.
+          s.icecreamScene=Math.random()<ICECREAM_SKY_SCENE_CHANCE?2:1;
           // x2 exists ONLY for a ten-star streak. Picking up the reward
           // doesn't create additional fake points or stack speed tiers.
           const pickedPowerTier=s.gameMode==="token" && s.tokenStreak>=10 ? 2 : 1;
           if(s.gameMode==="token")s.tokenRushPowerTier=pickedPowerTier;
           activateIcecreamPower(s);
           beginIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
+          if(s.gameMode==="token" && s.icecreamScene===2){
+            makeTokenRushSkyStarTrail(s,collectedRef.current);
+          }
           if(s.gameMode!=="token")s.score+=450;
           s.lastText=s.gameMode==="token"
-            ? `✦ ICE-CREAM MAGNET • ${s.tokenRushPowerTier===2?"×2 SPEED!":"COMBO RESET"} ✦`
+            ? (s.icecreamScene===2 ? "✦ SKY STAR SURF • FLY & COLLECT! ✦"
+              : `✦ ICE-CREAM MAGNET • ${s.tokenRushPowerTier===2?"×2 SPEED!":"COMBO RESET"} ✦`)
             : s.icecreamScene===2
               ? "✦ ICE-CREAM SKY SURF! BIG AIR CLOUDS! ✦"
               : "✦ ICE-CREAM POWER! SUPER SPEED + AUTO TRICKS! ✦";
@@ -2193,6 +2241,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
     // close-ups, rear high-speed chase, and rock-shatter action shots.
     const director=icecreamCamera.current;
     const icecreamActive=playing && s.icecreamHover && s.powerTime>0 && !s.recovery;
+    // Token Rush Scene 2 deliberately retains the player's chosen camera
+    // while the board and cloud GLBs still move through the sky.
+    const allowIcecreamCamera=icecreamActive && !(s.gameMode==="token" && s.icecreamScene===2);
     let icecreamMix=0;
     let icecreamCut=false;
     let icecreamAnchorValid=false;
@@ -2200,7 +2251,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
     let elevation=baseElevation;
     let radius=baseRadius; // Also fixed during recovery: no crash zoom-out.
     let desiredFov=baseFov;
-    if(icecreamActive){
+    if(allowIcecreamCamera){
       if(!director.active){
         director.active=true;
         director.startAt=s.t;

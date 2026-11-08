@@ -3,7 +3,7 @@
  * Each three-row stretch gets one reachable star token; ramps are completely
  * absent from rendering AND collisions. Rocks, trees, terrain remain.
  */
-import { getSnowChunk, SNOW_CHUNK_ROWS, SNOW_ROW_STEP } from "./snow64Endless";
+import { getSnowChunk, SNOW_CHUNK_ROWS, SNOW_ROW_STEP, snowChunkIndex } from "./snow64Endless";
 export const TOKEN_RUSH_MAX_HITS=3;
 export const TOKEN_RUSH_BASE_POINTS=100;
 const lanes=[-7.4,-3.8,0,3.8,7.4];
@@ -54,6 +54,154 @@ function tokenRushGLBRock(rock) {
   return null;
 }
 
+/** The player follows the stars, so a rock must not sit directly behind
+ * a freshly collected token. Test BOTH the interpolated token slalom AND a
+ * generous trailing pocket after each star, in real world coordinates.
+ * This also preserves honest mesh-aware GLB collision instead of disabling it.
+ */
+function tokenRouteXAt(z,coins){
+  let prev=null,next=null;
+  for(const coin of coins){
+    if(coin.z>=z && (!prev||coin.z<prev.z))prev=coin;
+    if(coin.z<=z && (!next||coin.z>next.z))next=coin;
+  }
+  if(prev&&next&&prev.z!==next.z){
+    const a=Math.max(0,Math.min(1,(prev.z-z)/(prev.z-next.z)));
+    return prev.x+(next.x-prev.x)*a;
+  }
+  return (next||prev)?.x ?? 0;
+}
+function tokenRockPositionSafe(x,z,size,coins,markers=[]){
+  const clearance=size+2.80;
+  if(Math.abs(x-tokenRouteXAt(z,coins))<clearance)return false;
+  // Extra clearance AFTER a star: the first 15m downhill must not hide a rock
+  // just behind the token, even when the following star starts a new turn.
+  for(const coin of coins){
+    if(coin.z>=z && coin.z-z<=15.0 && Math.abs(x-coin.x)<size+3.15)return false;
+  }
+  if(markers.some(m=>Math.hypot(m.x-x,m.z-z)<size+1.0))return false;
+  return true;
+}
+const ROCK_LANE_ALTERNATIVES=[-10.55,-9.2,-7.4,-5.7,-3.8,-1.7,0,1.7,3.8,5.7,7.4,9.2,10.55];
+function safeRockX(rock,coins,markers=[],straightClearance=0){
+  const isSafe=x=>tokenRockPositionSafe(x,rock.z,rock.size,coins,markers) &&
+    (!straightClearance || Math.abs(x-coins[0].x)>=rock.size+straightClearance);
+  if(isSafe(rock.x))return rock.x;
+  // Keep the obstacle a visible, real Rock1..Rock7 mesh. Move it sideways
+  // rather than deleting the danger or allowing an unfair instant collision.
+  for(const x of [...ROCK_LANE_ALTERNATIVES].sort((a,b)=>Math.abs(a-rock.x)-Math.abs(b-rock.x))){
+    if(isSafe(x))return x;
+  }
+  // If the entire track is unsafe, omit this single rock instead of placing
+  // it in the token collection lane. This never affects Mode 1.
+  return null;
+}
+
+/** A per-run, visual + physical override for a short straight after Ice Cream
+ * Power. The cached deterministic course is never mutated: render and physics
+ * both read these SAME remapped coordinates, including every GLB hitbox.
+ */
+export function applyTokenRushRecoveryRoute(chunk,state){
+  if(!chunk || state?.gameMode!=="token")return chunk;
+  const stars=state.tokenRushStraightStars;
+  const movedRocks=state.tokenRushStraightRocks;
+  const skyLifts=state.tokenRushSkyStarLifts;
+  if(!stars?.size && !movedRocks?.size && !skyLifts?.size)return chunk;
+  // The exact same modified world coordinates go to the GLB scene AND physics.
+  const coins=chunk.coins.map(c=>{
+    const p=stars?.get(c.id);
+    const lift=skyLifts?.get(c.id);
+    if(!p && lift===undefined)return c;
+    return {...c,x:p?.x??c.x,z:p?.z??c.z,
+      ...(lift!==undefined?{skyLift:lift}:{})};
+  });
+  const rocks=movedRocks?.size ? chunk.rocks.flatMap(r=>{
+    if(!movedRocks.has(r.id))return [r];
+    const x=movedRocks.get(r.id);
+    return x===null?[]:[{...r,x}];
+  }):chunk.rocks;
+  // Corner signposts move along with their tokens, not remain at old bends.
+  const candyCanes=chunk.candyCanes.map(p=>{
+    const row=/^cane-(\d+)-/.exec(p.id)?.[1];
+    const token=chunk.coins.find(c=>c.id===`coin-${row}`);
+    const moved=token && stars?.get(token.id);
+    return moved?{...p,z:p.z+(moved.z-token.z)}:p;
+  });
+  return {...chunk,coins,rocks,candyCanes};
+}
+
+/** After landing, put the NEXT stars farther DOWNHILL, but keep their actual
+ * left/right slalom positions. Players can see, anticipate and steer through
+ * the bends, rather than being forced into the old straight token corridor.
+ * Temporarily adjust the GLB rocks against this NEW route at the same time.
+ */
+export function makeTokenRushRecoveryStraight(state,collected){
+  if(!state || state.gameMode!=="token")return 0;
+  const center=snowChunkIndex(-state.z);
+  const chunks=[center,center+1,center+2,center+3].map(i=>getSnowModeChunk(i,"token")).filter(Boolean);
+  const all=chunks.flatMap(c=>c.coins);
+  const upcoming=all.filter(c=>c.z<state.z-1.2 &&
+    !collected?.has(c.id) && !state.missedTokens?.has(c.id) &&
+    !state.replacedTokens?.has(c.id)).sort((a,b)=>b.z-a.z).slice(0,7);
+  if(!upcoming.length)return 0;
+  const delays=[32,29,25,20,15,10,5]; // extra look-ahead, smooth original slalom
+  const moved=new Map(upcoming.map((c,i)=>[c.id,{x:c.x,z:c.z-delays[i]}]));
+  const route=all.map(c=>{
+    const p=moved.get(c.id);
+    return p?{...c,...p}:c;
+  });
+  const nearStart=state.z;
+  const last=moved.get(upcoming[upcoming.length-1].id).z;
+  const rocks=new Map();
+  for(const chunk of chunks)for(const rock of chunk.rocks){
+    if(rock.z>nearStart+5 || rock.z<last-22)continue;
+    const safe=safeRockX(rock,route);
+    if(safe!==rock.x)rocks.set(rock.id,safe);
+  }
+  state.tokenRushStraightStars=moved;
+  state.tokenRushStraightRocks=rocks;
+  state.tokenRushStraightStartZ=nearStart;
+  state.tokenRushStraightLastZ=last;
+  state.tokenOmitVersion=(state.tokenOmitVersion||0)+1;
+  return upcoming.length;
+}
+
+// Scene 2 uses the SAME ground-route stars, lifted into a real airborne
+// slalom aligned with the board's smooth cloud flight. No free points, fake
+// screen-space pickups or generated bonus tokens. Collision remains physical.
+function easeCloud(t){const x=Math.max(0,Math.min(1,t));return x*x*x*(x*(x*6-15)+10);}
+function cloudLiftAt(seconds){
+  return 14.5*easeCloud(seconds/1.65)*easeCloud((9-seconds)/2.65);
+}
+export function makeTokenRushSkyStarTrail(state,collected){
+  if(!state || state.gameMode!=="token" || state.icecreamScene!==2)return 0;
+  const center=snowChunkIndex(-state.z);
+  const chunks=Array.from({length:5},(_,i)=>getSnowModeChunk(center+i,"token")).filter(Boolean);
+  const startSpeed=Math.max(0,state.speed||0);
+  const maxSpeed=21.5*tokenRushScoreSpeedScale(state.score)*
+    (state.tokenRushPowerTier===2 && state.tokenStreak>=10 ? 2 : 1);
+  const predictedDistance=time=>maxSpeed*time+(startSpeed-maxSpeed)*(1-Math.exp(-2*time))/2;
+  const lifts=new Map();
+  for(const coin of chunks.flatMap(c=>c.coins)){
+    if(coin.z>=state.z-1 || collected?.has(coin.id) || state.missedTokens?.has(coin.id) || state.replacedTokens?.has(coin.id))continue;
+    const distance=state.z-coin.z;
+    if(distance>predictedDistance(9.1))continue;
+    let low=0,high=9;
+    for(let i=0;i<17;i++){
+      const mid=(low+high)/2;
+      if(predictedDistance(mid)<distance)low=mid;else high=mid;
+    }
+    const predictedTime=(low+high)/2;
+    // The collectible's bobbing world Y is base snow + 1.3 + this lift.
+    // The rider/board follows the same envelope. A slight lead on the
+    // approach avoids a star ending up well above a rapidly climbing board.
+    lifts.set(coin.id,cloudLiftAt(predictedTime));
+  }
+  state.tokenRushSkyStarLifts=lifts;
+  state.tokenOmitVersion=(state.tokenOmitVersion||0)+1;
+  return lifts.size;
+}
+
 export function getSnowModeChunk(index,mode="standard") {
   if(mode!=="token")return getSnowChunk(index);
   if(index<0)return null;
@@ -82,9 +230,18 @@ export function getSnowModeChunk(index,mode="standard") {
       candyCanes.push({id:`cane-${row}-${side}`,x,z,side,phase:row*.19+side*1.7});
     }
   }
-  // Real visible/collidable Rock1..Rock7 variants from snow64-obstacles.glb.
-  // No crystals, no RockCrystal families, and never the old snow64-rock.glb.
-  const rocks=base.rocks.map(tokenRushGLBRock).filter(Boolean);
+  // Preserve a genuinely safe collection route across chunk boundaries,
+  // not merely a clearance circle around the star itself. Rocks remain real
+  // Rock1..Rock7 meshes with collision at their exact relocated positions.
+  const neighborCoins=[];
+  for(let row=Math.max(0,index*SNOW_CHUNK_ROWS-12);
+      row<(index+1)*SNOW_CHUNK_ROWS+18;row++){
+    if(row%3===0){const c=tokenForRow(row);if(c)neighborCoins.push(c);}
+  }
+  const rocks=base.rocks.map(tokenRushGLBRock).filter(Boolean).flatMap(rock=>{
+    const x=safeRockX(rock,neighborCoins,candyCanes);
+    return x===null?[]:[{...rock,x}];
+  });
   const data={...base,rocks,ramps:[],coins,candyCanes};
   cache.set(index,data);
   while(cache.size>12)cache.delete(cache.keys().next().value);
@@ -177,9 +334,11 @@ export function sweptStarTokenPickup(from,to,coin,terrainHeight,radius=.80){
   const x=from.x+dx*t,z=from.z+dz*t;
   if((x-coin.x)**2+(z-coin.z)**2>radius*radius)return false;
   const boardY=from.y+(to.y-from.y)*t;
-  const surface=terrainHeight(coin.x,coin.z);
+  const surface=terrainHeight(coin.x,coin.z)+(coin.skyLift||0);
   // Grounded/ollie/hover contact is possible, but not a distant overhead jump.
-  return Number.isFinite(boardY) && boardY>=surface-.50 && boardY<=surface+2.12;
+  const sky=Number.isFinite(coin.skyLift) && coin.skyLift>0.01;
+  return Number.isFinite(boardY) && boardY>=surface-(sky?1.10:.50) &&
+    boardY<=surface+(sky?2.55:2.12);
 }
 
 /** Token Rush power is still automatic: the board steers toward the next coin.
