@@ -2,7 +2,7 @@
 
 import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Html, useGLTF } from "@react-three/drei";
+import { useGLTF } from "@react-three/drei";
 import Snow360PerformanceRecorder from "./Snow360PerformanceRecorder";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import * as THREE from "three";
@@ -13,6 +13,7 @@ import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushP
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower, ICECREAM_DURATION } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
+import { getSnowModeChunk, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush } from "./snow64TokenRush";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
@@ -509,8 +510,8 @@ function CourseMarker({z,side,mobile=false}){
     })}
   </group>;
 }
-const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mobile}) {
-  const data = useMemo(() => getSnowChunk(index), [index]);
+const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mobile, gameMode}) {
+  const data = useMemo(() => getSnowModeChunk(index,gameMode), [index,gameMode]);
   const rockModel=useSnowModel("rock");
   const obstacleLibrary=useSnow64Obstacles();
   return <>
@@ -528,10 +529,10 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
     {data.banners.map(c=><CourseMarker key={c.id} {...c} mobile={mobile} />)}
   </>;
 });
-function Course({ collectedRef, distance, stateRef, mobile }) {
+function Course({ collectedRef, distance, stateRef, mobile, gameMode }) {
   const center = snowChunkIndex(distance);
   const indexes = useMemo(() => Array.from({length:5},(_,i)=>center+i-1).filter(i=>i>=0),[center]);
-  return <>{indexes.map(index=><CourseChunk key={index} index={index} collectedRef={collectedRef} stateRef={stateRef} mobile={mobile} />)}</>;
+  return <>{indexes.map(index=><CourseChunk key={`${gameMode}-${index}`} index={index} collectedRef={collectedRef} stateRef={stateRef} mobile={mobile} gameMode={gameMode} />)}</>;
 }
 
 function Mountains({stateRef}) {
@@ -730,12 +731,13 @@ function snow360CameraOffset(mode, mobile) {
   }
 }
 
-function initialState(cameraMode = 0) {
+function initialState(cameraMode = 0, gameMode = "standard") {
   return {
     x:0,z:0,air:0,worldY:0,vy:0,speed:15.8,velX:0,steer:0,t:0,launchSource:"none",launchSpeed:0,
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
     peakAir:0, flightTime:0, recovery:null,
-    combo:0, score:SNOW_INITIAL_SCORE, peakScore:SNOW_INITIAL_SCORE, drainRate:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
+    gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0,
+    combo:0, score:gameMode==="token"?0:SNOW_INITIAL_SCORE, peakScore:gameMode==="token"?0:SNOW_INITIAL_SCORE, drainRate:gameMode==="token"?0:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, airQueue:[], completedAirTricks:[], airYaw:0, airPitch:0,
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
     armedTrick:null, // Gesture drawn shortly before takeoff, activated on the next jump/ramp.
@@ -753,7 +755,7 @@ function initialState(cameraMode = 0) {
 function safeHud(s) {
   return {
     speed:Math.round(s.speed*3.6),
-    cameraMode:s.cameraMode,
+    cameraMode:s.cameraMode, gameMode:s.gameMode, tokenStreak:s.tokenStreak, tokenMultiplier:s.tokenMultiplier, livesRemaining:Math.max(0,TOKEN_RUSH_MAX_HITS-s.hits),
     score:Math.ceil(Math.max(0,s.score)), peakScore:Math.floor(s.peakScore), drainRate:Math.round(s.drainRate*10)/10, distance:Math.max(0,Math.floor(-s.z)), time:s.t,
     combo:s.combo, coins:s.coins, hits:s.hits,
     powerRemaining:s.powerTime, icecreamScene:s.powerTime>0?s.icecreamScene:0, shieldRemaining:s.icecreamCollisionGrace, icecreamPowerReady:!!s.icecreamPower, rockShattered:s.rockShattered,
@@ -945,8 +947,10 @@ function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
   // A genuinely failed normal trick still follows the standard landing rules.
   const environmental = reason.startsWith("ROCK") || reason.startsWith("RAMP");
   if (s.recovery || s.powerTime > 0 || s.icecreamHover || (environmental && s.icecreamCollisionGrace > 0)) return;
-  const penalty = (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
+  const tokenMode=s.gameMode==="token";
+  const penalty = tokenMode ? 0 : (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
   s.score = Math.max(0,s.score - penalty);
+  if(tokenMode)missTokenRush(s);
   s.combo = 0;
   s.hits += 1;
   // Sample a fresh impact trajectory before slowing momentum. Rock/ramp
@@ -956,7 +960,7 @@ function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
   const fallenRider = createCrashRider(s, looseBoard, kind, Math.random, impact);
   s.recovery = {kind, t:0, duration:recoveryDuration(kind)+1.06, board:looseBoard, rider:fallenRider, hopLanded:false, pushedOff:false};
   s.powerAutoJumpDelay=2.0;
-  s.lastText = `${reason}  −${penalty} PTS`;
+  s.lastText = tokenMode ? `${reason}  •  ${Math.max(0,TOKEN_RUSH_MAX_HITS-s.hits)} LIVES LEFT` : `${reason}  −${penalty} PTS`;
   s.textUntil = s.t + 1.85;
   s.inAir = false;
   s.vy = 0;
@@ -1122,7 +1126,7 @@ function activateArmedTrick(s) {
   }
 }
 
-function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateRef, collectedRef, cameraOrbitRef, onHud, onFinish, onSound }) {
+function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueRef, stateRef, collectedRef, cameraOrbitRef, onHud, onFinish, onSound }) {
   const profile=getSnow360Rider(rider);
   const {scene, animations}=useGLTF(mobile?profile.mobile:profile.desktop);
   useMemo(()=>assertSnow360Clips(animations),[animations]);
@@ -1165,7 +1169,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
   const {camera}=useThree();
   useEffect(()=>{phaseRef.current=phase;},[phase]);
   useEffect(()=>{
-    stateRef.current=initialState(mobile ? 1 : 0); collectedRef.current.clear(); queueRef.current.length=0;
+    stateRef.current=initialState(mobile ? 1 : 0,gameMode); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;crashCameraBlend.current=0;
     icecreamCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null,actionFocus:null};
     nearby.current={index:-1,chunks:[]};
@@ -1176,7 +1180,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     if (plushVisual.current) {plushVisual.current.scale.set(1,1,1);plushVisual.current.rotation.set(0,0,0);plushVisual.current.position.set(0,0,0);}
     if (root.current) root.current.position.set(0,.1,0);
     if (crashBoard.current) crashBoard.current.visible=false;
-  },[runKey,stateRef,collectedRef,queueRef,camera,animator,mobile]);
+  },[runKey,gameMode,stateRef,collectedRef,queueRef,camera,animator,mobile]);
   useEffect(()=>{
     animator.setPose("SnowboardIdle","initial",{fadeSeconds:0});
     animator.update(0);
@@ -1188,7 +1192,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
     const dt=Math.min(rawDt,0.043),s=stateRef.current;
     const chunkIndex=snowChunkIndex(-s.z);
     if (nearby.current.index!==chunkIndex) {
-      nearby.current={index:chunkIndex,chunks:[chunkIndex-1,chunkIndex,chunkIndex+1].filter(i=>i>=0).map(getSnowChunk)};
+      nearby.current={index:chunkIndex,chunks:[chunkIndex-1,chunkIndex,chunkIndex+1].filter(i=>i>=0).map(i=>getSnowModeChunk(i,s.gameMode))};
       pruneSnowVisited(s.consumedRamps,chunkIndex);
       pruneSnowVisited(s.consumedRocks,chunkIndex);
       pruneSnowVisited(s.hitRocks,chunkIndex);
@@ -1230,7 +1234,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         s.textUntil = s.t + .9;
         onSound("ollie");
       }
-      if (command.type === "trick") {
+      if (command.type === "trick" && s.gameMode!=="token") {
         const found=TRICKS.find(q=>q.key===command.key);
         const trick=found ? {...found,spins:found.spins&&command.direction===-1?-found.spins:found.spins} : null;
         if(trick && !s.inAir){
@@ -1260,11 +1264,12 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         s.icecreamExitLift *= Math.exp(-dt*7.0);
         if(s.icecreamExitLift<.006)s.icecreamExitLift=0;
       }
-      // Endless survival timer: drains every frame, even while chasing a lost board.
-      s.drainRate=snowDrainPerSecond(Math.max(0,-s.z));
-      s.score=Math.max(0,s.score-s.drainRate*dt);
-      // Arcade warning when the score has under ~5 seconds of runway.
-      if(s.score>0 && s.score<s.drainRate*5 && (!s.lastDangerAt||s.t-s.lastDangerAt>2.7)){
+      // Standard: the original score-drain survival. Token Rush: score is
+      // earned ONLY by picking up tokens; three wipeouts end the run instead.
+      s.drainRate=s.gameMode==="token" ? 0 : snowDrainPerSecond(Math.max(0,-s.z));
+      if(s.gameMode!=="token")s.score=Math.max(0,s.score-s.drainRate*dt);
+      // Arcade warning only applies to Standard mode.
+      if(s.gameMode!=="token" && s.score>0 && s.score<s.drainRate*5 && (!s.lastDangerAt||s.t-s.lastDangerAt>2.7)){
         s.lastDangerAt=s.t;onSound("danger");
       }
       // Only counts down while actually playing. Boost expiry refreshes the
@@ -1487,7 +1492,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
                 const earned=outcome.basePoints*Math.min(5,Math.max(1,s.combo));
                 s.score+=earned;
                 recordSnowPoints(s,earned);
-                const spawnedIcecreamPower=maybeSpawnIcecreamPower(s,[...localChunks,getSnowChunk(snowChunkIndex(-s.z)+2)]);
+                const spawnedIcecreamPower=s.gameMode==="token" ? false : maybeSpawnIcecreamPower(s,[...localChunks,getSnowChunk(snowChunkIndex(-s.z)+2)]);
                 const turns=((s.airYaw/Math.PI)%2+2)%2;
                 if(turns>.8&&turns<1.2)s.fakie=!s.fakie;
                 s.lastText=spawnedIcecreamPower ? "✦ RARE ICE-CREAM POWER AHEAD! ✦" : `CLEAN ${outcome.trickCount} TRICK${outcome.trickCount===1?"":"S"}! +${earned.toLocaleString()}`;
@@ -1562,13 +1567,34 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
           for (const chunk of localChunks) for (const coin of chunk.coins) {
             if (collectedRef.current.has(coin.id)) continue;
             if (Math.abs(s.z - coin.z) < 1.55 && Math.abs(s.x - coin.x) < 1.28) {
-              collectedRef.current.add(coin.id); s.coins++; s.score += TOKEN_POINTS; recordSnowPoints(s,TOKEN_POINTS); const spawnedIcecreamPower=maybeSpawnIcecreamPower(s,[...localChunks,getSnowChunk(snowChunkIndex(-s.z)+2)]); onSound("pickup");
-              s.lastText = spawnedIcecreamPower ? "✦ RARE ICE-CREAM POWER AHEAD! ✦" : `SHRED TOKEN +${TOKEN_POINTS}`; s.textUntil = s.t + (spawnedIcecreamPower ? 2 : 1.25);
+              collectedRef.current.add(coin.id); s.coins++;
+              if(s.gameMode==="token"){
+                const earned=collectTokenRush(s);
+                s.score+=earned;
+                s.lastText=`✦ TOKEN +${earned}  •  ×${s.tokenMultiplier} STREAK ✦`;
+                s.textUntil=s.t+1.35;
+                onSound("pickup");
+              }else{
+                s.score+=TOKEN_POINTS;
+                recordSnowPoints(s,TOKEN_POINTS);
+                const spawnedIcecreamPower=maybeSpawnIcecreamPower(s,[...localChunks,getSnowChunk(snowChunkIndex(-s.z)+2)]);
+                s.lastText=spawnedIcecreamPower ? "✦ RARE ICE-CREAM POWER AHEAD! ✦" : `SHRED TOKEN +${TOKEN_POINTS}`;
+                s.textUntil=s.t+(spawnedIcecreamPower?2:1.25);
+                onSound("pickup");
+              }
             }
           }
         }
+        // Token Rush: passing a token breaks the streak. Once marked visited,
+        // a missed token will not repeatedly reset the multiplier on later frames.
+        if(s.gameMode==="token")for(const chunk of localChunks)for(const coin of chunk.coins){
+          if(!collectedRef.current.has(coin.id) && s.z<coin.z-3){
+            collectedRef.current.add(coin.id);
+            if(s.tokenStreak>0){missTokenRush(s);s.lastText="STREAK LOST • COLLECT THE NEXT TOKEN!";s.textUntil=s.t+1.0;}
+          }
+        }
         // Floating rare icecreamPower: collected by crossing its actual position.
-        if (!s.recovery && icecreamPowerCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
+        if (s.gameMode!=="token" && !s.recovery && icecreamPowerCollision(s,{x:previousX,z:previousZ}, {x:s.x,z:s.z},groundY)){
           // Pick a scene afresh for EVERY collected power-up; neither one is
           // forced or disabled. Scene 1 is the previous thick-sprinkle scene.
           s.icecreamScene=Math.random()<ICECREAM_SKY_SCENE_CHANCE?2:1;
@@ -1583,8 +1609,8 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
         }
       }
       s.peakScore=Math.max(s.peakScore,s.score);
-      if(s.score<=0){
-        s.score=0;
+      if((s.gameMode==="token" && s.hits>=TOKEN_RUSH_MAX_HITS) || (s.gameMode!=="token" && s.score<=0)){
+        if(s.gameMode!=="token")s.score=0;
         phaseRef.current="finished";
         onSound("finish");
         onFinish(safeHud(s));
@@ -2142,9 +2168,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, keyRef, queueRef, stateR
   </>;
 }
 
-function Loading() {
-  return <Html center><div style={{color:"#fff",font:"800 15px monospace",whiteSpace:"nowrap",background:"#16405ba9",padding:18,borderRadius:8}}>LOADING RIDER...</div></Html>;
-}
+// Rider assets may temporarily suspend while the GLB loads. Keep this
+// in-canvas fallback free of DOM/React roots. The real Snow360 loading
+// screen already owns progress reporting, and rider readiness owns PLAY.
 // Only one explosion renderer is active at a time. A crystal shatter clone
 // used to copy a MeshBasicMaterial and then add a custom `emissive` property.
 // MeshBasicMaterial's shader has NO `emissive` uniform, so Three.js crashed at
@@ -2173,7 +2199,7 @@ function Snow360IcecreamShatterEffects({stateRef,mobile}){
   return <Snow64ExplosionVFX stateRef={stateRef} mobile={mobile}/>;
 }
 
-function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
+function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey,gameMode,keyRef,queueRef,cameraOrbitRef,onHud,onFinish,onSound,collectedRef,stateRef,distance}){
   return <Snow64ModelProvider><Snow64TextureProvider mobile={mobile}>
     <Snow360PerformanceRecorder phase={phase} stateRef={stateRef}/>
     <color attach="background" args={["#bfd9e6"]}/>
@@ -2185,13 +2211,13 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
     <ambientLight intensity={1.7}/>
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
-    <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef} mobile={mobile}/>
+    <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef} mobile={mobile} gameMode={gameMode}/>
     <Snow360IcecreamShatterEffects stateRef={stateRef} mobile={mobile}/>
     <IcecreamPowerCollectible stateRef={stateRef} mobile={mobile}/>
     <Mountains stateRef={stateRef}/>
     <Snow360RiderBoundary key={`${rider}:${mobile}:${assetAttempt}`} onError={onRiderError}>
-    <Suspense fallback={<Loading/>}>
-      <Rider rider={rider} onReady={onRiderReady} mobile={mobile} phase={phase} runKey={runKey} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
+    <Suspense fallback={null}>
+      <Rider rider={rider} onReady={onRiderReady} mobile={mobile} phase={phase} runKey={runKey} gameMode={gameMode} keyRef={keyRef} queueRef={queueRef} stateRef={stateRef} collectedRef={collectedRef} cameraOrbitRef={cameraOrbitRef} onHud={onHud} onFinish={onFinish} onSound={onSound}/>
     </Suspense>
     </Snow360RiderBoundary>
     <Snowfall mobile={mobile} stateRef={stateRef}/>
@@ -2209,7 +2235,7 @@ function formatTime(s){const m=Math.floor(s/60);const sec=(s%60).toFixed(2).padS
 
 /** Two independent touch zones allow true two-thumb multi-touch: steering with the
  * left finger while drawing tricks on the right. No WebGL raycasting required. */
-function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckChange, trickMode }) {
+function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckChange, trickMode, gameMode }) {
   const steering = useRef(null);
   const drawing = useRef(null);
   const strokePath = useRef(null);
@@ -2300,7 +2326,12 @@ function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckCha
       );
       const travelled = d.points.reduce((sum,p,i) => i ? sum + Math.hypot(p.x-d.points[i-1].x,p.y-d.points[i-1].y) : 0,0);
       const tap = travelled < 26 && span < 22;
-      if (trickMode === "buttons") {
+      if (gameMode==="token") {
+        // No gesture tricks or mid-air grabs in Token Rush: touch is Ollie only.
+        if(tap && !stateRef.current.inAir && !stateRef.current.recovery){
+          act({type:"jump",boost:clamp((elapsed-120)/750,0,1)});
+        }
+      } else if (trickMode === "buttons") {
         // In buttons mode the right touch area remains an Ollie pad. Swipe
         // recognition is disabled: only the visible trick icons perform tricks.
         if (tap && !stateRef.current.inAir && !stateRef.current.recovery) {
@@ -2343,12 +2374,12 @@ function MobileTouchControls({ inputRef, stateRef, act, phase, runKey, onTuckCha
       style={{...zone,left:0,width:"50%"}} onPointerDown={startSteer}
       onPointerMove={moveSteer} onPointerUp={endSteer}
       onPointerCancel={endSteer} onLostPointerCapture={endSteer} />
-    <div aria-label={trickMode==="buttons"?"Tap to Ollie, or use the trick icons":"Jump and trick touchpad: tap to jump or draw a trick pattern"}
+    <div aria-label={gameMode==="token"?"Tap to Ollie (Token Rush)":trickMode==="buttons"?"Tap to Ollie, or use the trick icons":"Jump and trick touchpad: tap to jump or draw a trick pattern"}
       style={{...zone,right:0,width:"50%"}} onPointerDown={startDrawing}
       onPointerMove={moveDrawing} onPointerUp={endDrawing}
       onPointerCancel={e=>endDrawing(e,true)}
       onLostPointerCapture={e=>endDrawing(e,true)}>
-      {trickMode==="draw" && <svg aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",overflow:"visible"}}>
+      {gameMode!=="token" && trickMode==="draw" && <svg aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",overflow:"visible"}}>
         <path ref={strokePath} fill="none" stroke="#ffe284" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"
           style={{filter:"drop-shadow(0 0 5px #ff9ca8)"}}/>
       </svg>}
@@ -2669,6 +2700,7 @@ export function Snow360Logo({ startScreen = false, mobile = false }) {
 }
 
 export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderStatus,renderActive=true}){
+  const [gameMode,setGameMode]=useState("standard");
   const [phase,setPhase]=useState("ready");
   const [runKey,setRunKey]=useState(0);
   const [mobile,setMobile]=useState(null);
@@ -2692,7 +2724,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
   const [soundOn,setSoundOn]=useState(true);
   const soundRef=useRef(true);
   const [best,setBest]=useState(0);
-  const [hud,setHud]=useState({icecreamScene:0,speed:57,score:SNOW_INITIAL_SCORE,peakScore:SNOW_INITIAL_SCORE,drainRate:snowDrainPerSecond(0),distance:0,time:0,combo:0,coins:0,hits:0,air:false,trick:""});
+  const [hud,setHud]=useState(()=>safeHud(initialState()));
   const [touchTuckFx,setTouchTuckFx]=useState(false);
   const sound=useCallback(kind=>{if(soundRef.current)playSnow64Sound(kind);},[]);
   const icecreamMusicActive=phase==="playing" && hud.powerRemaining>0;
@@ -2711,6 +2743,20 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
   const queue=useRef([]);
   const cameraOrbit=useRef({yaw:0,pitch:0,dragging:false});
   const state=useRef(initialState());
+  useEffect(()=>{
+    const setMode=mode=>{
+      const next=mode==="token"?"token":"standard";
+      if(lastPhase.current!=="ready")return;
+      setGameMode(next);
+      state.current=initialState(mobile?1:0,next);
+      collected.current.clear();
+      setHud(safeHud(state.current));
+    };
+    try{setMode(sessionStorage.getItem("snow360-game-mode"));}catch{}
+    const handle=e=>setMode(e.detail?.gameMode);
+    window.addEventListener("snow360-mode-change",handle);
+    return()=>window.removeEventListener("snow360-mode-change",handle);
+  },[mobile]);
   const collected=useRef(new Set());
   const lastPhase=useRef(phase);
   const lastHeldTrick=useRef(0);
@@ -2725,21 +2771,24 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
   useEffect(()=>{
     const m=window.matchMedia("(max-width: 720px), (pointer: coarse)");
     const update=()=>setMobile(m.matches);update();m.addEventListener?.("change",update);
-    try{setBest(Number(localStorage.getItem("pidgeonkitty-snow-64-best")||0));}catch{}
+    try{setBest(Number(localStorage.getItem(gameMode==="token"?"snow360-token-rush-best":"pidgeonkitty-snow-64-best")||0));}catch{}
     return()=>m.removeEventListener?.("change",update);
   },[]);
+  useEffect(()=>{
+    try{setBest(Number(localStorage.getItem(gameMode==="token"?"snow360-token-rush-best":"pidgeonkitty-snow-64-best")||0));}catch{}
+  },[gameMode]);
   const start=useCallback(()=>{
     if(!riderReady)return;
     input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;
-    queue.current.length=0;collected.current.clear();state.current=initialState(mobile?1:0);
+    queue.current.length=0;collected.current.clear();state.current=initialState(mobile?1:0,gameMode);
     cameraOrbit.current.yaw=0;cameraOrbit.current.pitch=0;cameraOrbit.current.dragging=false;
     // Start audio only on this user gesture (required by mobile browsers).
     if(soundRef.current)unlockSnow64Audio();
     setHud(safeHud(state.current));setRunKey(k=>k+1);setPhase("playing");sound("start");
-  },[sound,mobile,riderReady]);
+  },[sound,mobile,riderReady,gameMode]);
   const onFinish=useCallback(h=>{
     setHud(h);setPhase("finished");
-    setBest(b=>{const v=Math.max(b,h.peakScore);try{localStorage.setItem("pidgeonkitty-snow-64-best",String(v));}catch{}return v;});
+    setBest(b=>{const v=Math.max(b,h.peakScore);try{localStorage.setItem(h.gameMode==="token"?"snow360-token-rush-best":"pidgeonkitty-snow-64-best",String(v));}catch{}return v;});
   },[]);
   const pause=useCallback(()=>setPhase(p=>p==="playing"?"paused":p==="paused"?"playing":p),[]);
   const act=useCallback((command)=>{queue.current.push(command);},[]);
@@ -2767,7 +2816,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
         if(lastPhase.current==="ready"||lastPhase.current==="finished")start();
         else act({type:"jump",boost:e.shiftKey?1:0});
       }
-      if(/^[0-9]$/.test(key) || key === "f")act({type:"trick",key});
+      if(gameMode!=="token" && (/^[0-9]$/.test(key) || key === "f"))act({type:"trick",key});
       if(key==="c")act({type:"camera"});
       if(key==="p"||key==="escape")pause();
       if(key==="enter" && (lastPhase.current==="ready"||lastPhase.current==="finished"))start();
@@ -2781,9 +2830,9 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     const blur=()=>{input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;};
     window.addEventListener("keydown",down);window.addEventListener("keyup",up);window.addEventListener("blur",blur);
     return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);window.removeEventListener("blur",blur);};
-  },[act,start,pause]);
+  },[act,start,pause,gameMode]);
   const currentBest=Math.max(best,hud.peakScore);
-  return <main data-rider={rider} data-rider-ready={riderReady} data-game-phase={phase} data-colorama={retro?"on":"off"}
+  return <main data-rider={rider} data-game-mode={gameMode} data-rider-ready={riderReady} data-game-phase={phase} data-colorama={retro?"on":"off"}
     onClickCapture={e=>{
       // Desktop pointer clicks leave native buttons focused, which causes the
       // global key handler to ignore its subsequent keydown events. Remove
@@ -2833,6 +2882,58 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       .snow64-iconbtn{transition:background .10s ease,transform .10s ease}
       .snow64-iconbtn:active{transform:scale(.92);filter:brightness(1.3)}
       .snow64-iconbtn:focus-visible{outline:3px solid #fff1a3;outline-offset:1px}
+      /* Game-over / pause: compact cloud button, not inherited giant text.
+         The project-wide cloud stylesheet styles every main button, so the
+         more-specific selector and important sizing here are intentional. */
+      main[data-game-phase] button.snow360-change-game-mode {
+        appearance: none !important;
+        -webkit-appearance: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        align-self: center !important;
+        flex: 0 0 auto !important;
+        width: 252px !important;
+        max-width: 78vw !important;
+        height: 84px !important;
+        min-height: 0 !important;
+        padding: 0 18px !important;
+        margin: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        background: transparent var(--snow-cloud-wide) center / contain no-repeat !important;
+        box-shadow: none !important;
+        color: #fffaff !important;
+        font-family: Fredoka, system-ui, sans-serif !important;
+        font-size: 15px !important;
+        line-height: 1.1 !important;
+        font-weight: 900 !important;
+        text-align: center !important;
+        white-space: nowrap !important;
+        letter-spacing: .015em !important;
+        text-shadow: 0 1px 2px rgba(160,50,105,.5) !important;
+        cursor: pointer !important;
+        touch-action: manipulation !important;
+      }
+      main[data-game-phase] button.snow360-change-game-mode > span {
+        display: block !important;
+        font-family: Fredoka, system-ui, sans-serif !important;
+        font-size: 15px !important;
+        line-height: 1.1 !important;
+        letter-spacing: .015em !important;
+        font-weight: 900 !important;
+        white-space: nowrap !important;
+      }
+      @media(max-width:720px),(pointer:coarse) {
+        main[data-game-phase] button.snow360-change-game-mode {
+          width: 216px !important;
+          height: 72px !important;
+          padding: 0 14px !important;
+        }
+        main[data-game-phase] button.snow360-change-game-mode > span {
+          font-size: 13px !important;
+        }
+      }
       /* Welcome Play/Settings match the rounded pastel Resume/Ride Again buttons.
          The real Welcome controls live in Snow64Welcome.jsx, a sibling of this game. */
       .snow360-start-glass > div:first-child > button:first-child {
@@ -2909,7 +3010,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
     </svg>
     <div style={{position:"absolute",inset:0,zIndex:0}}>
       {mobile!==null && <Canvas frameloop={renderActive?"always":"demand"} key="snow360-hd" dpr={[1,mobile?1.1:1.7]} camera={{position:[-3,2.4,5.6],fov:42,near:.08,far:230}} gl={{antialias:true, powerPreference:"high-performance"}}>
-        <Scene rider={rider} assetAttempt={assetAttempt} onRiderReady={onRiderReady} onRiderError={onRiderError} mobile={mobile} phase={phase} runKey={runKey} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
+        <Scene rider={rider} assetAttempt={assetAttempt} onRiderReady={onRiderReady} onRiderError={onRiderError} mobile={mobile} phase={phase} runKey={runKey} gameMode={gameMode} keyRef={input} queueRef={queue} cameraOrbitRef={cameraOrbit} stateRef={state} collectedRef={collected} distance={hud.distance} onHud={setHud} onFinish={onFinish} onSound={sound}/>
       </Canvas>}
     </div>
     <SpeedRush mobile={mobile===true} active={phase==="playing" && (hud.powerRemaining>0 || (mobile?touchTuckFx:hud.pose==="SnowboardTuck"))} speed={hud.speed}/>
@@ -2946,7 +3047,10 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
         filter:"drop-shadow(2px 3px #103348)"}}>
         <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".12em":".24em",color:"#eefffc",whiteSpace:"nowrap"}}>PIDGEONKITTY PRESENTS</div>
         <Snow360Logo mobile={mobile===true} />
-        <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".095em":".16em",color:"#cdfaff",whiteSpace:"nowrap"}}>DOWNHILL FREESTYLE</div>
+        <div style={{fontSize:mobile?8:10,fontWeight:900,letterSpacing:mobile?".095em":".16em",color:"#cdfaff",whiteSpace:"nowrap"}}>{gameMode==="token"?"TOKEN RUSH · OLLIE & CARVE":"DOWNHILL FREESTYLE"}</div>
+        {gameMode==="token" && <div style={{font:"900 10px Fredoka,system-ui,sans-serif",color:"#ffe4b0",textShadow:"1px 2px #456587"}}>
+          {`♥ ${hud.livesRemaining??TOKEN_RUSH_MAX_HITS} LIVES  ·  ×${hud.tokenMultiplier??1} TOKEN STREAK`}
+        </div>}
       </div>
       <div className="snow64-hud snow360-arcade-hud" style={{display:"flex",flexDirection:mobile?"column":"row",
         position:"relative",gap:mobile?SNOW360_MOBILE_STATS_GAP:8,
@@ -3019,14 +3123,14 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
           {phase==="finished" ? <>
             <div style={{fontSize:mobile?12:14,fontWeight:900,letterSpacing:".12em",
               color:"#ffe7aa",textShadow:"0 2px 9px rgba(26,36,69,.60)"}}>
-              SCORE DEPLETED
+              {gameMode==="token"?"THREE WIPEOUTS • RUN OVER":"SCORE DEPLETED"}
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",
               width:"100%",marginTop:mobile?6:14,marginBottom:mobile?5:8}}>
               {[
                 {label:"DISTANCE",value:hud.distance.toLocaleString(),unit:"METRES"},
-                {label:"PEAK SCORE",value:hud.peakScore.toLocaleString(),unit:"POINTS"},
-                {label:"WIPEOUTS",value:hud.hits.toLocaleString(),unit:"TOTAL"},
+                {label:gameMode==="token"?"TOKEN SCORE":"PEAK SCORE",value:hud.peakScore.toLocaleString(),unit:"POINTS"},
+                {label:gameMode==="token"?"TOKENS":"WIPEOUTS",value:(gameMode==="token"?hud.coins:hud.hits).toLocaleString(),unit:"TOTAL"},
               ].map((stat,i)=><div key={stat.label} style={{display:"flex",flexDirection:"column",
                 alignItems:"center",justifyContent:"center",gap:4,padding:mobile?"0 5px":"0 14px",
                 borderLeft:i?"1px solid rgba(241,252,255,.40)":"none"}}>
@@ -3055,6 +3159,11 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
               cursor:"pointer",touchAction:"manipulation"}}>
             {phase==="paused" ? "RESUME" : "RESTART"}
           </button>
+          <button type="button" className="snow360-change-game-mode"
+            aria-label="Change game mode" title="Return to the Welcome screen to select game mode 1 or 2"
+            onClick={e=>{e.stopPropagation();window.location.reload();}}>
+            <span>CHANGE GAME MODE</span>
+          </button>
           <div style={{fontSize:mobile?10:12,fontWeight:800,letterSpacing:".045em",
             color:"#f4faff",textShadow:"0 2px 8px rgba(26,36,69,.55)"}}>
             {phase==="paused" ? "TAP / CLICK ANYWHERE TO RESUME" : "TAP / CLICK ANYWHERE TO RESTART"}
@@ -3063,9 +3172,9 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       </div>}
     {phase==="ready"&&<div onClick={e=>{if(e.target?.closest?.("button"))return;start();}} style={{position:"absolute",inset:0,zIndex:6,background:"linear-gradient(145deg,#092e4ab9,#163c58b0)",display:"grid",placeItems:"center",padding:16,cursor:"pointer"}}>
       <div style={{maxWidth:mobile?560:1060,width:"min(100%,1060px)",maxHeight:"calc(100dvh - 24px)",overflowY:"auto",border:"3px solid #d9f4ff",borderRadius:14,padding:"clamp(14px,3vw,30px)",background:"linear-gradient(155deg,#123e5cf5,#142c4ff2)",boxShadow:"8px 10px 0 #123145aa",textAlign:"center"}}>
-        <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>ARCADE FREESTYLE • WINTER CUP</div>
+        <div style={{letterSpacing:".24em",fontSize:12,fontWeight:900,color:"#a8e7ed"}}>{gameMode==="token"?"TOKEN RUSH • COLLECT & SURVIVE":"ARCADE FREESTYLE • WINTER CUP"}</div>
         <Snow360Logo startScreen mobile={mobile===true} />
-        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!":phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`SCORE DEPLETED! Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
+        <p style={{lineHeight:1.6,fontWeight:700,color:"#dbf3ff",fontSize:14,margin:"15px 0 16px"}}>{phase==="ready"?(gameMode==="token"?"TOKEN RUSH! No ramps, no tricks, only carving and Ollies. Collect tokens to earn points and build a token multiplier. Three wipeouts end the run!":"ENDLESS SURVIVAL! Your score drains faster the farther you ride. Land tricks and collect tokens to stay alive. Wipeouts cost points. Reach zero and the run is over!"):phase==="paused"?"Ride paused. Tap or click anywhere to resume.":`${gameMode==="token"?"THREE WIPEOUTS!":"SCORE DEPLETED!"} Survived ${hud.distance.toLocaleString()} m · Peak ${hud.peakScore.toLocaleString()} points · ${hud.hits} wipeouts`}</p>
         {phase==="finished"&&<div style={{color:"#ffda75",fontSize:18,fontWeight:900,marginBottom:15}}>BEST PEAK: {currentBest.toLocaleString()} PTS</div>}
         {phase==="paused"&&<button type="button" aria-pressed={soundOn}
           onClick={e=>{e.stopPropagation();const next=!soundRef.current;soundRef.current=next;
@@ -3078,7 +3187,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
         {(phase==="ready"||phase==="finished") && <div data-snow64-settings="true"
           onPointerDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
           style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10,margin:"0 0 16px"}}>
-          <div role="group" aria-label="Trick input style" style={{width:"100%",maxWidth:370}}>
+          {gameMode!=="token" && <div role="group" aria-label="Trick input style" style={{width:"100%",maxWidth:370}}>
             <div style={{font:"900 11px system-ui,sans-serif",letterSpacing:".1em",color:"#a8e7ed",marginBottom:7}}>CHOOSE TRICK CONTROLS</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               {[["draw","✎ DRAW TRICKS"],["buttons","▦ TRICK BUTTONS"]].map(([mode,label])=><button
@@ -3091,7 +3200,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
             <div style={{fontSize:10,color:"#c8e7f2",marginTop:6}}>{trickMode==="draw"
               ? "Draw glowing gestures on mobile; airborne taps still perform grabs."
               : "All 11 tricks + an Ollie button appear in a compact corner pad."}</div>
-          </div>
+          </div>}
           <button type="button" aria-pressed={soundOn} aria-label="Toggle game sound effects and music"
             onClick={e=>{e.stopPropagation();const next=!soundRef.current;
               soundRef.current=next;setSoundOn(next);setSnow64AudioEnabled(next);
@@ -3112,12 +3221,12 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
           {riderError && <div role="alert">The rider could not load. <button type="button" onClick={retryRider}>Retry rider</button></div>}
         </div>}
         <div style={{fontSize:22,fontStyle:"italic",fontWeight:1000,color:"#ffe395",animation:"snowboardPulse 1.7s ease-in-out infinite"}}>{!riderReady?"LOADING RIDER…":phase==="ready"?"TAP / CLICK ANYWHERE TO START":phase==="paused"?"TAP / CLICK ANYWHERE TO RESUME":"TAP / CLICK ANYWHERE TO RESTART"}</div>
-        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>{trickMode==="draw"?"RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS":"RIGHT HALF: TAP TO JUMP · USE THE ICONS FOR ALL TRICKS"}</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>{trickMode==="draw"?"1–0 / F = TRICKS":"TAP ICON BUTTONS OR USE 1–0 / F FOR TRICKS"} &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
+        <p style={{fontSize:11,color:"#b3dbe9",lineHeight:1.7,margin:"22px 0 0"}}>{mobile ? <>LEFT HALF: DRAG TO CARVE · DRAG UP TO TUCK<br/>{gameMode==="token"?"RIGHT HALF: TAP TO OLLIE · NO TRICKS":trickMode==="draw"?"RIGHT HALF: TAP TO JUMP · AIR TAP = GRAB · FLICK OR DRAW TRICKS":"RIGHT HALF: TAP TO JUMP · USE THE ICONS FOR ALL TRICKS"}</> : <>A / D = CARVE &nbsp; • &nbsp; W = TUCK &nbsp; • &nbsp; SPACE = OLLIE · SHIFT+SPACE = POWER<br/>{gameMode==="token"?"TOKENS SCORE · 3 LIVES · NO TRICKS":trickMode==="draw"?"1–0 / F = TRICKS":"TAP ICON BUTTONS OR USE 1–0 / F FOR TRICKS"} &nbsp; • &nbsp; C = CAMERA &nbsp; • &nbsp; P = PAUSE</>}</p>
       </div>
     </div>}
     {phase==="playing" && <FollowCameraDragArea cameraOrbitRef={cameraOrbit} mobile={mobile} />}
-    {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} stateRef={state} act={act} phase={phase} runKey={runKey} trickMode={trickMode} onTuckChange={setTouchTuckFx} /> : null}
-    {phase==="playing" && trickMode==="buttons" && <Snow64TrickButtonPad
+    {mobile && phase==="playing" ? <MobileTouchControls inputRef={input} stateRef={state} act={act} phase={phase} runKey={runKey} trickMode={trickMode} gameMode={gameMode} onTuckChange={setTouchTuckFx} /> : null}
+    {phase==="playing" && gameMode!=="token" && trickMode==="buttons" && <Snow64TrickButtonPad
       act={act} mobile={mobile===true} activeTrickKey={hud.activeTrickKey}
       ollieActive={hud.ollieActive}/>}
     {/* Keep the downhill view clean. The bottom BEST/TOKENS and keyboard hint

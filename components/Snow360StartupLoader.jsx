@@ -2,12 +2,139 @@
 
 import { useEffect, useState } from "react";
 import { useProgress } from "@react-three/drei";
+import { createPortal } from "react-dom";
 
 /**
  * Snow360 startup screen. The larger layered logo sits at the top center
  * while loading; the progress display stays centered. The screen fades only
  * when the real Welcome PLAY button is ready, never after an arbitrary delay.
  */
+
+/**
+ * Two mode buttons share the same round cloud PNG and selected-state filter as
+ * Welcome settings. Kept inside this EXISTING file, so app/page.jsx never has
+ * to import a separate, easy-to-miss mode-selector module.
+ * Only numbers are visually displayed. Descriptive names remain accessible.
+ */
+function Snow360WelcomeModeButtons() {
+  const [host, setHost] = useState(null);
+  const [mode, setMode] = useState("standard");
+
+  useEffect(() => {
+    let saved="standard";
+    try { saved=sessionStorage.getItem("snow360-game-mode")==="token"?"token":"standard"; } catch {}
+    setMode(saved);
+    document.documentElement.dataset.snow360Mode=saved;
+
+    const findHost=()=>{
+      const next=document.querySelector(".snow360-start-floating");
+      if(next) { setHost(next); return true; }
+      return false;
+    };
+    if(findHost()) return () => { delete document.documentElement.dataset.snow360Mode; };
+    const observer=new MutationObserver(()=>{
+      if(findHost()) observer.disconnect();
+    });
+    observer.observe(document.body,{childList:true,subtree:true});
+    return () => { observer.disconnect(); delete document.documentElement.dataset.snow360Mode; };
+  },[]);
+
+  const choose = next => {
+    if(next!=="standard" && next!=="token")return;
+    setMode(next);
+    document.documentElement.dataset.snow360Mode=next;
+    try { sessionStorage.setItem("snow360-game-mode",next); } catch {}
+    window.dispatchEvent(new CustomEvent("snow360-mode-change",{detail:{gameMode:next}}));
+  };
+
+  return <>
+    <style>{`
+      /* Identical PNG and ON/OFF color treatment to the settings toggles. */
+      .snow360-start-floating .snow360-mode-picker {
+        order: -1 !important;
+        display: flex !important;
+        flex-direction: row !important;
+        justify-content: center !important;
+        align-items: center !important;
+        gap: 9px !important;
+        width: 100% !important;
+        min-height: 56px !important;
+        pointer-events: auto !important;
+      }
+      .snow360-start-floating .snow360-mode-picker button.snow360-mode-choice {
+        appearance: none !important;
+        -webkit-appearance: none !important;
+        display: grid !important;
+        place-items: center !important;
+        flex: 0 0 57px !important;
+        width: 57px !important;
+        height: 57px !important;
+        min-height: 57px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: 0 !important;
+        border-radius: 50% !important;
+        background: transparent var(--snow-cloud-round) center / contain no-repeat !important;
+        box-shadow: none !important;
+        color: #fff9ff !important;
+        font: 900 27px Fredoka,system-ui,sans-serif !important;
+        letter-spacing: 0 !important;
+        text-shadow: 0 1px 2px #b6427d88 !important;
+        cursor: pointer !important;
+        touch-action: manipulation !important;
+        user-select: none !important;
+        transition: filter .18s ease, transform .18s ease, opacity .18s ease !important;
+      }
+      .snow360-start-floating .snow360-mode-picker button.snow360-mode-choice[aria-pressed="true"] {
+        opacity: 1 !important;
+        filter: saturate(1.15) drop-shadow(0 4px 7px rgba(241,111,182,.23)) !important;
+      }
+      .snow360-start-floating .snow360-mode-picker button.snow360-mode-choice[aria-pressed="false"] {
+        opacity: .79 !important;
+        filter: grayscale(1) saturate(0) contrast(.94) brightness(1.08) !important;
+      }
+      .snow360-start-floating .snow360-mode-picker button.snow360-mode-choice[aria-pressed="false"]:hover {
+        filter: grayscale(1) saturate(0) contrast(.94) brightness(1.16) !important;
+      }
+      .snow360-start-floating .snow360-mode-picker button.snow360-mode-choice:active {
+        transform: scale(.955) !important;
+      }
+      .snow360-start-floating .snow360-mode-picker button.snow360-mode-choice:focus-visible {
+        outline: 3px solid #8f85ea !important;
+        outline-offset: 2px !important;
+      }
+      /* No trick choices in the Token Rush settings. */
+      html[data-snow360-mode="token"] #snow360-intro-settings .snow360-settings-icon-grid >
+        button.snow360-settings-icon-btn:nth-child(-n+2) { display: none !important; }
+      html[data-snow360-mode="token"] #snow360-intro-settings .snow360-settings-icon-grid {
+        grid-template-columns: repeat(3, minmax(0,1fr)) !important;
+        max-width: 248px !important;
+      }
+      @media(max-width:720px),(pointer:coarse) {
+        .snow360-start-floating .snow360-mode-picker {
+          gap: 8px !important;
+          min-height: 48px !important;
+        }
+        .snow360-start-floating .snow360-mode-picker button.snow360-mode-choice {
+          flex-basis: 48px !important;
+          width: 48px !important;
+          height: 48px !important;
+          min-height: 48px !important;
+          font-size: 24px !important;
+        }
+      }
+    `}</style>
+    {host && createPortal(
+      <div className="snow360-mode-picker" role="group" aria-label="Choose game mode">
+        <button type="button" className="snow360-mode-choice" aria-label="Mode 1: Standard Downhill Freestyle"
+          title="1: Standard" aria-pressed={mode==="standard"} onClick={()=>choose("standard")}>1</button>
+        <button type="button" className="snow360-mode-choice" aria-label="Mode 2: Token Rush"
+          title="2: Token Rush" aria-pressed={mode==="token"} onClick={()=>choose("token")}>2</button>
+      </div>, host
+    )}
+  </>;
+}
+
 export default function Snow360StartupLoader() {
   const { progress, total } = useProgress();
   const [ready, setReady] = useState(false);
@@ -41,10 +168,11 @@ export default function Snow360StartupLoader() {
     return () => { window.clearTimeout(fade); window.clearTimeout(hide); };
   }, [ready]);
 
-  if (!visible) return null;
   const percent = ready ? 100 : displayProgress;
 
-  return <div aria-label="Snow360 loading screen" aria-busy={!ready}
+  return <>
+    <Snow360WelcomeModeButtons />
+    {visible && <div aria-label="Snow360 loading screen" aria-busy={!ready}
     style={{position:"fixed",inset:0,zIndex:9999,display:"grid",placeItems:"center",
       overflow:"hidden",backgroundColor:"#fbeef8",
       backgroundImage:'url("/images/pastel-sky.jpg")',backgroundSize:"cover",backgroundPosition:"center",
@@ -95,5 +223,6 @@ export default function Snow360StartupLoader() {
         {total>0||ready?`${percent}%`:""}
       </div>
     </div>
-  </div>;
+  </div>}
+  </>;
 }
