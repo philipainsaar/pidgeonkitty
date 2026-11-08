@@ -13,7 +13,7 @@ import { createSnow360PlushResponse, snow360GripResponse } from "./snow360PlushP
 import { snowSurfaceAt, sweptRockHit, sweptRampSideHit, sweptAirRampContact } from "./snow64Collision";
 import { recordSnowPoints, maybeSpawnIcecreamPower, icecreamPowerCollision, activateIcecreamPower, ICECREAM_DURATION } from "./snow64Powerup";
 import { SNOW_CHUNK_LENGTH, SNOW_INITIAL_SCORE, getSnowChunk, snowChunkIndex, snowDrainPerSecond, pruneSnowVisited } from "./snow64Endless";
-import { getSnowModeChunk, applyTokenRushRecoveryRoute, makeTokenRushRecoveryStraight, makeTokenRushSkyStarTrail, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, penalizeMissedTokenRush, refreshTokenRushPowerStarQueue, maybeSpawnTokenRushIcecreamPower, tokenRushScoreSpeedScale, tokenRushArcadeHandling, tokenRushMagnetCanCollect, sweptStarTokenPickup } from "./snow64TokenRush";
+import { getSnowModeChunk, applyTokenRushRecoveryRoute, makeTokenRushRecoveryStraight, makeTokenRushSkyStarTrail, TOKEN_RUSH_MAX_HITS, collectTokenRush, missTokenRush, penalizeMissedTokenRush, tokenRushRockPenalty, refreshTokenRushPowerStarQueue, maybeSpawnTokenRushIcecreamPower, tokenRushScoreSpeedScale, tokenRushArcadeHandling, tokenRushMagnetCanCollect, sweptStarTokenPickup } from "./snow64TokenRush";
 import { enqueueAirTrick, beginNextAirTrick, advanceAirTricks, judgeAirTrickChain, resetAirTrickChain } from "./snow64TrickChain";
 import { createCrashBoard, createCrashRider, stepCrashBoard, stepCrashRider } from "./snow64CrashPhysics";
 import { Snow64ModelProvider, useSnowModel, SnowGLBVisual, SnowGLBInstances } from "./snow64VisualModels";
@@ -1061,8 +1061,13 @@ function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
   const environmental = reason.startsWith("ROCK") || reason.startsWith("RAMP");
   if (s.recovery || s.powerTime > 0 || s.icecreamHover || (environmental && s.icecreamCollisionGrace > 0)) return;
   const tokenMode=s.gameMode==="token";
-  const penalty = tokenMode ? 0 : (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
-  s.score = Math.max(0,s.score - penalty);
+  // Mode 2: missing a Star already drains score separately. A genuine ROCK
+  // collision is more costly, in addition to losing one of three lives.
+  const penalty = tokenMode
+    ? (reason.startsWith("ROCK") ? tokenRushRockPenalty(s) : 0)
+    : (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
+  const actualScoreLoss=Math.min(Math.max(0,s.score),penalty);
+  s.score=Math.max(0,s.score-penalty);
   if(tokenMode){ missTokenRush(s); s.tokenRushExitGuideUntil=0; }
   s.combo = 0;
   s.hits += 1;
@@ -1073,7 +1078,9 @@ function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
   const fallenRider = createCrashRider(s, looseBoard, kind, Math.random, impact);
   s.recovery = {kind, t:0, duration:recoveryDuration(kind)+1.06, board:looseBoard, rider:fallenRider, hopLanded:false, pushedOff:false};
   s.powerAutoJumpDelay=2.0;
-  s.lastText = tokenMode ? `${reason}  •  ${Math.max(0,TOKEN_RUSH_MAX_HITS-s.hits)} LIVES LEFT` : `${reason}  −${penalty} PTS`;
+  s.lastText = tokenMode
+    ? `${reason}${penalty>0 ? `  −${Math.round(actualScoreLoss).toLocaleString()} PTS` : ""}  •  ${Math.max(0,TOKEN_RUSH_MAX_HITS-s.hits)} LIVES LEFT`
+    : `${reason}  −${penalty} PTS`;
   s.textUntil = s.t + 1.85;
   s.inAir = false;
   s.vy = 0;

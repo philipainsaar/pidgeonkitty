@@ -326,11 +326,23 @@ export function collectTokenRush(state){
  * Power-up auto-collection and recovery/wipeouts are deliberately excluded.
  */
 export function tokenRushMissPenalty(state){
+  // Use the best score reached, not the reduced score after recent misses.
+  // This makes the endless arcade course steadily riskier as pace increases.
   const high=Math.max(0,Number(state?.peakScore)||0,Number(state?.score)||0);
-  const momentum=Math.min(1,high/65000);
-  const pace=Math.max(0,tokenRushScoreSpeedScale(high)-1)/0.32;
-  const loss=55+235*momentum+Math.min(145,high/720)+75*pace;
-  return Math.max(55,Math.round(loss/5)*5);
+  const pace=Math.max(0,Math.min(1,(tokenRushScoreSpeedScale(high)-1)/0.32));
+  const earnedDifficulty=0.012*high + 115*Math.pow(high/50000,1.25);
+  const loss=85+earnedDifficulty+80*pace;
+  return Math.max(85,Math.round(loss/5)*5);
+}
+
+/** A rock is a major arcade hazard, costing far more than one missed Star.
+ * One hit also takes a life through beginSnowRecovery. Both consequences scale
+ * consistently with peak score; neither can be reduced by intentionally
+ * losing points just before a rock collision.
+ */
+export function tokenRushRockPenalty(state){
+  const loss=650+3.25*tokenRushMissPenalty(state);
+  return Math.max(750,Math.round(loss/25)*25);
 }
 export function penalizeMissedTokenRush(state){
   if(!state||state.gameMode!=="token"||state.powerTime>0||state.icecreamHover||state.recovery)return 0;
