@@ -62,6 +62,11 @@ const ICECREAM_SKY_HEIGHT = 14.5;
 const ICECREAM_SKY_TAKEOFF_SECONDS = 1.65;
 const ICECREAM_SKY_LANDING_SECONDS = 2.65;
 const ICECREAM_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-safe after Ice-cream Power.
+// Keep steering through the FIRST real tokens as the faster boost slows down.
+// This is a finite hands-off handoff, not permanent auto-play.
+const TOKEN_RUSH_EXIT_GUIDE_SECONDS = 3.15;
+const TOKEN_RUSH_EXIT_GUIDE_STARS = 2;
+const TOKEN_RUSH_EXIT_MAX_LATERAL_SPEED = 19.0;
 // V33: powered snowboarding gets its own visible left/right slalom movement.
 // The old hover movement used the much weaker airborne steering limit (5).
 const ICECREAM_CARVE_AMPLITUDE = 4.45;
@@ -803,7 +808,8 @@ function initialState(cameraMode = 1, gameMode = "standard") {
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
     peakAir:0, flightTime:0, recovery:null,
     gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0, tokenRushPowerTier:1, tokenOmitVersion:0, replacedTokens:new Set(),
-    tokenRushExitGuideUntil:0, tokenAbsorbs:[],
+    tokenRushExitGuideUntil:0, tokenRushExitGuideStart:0,
+    tokenRushExitGuideTokensRemaining:0, tokenAbsorbs:[],
     combo:0, score:gameMode==="token"?0:SNOW_INITIAL_SCORE, peakScore:gameMode==="token"?0:SNOW_INITIAL_SCORE, drainRate:gameMode==="token"?0:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, airQueue:[], completedAirTricks:[], airYaw:0, airPitch:0,
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
@@ -1076,6 +1082,11 @@ function beginIcecreamHover(s, supportHeight) {
   s.icecreamRockTargetId = null;
   s.icecreamTokenTargetId = null;
   s.icecreamTokensCollected = 0;
+  if(s.gameMode==="token"){
+    // A new boost owns the board: cancel the previous exit guide completely.
+    s.tokenRushExitGuideUntil=0;
+    s.tokenRushExitGuideTokensRemaining=0;
+  }
   s.icecreamCarveStart = s.t;
   s.icecreamCarveCenter = clamp(s.x, -4, 4);
   s.icecreamCarveDirection = s.x > 5 ? -1 : s.x < -5 ? 1 : (Math.random() < .5 ? -1 : 1);
@@ -1100,9 +1111,12 @@ function finishIcecreamHover(s, supportHeight) {
   s.fakie = false;
   if(s.gameMode==="token"){
     s.tokenRushPowerTier=1;
-    // While the existing landing shield is active, smoothly align the board
-    // with the approaching slalom stars. Steering input always wins.
-    s.tokenRushExitGuideUntil=s.t+ICECREAM_POST_SHIELD_SECONDS;
+    // Continue toward the next REAL uncollected stars after hover ends.
+    // Unlike the old two-second interpolated-line guide, this is tied to
+    // actual collectible targets, decelerates the boost, and then fades out.
+    s.tokenRushExitGuideStart=s.t;
+    s.tokenRushExitGuideUntil=s.t+TOKEN_RUSH_EXIT_GUIDE_SECONDS;
+    s.tokenRushExitGuideTokensRemaining=TOKEN_RUSH_EXIT_GUIDE_STARS;
   }
   // Hand control back gracefully instead of carrying a full-powered sideways
   // slalom velocity into the 2-second normal-riding collision shield.
@@ -1113,7 +1127,7 @@ function finishIcecreamHover(s, supportHeight) {
   s.icecreamPaidTricks = 0;
   s.icecreamRockTargetId = null;
   resetAirTrickChain(s);
-  s.lastText = s.gameMode==="token" ? "FOLLOW THE STARS • 2s LANDING GUIDE" : "ICE-CREAM SHIELD • 2s SAFE LANDING";
+  s.lastText = s.gameMode==="token" ? "STAR ROUTE • SMOOTH LANDING" : "ICE-CREAM SHIELD • 2s SAFE LANDING";
   s.textUntil = s.t + 1.1;
 }
 
@@ -1174,6 +1188,25 @@ function icecreamTokenToChase(s,chunks,collected){
  * reduced for a reliable shatter, then carving resumes toward the next rock.
  * Player touch/keyboard steering still overrides this automatic steering.
  */
+/** The exit handoff must target a REAL remaining star, not an interpolated
+ * path through already-collected, missed or replaced tokens. In the recording,
+ * the previous guide kept steering at stale turns, then released while the
+ * board still carried high powered speed. Anticipate star arrival in world
+ * distance and limit sideways motion to an achievable arcade carve.
+ */
+function tokenRushExitCarveVelocity(s,chunks,collected){
+  const target=icecreamTokenToChase(s,chunks,collected);
+  if(!target){
+    // No star in our loaded range: settle sideways motion, don't oscillate.
+    return 0;
+  }
+  const ahead=Math.max(0,s.z-target.z);
+  const secondsToStar=Math.max(.16,(ahead-.30)/Math.max(12,s.speed)-.04);
+  const requested=(target.x-s.x)/secondsToStar-s.velX*.23;
+  return clamp(requested,-TOKEN_RUSH_EXIT_MAX_LATERAL_SPEED,
+    TOKEN_RUSH_EXIT_MAX_LATERAL_SPEED);
+}
+
 function tokenRushRouteX(chunks,nextZ,fallback,skipped){
   let uphill=null,downhill=null;
   for(const chunk of chunks)for(const coin of chunk.coins){
@@ -1489,8 +1522,13 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
             -Math.abs(s.steer)*2.6
           : (s.powerTime>0 ? (mobile?57:60) : (tuck ? (mobile?42:38) :21.5))
             -Math.abs(s.steer)*2.6;
+        const settlingFromPower=s.gameMode==="token" && s.powerTime<=0 &&
+          s.tokenRushExitGuideUntil>s.t;
+        // At power expiry the snowboard is still traveling at x2 pace.
+        // Ease back to normal downhill speed promptly, or there isn't enough
+        // road between closely-spaced stars to make a physically possible turn.
         const acceleration=s.gameMode==="token"
-          ? (s.powerTime>0 ? 2.0 : tuck ? (mobile?2.1:1.35) : 0.5)
+          ? (s.powerTime>0 ? 2.0 : settlingFromPower ? 2.7 : tuck ? (mobile?2.1:1.35) : 0.5)
           : (s.powerTime>0 ? 3.6 : tuck ? (mobile?2.1:1.35) : 0.5);
         s.speed=lerp(s.speed,targetSpeed,Math.min(1,dt*acceleration));
         const tokenHandling=s.gameMode==="token"
@@ -1504,28 +1542,37 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         const carveResponse=poweredCarve
           ? (s.gameMode==="token"?TOKEN_RUSH_POWER_CARVE_RESPONSE:8.5)
           : (s.inAir?2.8:snow360GripResponse(5.5))*(tokenHandling?.response??1);
-        // The boost navigates the actual slalom route, but physical lateral
-        // steps are capped. Normal Token Rush remains entirely player-steered.
+        // Power: keep the predictive REAL-token magnet path. The guide after
+        // power is separate and weaker, giving a clean manual handoff rather
+        // than chasing stale stars or forcing a hard position snap.
+        const manualInput=Math.abs(steerWanted);
+        if(s.gameMode==="token" && !poweredCarve &&
+           s.tokenRushExitGuideUntil>s.t && manualInput>.20){
+          // Player steering always wins and stays in control after release.
+          s.tokenRushExitGuideUntil=0;
+          s.tokenRushExitGuideTokensRemaining=0;
+        }
         const tokenExitAssist=s.gameMode==="token" && !poweredCarve &&
           s.tokenRushExitGuideUntil>s.t && !s.recovery;
-        const routeGuidance=s.gameMode==="token" && (poweredCarve || tokenExitAssist);
-        const routeX=routeGuidance
-          ? tokenRushRouteX(localChunks,s.z-s.speed*dt,s.x,s.replacedTokens)
-          : null;
         if(poweredCarve && s.gameMode==="token"){
+          // Leave the existing successful powered slalom path untouched.
+          // The new live-star correction applies only AFTER power expires.
+          const poweredPathX=tokenRushRouteX(localChunks,
+            s.z-s.speed*dt,s.x,s.replacedTokens);
           const lateralLimit=TOKEN_RUSH_POWER_MAX_LATERAL_SPEED*dt;
-          s.velX=clamp(routeX-s.x,-lateralLimit,lateralLimit)/Math.max(0.001,dt);
+          s.velX=clamp(poweredPathX-s.x,-lateralLimit,lateralLimit)/Math.max(.001,dt);
         }else if(tokenExitAssist){
-          // Smooth two-second landing handoff. The route aid fades out and
-          // yields immediately to deliberate steering, so it never becomes a
-          // permanent autocollect mode or removes high-score difficulty.
+          // Follow only the next LIVE star, not a line through coins that
+          // have already been picked up or missed. Start promptly while the
+          // boost is decelerating; fade out over the last 0.7 seconds.
           const timeLeft=s.tokenRushExitGuideUntil-s.t;
-          const manualInput=Math.abs(steerWanted);
-          const strength=clamp(timeLeft/ICECREAM_POST_SHIELD_SECONDS,0,1) *
-            (manualInput>.18 ? .14 : 1);
-          const guideVelocity=clamp((routeX-s.x)*2.9,-12,12);
-          const blended=lerp(lateralTarget,guideVelocity,strength);
-          s.velX=lerp(s.velX,blended,Math.min(1,dt*6.5));
+          const fadeOut=clamp(timeLeft/.70,0,1);
+          const guideVelocity=tokenRushExitCarveVelocity(s,localChunks,collectedRef.current);
+          const blended=lerp(lateralTarget,guideVelocity,fadeOut);
+          s.velX=lerp(s.velX,blended,Math.min(1,dt*13));
+          // The board visibly banks into the guided turns instead of sliding
+          // sideways while its steering pose suggests it is going straight.
+          s.steer=lerp(s.steer,clamp(s.velX/19,-.78,.78),Math.min(1,dt*6));
         }else s.velX=lerp(s.velX,lateralTarget,Math.min(1,dt*carveResponse));
         const previousX=s.x;
         s.x=clamp(s.x+s.velX*dt,-11.15,11.15);
@@ -1780,6 +1827,14 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
                 s.tokenAbsorbs.push({id:coin.id,x:coin.x,z:coin.z,at:s.t});
                 const earned=collectTokenRush(s);
                 s.score+=earned;
+                if(s.powerTime<=0 && s.tokenRushExitGuideUntil>s.t &&
+                  s.tokenRushExitGuideTokensRemaining>0){
+                  s.tokenRushExitGuideTokensRemaining--;
+                  // After guiding the first two genuine pickups, taper the
+                  // assistance over 0.7s instead of switching it off mid-turn.
+                  if(s.tokenRushExitGuideTokensRemaining===0)
+                    s.tokenRushExitGuideUntil=Math.min(s.tokenRushExitGuideUntil,s.t+.70);
+                }
                 if(magnet)s.icecreamTokensCollected++;
                 // Real tokens remain the *only* point source in Token Rush.
                 const powerEvent=maybeSpawnTokenRushIcecreamPower(s,[

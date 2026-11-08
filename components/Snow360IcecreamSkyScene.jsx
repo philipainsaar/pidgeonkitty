@@ -67,7 +67,12 @@ export function Snow360IcecreamSkyClouds({stateRef, mobile=false, groundY}) {
     group.visible=active||ambient;
     if(!group.visible)return;
 
-    const spacing=active?33:60;
+    // Both modes use the same physical GLB scale. The former ambient values
+    // were ~40% smaller AND 12-14 units higher, which made Mode 2's clouds
+    // appear miniature compared with the original Mode 1 Sky Surf models.
+    // Keep ambient clouds slightly farther to the sides so they don't hide
+    // downhill stars, rocks or the rider at normal snowboard altitude.
+    const spacing=active?33:42;
     const currentSegment=Math.floor((-s.z)/spacing);
     const firstCell=currentSegment-(active?2:3);
     const time=clock.elapsedTime;
@@ -80,12 +85,12 @@ export function Snow360IcecreamSkyClouds({stateRef, mobile=false, groundY}) {
       // once and appearing to reverse direction.
       const cell=i+count*Math.ceil((firstCell-i)/count);
       const x=active ? (seeded(cell*7+6)-.5)*15.0
-        : (seeded(cell*7+6)-.5)*49.0;
+        : (seeded(cell*7+6)-.5)*31.0;
       const z=-(cell*spacing+spacing*.5);
       const y=active ? groundY(x,z)+11.4+seeded(cell*13+29)*6.6
-        : groundY(x,z)+24+seeded(cell*13+29)*8;
-      const sz=active ? 5.3+seeded(cell*5+10)*2.0
-        : 3.3+seeded(cell*5+10)*1.1;
+        : groundY(x,z)+12.5+seeded(cell*13+29)*6.6;
+      // Exactly the same GLB model scale in Mode 1 and Mode 2.
+      const sz=5.3+seeded(cell*5+10)*2.0;
       g.position.set(x,y+Math.sin(time*.68+cell*1.7)*.17,z);
       g.scale.setScalar(mobile?sz*.85:sz);
 
