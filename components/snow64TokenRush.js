@@ -106,6 +106,10 @@ export function applyTokenRushRecoveryRoute(chunk,state){
   const stars=state.tokenRushStraightStars;
   const movedRocks=state.tokenRushStraightRocks;
   const skyLifts=state.tokenRushSkyStarLifts;
+  // Scene 2's airborne stars descend with the rider during the last 2.65s.
+  // Their physics height and rendered height use the same smoothstep curve.
+  const remain=Math.max(0,Math.min(1,(state.powerTime||0)/2.65));
+  const skyFade=remain*remain*(3-2*remain);
   if(!stars?.size && !movedRocks?.size && !skyLifts?.size)return chunk;
   // The exact same modified world coordinates go to the GLB scene AND physics.
   const coins=chunk.coins.map(c=>{
@@ -113,7 +117,7 @@ export function applyTokenRushRecoveryRoute(chunk,state){
     const lift=skyLifts?.get(c.id);
     if(!p && lift===undefined)return c;
     return {...c,x:p?.x??c.x,z:p?.z??c.z,
-      ...(lift!==undefined?{skyLift:lift}:{})};
+      ...(lift!==undefined?{skyLift:lift*skyFade}:{})};
   });
   const rocks=movedRocks?.size ? chunk.rocks.flatMap(r=>{
     if(!movedRocks.has(r.id))return [r];
@@ -146,32 +150,35 @@ function tokenExitAdvanceAt(i,count=TOKEN_RUSH_EXIT_TAPER_STARS){
   const eased=t*t*(3-2*t);
   return TOKEN_RUSH_EXIT_FIRST_STAR_ADVANCE*(1-eased);
 }
-export function makeTokenRushRecoveryStraight(state,collected){
+export function makeTokenRushRecoveryStraight(state,collected,predictedExitZ=state?.z){
   if(!state || state.gameMode!=="token")return 0;
-  const center=snowChunkIndex(-state.z);
+  // Lay out the recovery road from the expected boost landing position,
+  // WHILE the power-up is active. Doing this only when powerTime reaches
+  // zero made every visible star suddenly jump 92 metres in one frame.
+  const exitZ=Number.isFinite(predictedExitZ)?predictedExitZ:state.z;
+  const center=snowChunkIndex(-exitZ);
   // Forty natural route tokens span roughly 730 game units. Fetch enough
   // chunks across boundaries; farthest tokens ease back to their original
   // coordinates, preventing a compressed wall of stars at the join.
   const chunks=Array.from({length:6},(_,i)=>getSnowModeChunk(center+i,"token")).filter(Boolean);
   const all=chunks.flatMap(c=>c.coins);
-  const upcoming=all.filter(c=>c.z<state.z-1.2 &&
+  const upcoming=all.filter(c=>c.z<exitZ-1.2 &&
     !collected?.has(c.id) && !state.missedTokens?.has(c.id) &&
     !state.replacedTokens?.has(c.id)).sort((a,b)=>b.z-a.z).slice(0,TOKEN_RUSH_EXIT_TAPER_STARS);
   if(!upcoming.length)return 0;
   const moved=new Map(upcoming.map((c,i)=>[
     c.id,{x:c.x,z:c.z-tokenExitAdvanceAt(i,upcoming.length)}
   ]));
-  // The first ~100m is an unobstructed approach from the board's position
-  // to the FIRST shifted star. The virtual anchor affects rock placement only;
-  // it is never rendered or counted as a pickup.
-  const route=[{id:"post-power-rider-approach",x:state.x,z:state.z},
-    ...all.filter(c=>c.z<state.z-1.2 &&
+  // The first ~100m is an unobstructed approach from the *predicted* exit
+  // position to the shifted stars. This anchor never appears as a token.
+  const route=[{id:"post-power-rider-approach",x:state.x,z:exitZ},
+    ...all.filter(c=>c.z<exitZ-1.2 &&
       !collected?.has(c.id) && !state.missedTokens?.has(c.id) &&
       !state.replacedTokens?.has(c.id)).map(c=>{
         const p=moved.get(c.id);
         return p?{...c,...p}:c;
       })];
-  const nearStart=state.z;
+  const nearStart=exitZ;
   const last=moved.get(upcoming[upcoming.length-1].id).z;
   const rocks=new Map();
   for(const chunk of chunks)for(const rock of chunk.rocks){

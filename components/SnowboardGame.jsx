@@ -67,6 +67,10 @@ const ICECREAM_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-sa
 const TOKEN_RUSH_EXIT_GUIDE_SECONDS = 1.65;
 const TOKEN_RUSH_EXIT_GUIDE_STARS = 1;
 const TOKEN_RUSH_EXIT_MAX_LATERAL_SPEED = 10.0;
+// The long post-power star route is prepared while it is still far beyond
+// the player's camera. Moving stars at the expiry frame caused the visible
+// snap in the 2026-11-08 recording, even though their spacing was eased.
+const TOKEN_RUSH_POWER_BRAKE_SECONDS = 1.8;
 // V33: powered snowboarding gets its own visible left/right slalom movement.
 // The old hover movement used the much weaker airborne steering limit (5).
 const ICECREAM_CARVE_AMPLITUDE = 4.45;
@@ -590,11 +594,18 @@ const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mo
   // Reuse the exact original holographic yellow 3D star meshes even in the
   // clouds. The visual groundY includes the same skyLift as the swept
   // collision test, with no duplicate overlay or bonus-token geometry.
+  // Retain the RAW per-token flight heights; groundY is sampled each frame
+  // by Snow64StarTokens. Fade the lift with the SAME last-2.65s curve as
+  // the collision helper. No sky stars snap down when the power expires.
   const skyTokenLiftByXZ=useMemo(()=>new Map(visibleCoins
-    .filter(c=>Number.isFinite(c.skyLift))
-    .map(c=>[`${c.x}|${c.z}`,c.skyLift])),[visibleCoins]);
-  const tokenGroundY=useCallback((x,z)=>groundY(x,z)+
-    (skyTokenLiftByXZ.get(`${x}|${z}`)||0),[skyTokenLiftByXZ]);
+    .map(c=>[`${c.x}|${c.z}`,
+      stateRef.current?.tokenRushSkyStarLifts?.get(c.id)||0])
+    .filter(([,lift])=>lift>0)),[visibleCoins,stateRef,tokenOmitVersion]);
+  const tokenGroundY=useCallback((x,z)=>{
+    const remaining=stateRef.current?.powerTime||0;
+    const fraction=clamp(remaining/ICECREAM_SKY_LANDING_SECONDS,0,1);
+    return groundY(x,z)+(skyTokenLiftByXZ.get(`${x}|${z}`)||0)*smoothstep(fraction);
+  },[skyTokenLiftByXZ,stateRef]);
   const rockModel=useSnowModel("rock");
   const obstacleLibrary=useSnow64Obstacles();
   return <>
@@ -826,6 +837,7 @@ function initialState(cameraMode = 1, gameMode = "standard") {
     tokenRushExitGuideTokensRemaining:0, tokenAbsorbs:[],
     tokenRushStraightStars:new Map(), tokenRushStraightRocks:new Map(),
     tokenRushStraightStartZ:null, tokenRushStraightLastZ:null, tokenRushSkyStarLifts:new Map(),
+    tokenRushExitRoutePrepared:false,
     combo:0, score:gameMode==="token"?0:SNOW_INITIAL_SCORE, peakScore:gameMode==="token"?0:SNOW_INITIAL_SCORE, drainRate:gameMode==="token"?0:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, airQueue:[], completedAirTricks:[], airYaw:0, airPitch:0,
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
@@ -1102,6 +1114,7 @@ function beginIcecreamHover(s, supportHeight) {
     // A new boost owns the board: cancel the previous exit guide completely.
     s.tokenRushExitGuideUntil=0;
     s.tokenRushExitGuideTokensRemaining=0;
+    s.tokenRushExitRoutePrepared=false;
     // A fresh power starts with the normal route, not stale landing shifts.
     if(s.tokenRushStraightStars?.size || s.tokenRushStraightRocks?.size){
       s.tokenRushStraightStars.clear();
@@ -1141,16 +1154,19 @@ function finishIcecreamHover(s, supportHeight, collected) {
     s.tokenRushExitGuideStart=s.t;
     s.tokenRushExitGuideUntil=s.t+TOKEN_RUSH_EXIT_GUIDE_SECONDS;
     s.tokenRushExitGuideTokensRemaining=TOKEN_RUSH_EXIT_GUIDE_STARS;
-    // Scene 1 AND Scene 2: start the next Star route about 90m farther
-    // downhill. Ease that forward offset to zero across forty actual stars,
-    // keeping every original left/right slalom turn and its safe rock lane.
-    // Clear flight-only elevations before building the ground recovery route.
+    // Both scenes share the same PRESTAGED curved preview. It was positioned
+    // beyond the boost's projected landing zone, out of camera range, when
+    // the Ice Cream Power was picked up. No star or GLB rock teleports now.
+    const hadSkyStars=!!s.tokenRushSkyStarLifts?.size;
     s.tokenRushSkyStarLifts?.clear();
-    makeTokenRushRecoveryStraight(s,collected);
+    if(hadSkyStars)s.tokenOmitVersion=(s.tokenOmitVersion||0)+1;
   }
   // Hand control back gracefully instead of carrying a full-powered sideways
   // slalom velocity into the 2-second normal-riding collision shield.
-  s.velX = clamp(s.velX, -4.0, 4.0);
+  // Do not snap the powered sideways velocity from +/-28 to +/-4 in one
+  // frame. The existing normal carve response blends the remaining momentum
+  // away as the player regains steering authority.
+  if(s.gameMode!=="token")s.velX=clamp(s.velX,-4.0,4.0);
   s.steer = clamp(s.steer, -.42, .42);
   s.jumpCooldown = .48; // Prevent a landing-frame ramp hit.
   s.impact = .3;
@@ -1477,7 +1493,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       // The rendered board drops gently after boost without changing collision
       // math. Clearing the offset exponentially prevents a final visible snap.
       if(!s.icecreamHover && s.icecreamExitLift>0){
-        s.icecreamExitLift *= Math.exp(-dt*7.0);
+        // Token Rush settles the last hover centimetres gently while the
+        // new board speed and camera return to normal. Standard unchanged.
+        s.icecreamExitLift *= Math.exp(-dt*(s.gameMode==="token"?3.8:7.0));
         if(s.icecreamExitLift<.006)s.icecreamExitLift=0;
       }
       // Standard: the original score-drain survival. Token Rush: score is
@@ -1494,11 +1512,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       s.powerTime=Math.max(0,s.powerTime-dt);
       if (s.powerTime <= 0 && s.icecreamHover) {
         finishIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height,collectedRef.current);
-        // The same frame that power expires must use the NEW extended Star
-        // positions for pickup/miss and GLB rock collision. Without this,
-        // one high-speed frame can falsely collect or miss an old token.
-        if(s.gameMode==="token")localChunks=nearby.current.chunks
-          .map(chunk=>applyTokenRushRecoveryRoute(chunk,s));
+        // No end-frame route rewrite: the next stars and rocks were already
+        // moved beyond the boost landing zone before this power began.
+        // Render and physics therefore agree continuously through expiry.
         onSound("powerEnd");
       }
       s.powerAutoJumpDelay=Math.max(0,s.powerAutoJumpDelay-dt);
@@ -1565,11 +1581,15 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         // No stacking (x4/x10), and breaking the streak removes it instantly.
         const tokenPowerBoost=s.gameMode==="token"
           ? (s.tokenRushPowerTier===2 && s.tokenStreak>=10 ? 2 : 1) : 1;
+        // Ease the temporary powered pace DOWN during its final 1.8s,
+        // instead of dropping the target by x2 on the exact expiry frame.
+        // Never change Standard mode's speed curve.
+        const tokenNormalCruise=(tuck ? (mobile ? 42 : 38) : 21.5)*scoreSpeed;
+        const tokenBoostCruise=21.5*scoreSpeed*tokenPowerBoost;
+        const boostWeight=s.gameMode==="token"&&s.powerTime>0
+          ? smoothstep(s.powerTime/TOKEN_RUSH_POWER_BRAKE_SECONDS) : 0;
         const targetSpeed=s.gameMode==="token"
-          ? (s.powerTime>0
-              ? 21.5*scoreSpeed*tokenPowerBoost
-              : (tuck ? (mobile ? 42 : 38) : 21.5)*scoreSpeed)
-            -Math.abs(s.steer)*2.6
+          ? lerp(tokenNormalCruise,tokenBoostCruise,boostWeight)-Math.abs(s.steer)*2.6
           : (s.powerTime>0 ? (mobile?57:60) : (tuck ? (mobile?42:38) :21.5))
             -Math.abs(s.steer)*2.6;
         const settlingFromPower=s.gameMode==="token" && s.powerTime<=0 &&
@@ -1578,7 +1598,8 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         // Ease back to normal downhill speed promptly, or there isn't enough
         // road between closely-spaced stars to make a physically possible turn.
         const acceleration=s.gameMode==="token"
-          ? (s.powerTime>0 ? 2.0 : settlingFromPower ? 2.7 : tuck ? (mobile?2.1:1.35) : 0.5)
+          ? (s.powerTime>0 ? (s.powerTime<TOKEN_RUSH_POWER_BRAKE_SECONDS?3.4:2.0)
+              : settlingFromPower ? 3.0 : tuck ? (mobile?2.1:1.35) : 0.5)
           : (s.powerTime>0 ? 3.6 : tuck ? (mobile?2.1:1.35) : 0.5);
         s.speed=lerp(s.speed,targetSpeed,Math.min(1,dt*acceleration));
         const tokenHandling=s.gameMode==="token"
@@ -1619,7 +1640,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           const fadeOut=clamp(timeLeft/.70,0,1);
           const guideVelocity=tokenRushExitCarveVelocity(s,localChunks,collectedRef.current);
           const blended=lerp(lateralTarget,guideVelocity,fadeOut*.28);
-          s.velX=lerp(s.velX,blended,Math.min(1,dt*13));
+          // Preserve lateral momentum on exit and damp it gently in the
+          // next second. A very fast 13/s correction looked like a side snap.
+          s.velX=lerp(s.velX,blended,Math.min(1,dt*5.0));
           // The board visibly banks into the guided turns instead of sliding
           // sideways while its steering pose suggests it is going straight.
           s.steer=lerp(s.steer,clamp(s.velX/19,-.78,.78),Math.min(1,dt*6));
@@ -1932,6 +1955,21 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           beginIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height);
           if(s.gameMode==="token" && s.icecreamScene===2){
             makeTokenRushSkyStarTrail(s,collectedRef.current);
+          }
+          if(s.gameMode==="token"){
+            // PREPARE the post-power stars NOW, not at the end of the boost.
+            // Project forward using the same bounded arcade speed/response
+            // model as physics. At this point they are hundreds of metres
+            // downhill, beyond current visibility and collection checks.
+            const baseCruise=21.5*tokenRushScoreSpeedScale(s.score);
+            const cruise=baseCruise*(s.tokenRushPowerTier===2&&s.tokenStreak>=10?2:1);
+            const poweredSeconds=Math.max(0,ICECREAM_DURATION-TOKEN_RUSH_POWER_BRAKE_SECONDS);
+            const rampDistance=cruise*poweredSeconds+
+              (s.speed-cruise)*(1-Math.exp(-2*poweredSeconds))/2;
+            const brakingDistance=(cruise+baseCruise)*.5*TOKEN_RUSH_POWER_BRAKE_SECONDS;
+            const predictedExitZ=s.z-Math.max(0,rampDistance+brakingDistance);
+            s.tokenRushExitRoutePrepared=makeTokenRushRecoveryStraight(
+              s,collectedRef.current,predictedExitZ)>0;
           }
           if(s.gameMode!=="token")s.score+=450;
           s.lastText=s.gameMode==="token"
