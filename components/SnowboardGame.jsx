@@ -1141,9 +1141,10 @@ function finishIcecreamHover(s, supportHeight, collected) {
     s.tokenRushExitGuideStart=s.t;
     s.tokenRushExitGuideUntil=s.t+TOKEN_RUSH_EXIT_GUIDE_SECONDS;
     s.tokenRushExitGuideTokensRemaining=TOKEN_RUSH_EXIT_GUIDE_STARS;
-    // Bring the next REAL stars further downhill without changing their
-    // lateral curves. Clean the flight-only elevations before laying out
-    // this new safe post-power preview route.
+    // Scene 1 AND Scene 2: start the next Star route about 90m farther
+    // downhill. Ease that forward offset to zero across forty actual stars,
+    // keeping every original left/right slalom turn and its safe rock lane.
+    // Clear flight-only elevations before building the ground recovery route.
     s.tokenRushSkyStarLifts?.clear();
     makeTokenRushRecoveryStraight(s,collected);
   }
@@ -1403,7 +1404,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       s.tokenRushStraightLastZ=null;
       s.tokenOmitVersion=(s.tokenOmitVersion||0)+1;
     }
-    const localChunks=s.gameMode==="token" && (s.tokenRushStraightStars?.size || s.tokenRushSkyStarLifts?.size)
+    let localChunks=s.gameMode==="token" && (s.tokenRushStraightStars?.size || s.tokenRushSkyStarLifts?.size)
       ? nearby.current.chunks.map(chunk=>applyTokenRushRecoveryRoute(chunk,s))
       : nearby.current.chunks;
     const playing=phaseRef.current==="playing";
@@ -1493,6 +1494,11 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
       s.powerTime=Math.max(0,s.powerTime-dt);
       if (s.powerTime <= 0 && s.icecreamHover) {
         finishIcecreamHover(s, snowSurfaceAt(s.x,s.z,localChunks,groundY).height,collectedRef.current);
+        // The same frame that power expires must use the NEW extended Star
+        // positions for pickup/miss and GLB rock collision. Without this,
+        // one high-speed frame can falsely collect or miss an old token.
+        if(s.gameMode==="token")localChunks=nearby.current.chunks
+          .map(chunk=>applyTokenRushRecoveryRoute(chunk,s));
         onSound("powerEnd");
       }
       s.powerAutoJumpDelay=Math.max(0,s.powerAutoJumpDelay-dt);

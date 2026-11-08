@@ -97,9 +97,9 @@ function safeRockX(rock,coins,markers=[],straightClearance=0){
   return null;
 }
 
-/** A per-run, visual + physical override for a short straight after Ice Cream
- * Power. The cached deterministic course is never mutated: render and physics
- * both read these SAME remapped coordinates, including every GLB hitbox.
+/** Per-run visual + physical overrides for the gently tapered, curved
+ * post-power Star route. Cached endless-course chunks are never mutated;
+ * GLB rock meshes, star pickups and candy poles share the same remaps.
  */
 export function applyTokenRushRecoveryRoute(chunk,state){
   if(!chunk || state?.gameMode!=="token")return chunk;
@@ -130,26 +130,47 @@ export function applyTokenRushRecoveryRoute(chunk,state){
   return {...chunk,coins,rocks,candyCanes};
 }
 
-/** After landing, put the NEXT stars farther DOWNHILL, but keep their actual
- * left/right slalom positions. Players can see, anticipate and steer through
- * the bends, rather than being forced into the old straight token corridor.
- * Temporarily adjust the GLB rocks against this NEW route at the same time.
+/** Mode 2: Give the rider a generous, readable approach to the NEXT stars
+ * after EITHER Ice Cream Power scene. Curve and lane positions are preserved.
+ * The large initial downhill advance tapers with a C1-smooth (smoothstep)
+ * easing across many stars, so the route doesn't snap from a long empty gap
+ * to a crowded or suddenly bent token corridor. The route is deterministic
+ * for each exit; rendering, collision and candy poles all use the same map.
+ *
+ * The historical function name is retained to avoid breaking game imports.
  */
+export const TOKEN_RUSH_EXIT_FIRST_STAR_ADVANCE=92;
+export const TOKEN_RUSH_EXIT_TAPER_STARS=40;
+function tokenExitAdvanceAt(i,count=TOKEN_RUSH_EXIT_TAPER_STARS){
+  const t=Math.max(0,Math.min(1,i/Math.max(1,count-1)));
+  const eased=t*t*(3-2*t);
+  return TOKEN_RUSH_EXIT_FIRST_STAR_ADVANCE*(1-eased);
+}
 export function makeTokenRushRecoveryStraight(state,collected){
   if(!state || state.gameMode!=="token")return 0;
   const center=snowChunkIndex(-state.z);
-  const chunks=[center,center+1,center+2,center+3].map(i=>getSnowModeChunk(i,"token")).filter(Boolean);
+  // Forty natural route tokens span roughly 730 game units. Fetch enough
+  // chunks across boundaries; farthest tokens ease back to their original
+  // coordinates, preventing a compressed wall of stars at the join.
+  const chunks=Array.from({length:6},(_,i)=>getSnowModeChunk(center+i,"token")).filter(Boolean);
   const all=chunks.flatMap(c=>c.coins);
   const upcoming=all.filter(c=>c.z<state.z-1.2 &&
     !collected?.has(c.id) && !state.missedTokens?.has(c.id) &&
-    !state.replacedTokens?.has(c.id)).sort((a,b)=>b.z-a.z).slice(0,7);
+    !state.replacedTokens?.has(c.id)).sort((a,b)=>b.z-a.z).slice(0,TOKEN_RUSH_EXIT_TAPER_STARS);
   if(!upcoming.length)return 0;
-  const delays=[32,29,25,20,15,10,5]; // extra look-ahead, smooth original slalom
-  const moved=new Map(upcoming.map((c,i)=>[c.id,{x:c.x,z:c.z-delays[i]}]));
-  const route=all.map(c=>{
-    const p=moved.get(c.id);
-    return p?{...c,...p}:c;
-  });
+  const moved=new Map(upcoming.map((c,i)=>[
+    c.id,{x:c.x,z:c.z-tokenExitAdvanceAt(i,upcoming.length)}
+  ]));
+  // The first ~100m is an unobstructed approach from the board's position
+  // to the FIRST shifted star. The virtual anchor affects rock placement only;
+  // it is never rendered or counted as a pickup.
+  const route=[{id:"post-power-rider-approach",x:state.x,z:state.z},
+    ...all.filter(c=>c.z<state.z-1.2 &&
+      !collected?.has(c.id) && !state.missedTokens?.has(c.id) &&
+      !state.replacedTokens?.has(c.id)).map(c=>{
+        const p=moved.get(c.id);
+        return p?{...c,...p}:c;
+      })];
   const nearStart=state.z;
   const last=moved.get(upcoming[upcoming.length-1].id).z;
   const rocks=new Map();
