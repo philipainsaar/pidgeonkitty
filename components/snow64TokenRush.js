@@ -94,58 +94,74 @@ export function getSnowModeChunk(index,mode="standard") {
 /** The only source of points in Token Rush is collecting a star token. */
 export function collectTokenRush(state){
   state.tokenStreak=(state.tokenStreak||0)+1;
-  state.tokenMultiplier=Math.min(5,1+Math.floor((state.tokenStreak-1)/3));
+  // x5 is attained at five uninterrupted real tokens; x10 at ten.
+  state.tokenMultiplier=Math.min(10,state.tokenStreak);
   return TOKEN_RUSH_BASE_POINTS*state.tokenMultiplier;
 }
 /** No point deduction: misses/wipeouts remove the streak instead. */
 export function missTokenRush(state){
+  // Reset the combo AND the temporary powered speed bonus. Earned score
+  // remains, so the permanent downhill pace doesn't drop after a miss.
+  state.tokenRushPowerTier=1;
+  // If the rider breaks the combo BEFORE collecting a reserved power-up,
+  // turn that fifth slot back into a real star. Already-missed power slots
+  // stay hidden and never play a fake collection burst.
+  const reserved=state.icecreamPower?.tokenId;
+  if(reserved && !state.missedTokens?.has(reserved)){
+    state.icecreamPower=null;
+    if(state.replacedTokens?.delete(reserved)){
+      state.tokenOmitVersion=(state.tokenOmitVersion||0)+1;
+    }
+  }
   state.tokenStreak=0;
   state.tokenMultiplier=1;
   state.tokenMisses=(state.tokenMisses||0)+1;
 }
 
-/** Independent safe downhill placement for Token Rush. Unlike the old short
- * spawn distances, this stays 90–135 units ahead on every installed version.
- * Use the same open lanes and rock/ramp clearances as Snow360 Ice-cream Power.
+/** Smooth arcade difficulty curve based on total earned points.
+ * The player gradually builds momentum, rather than changing speed in
+ * abrupt combo tiers. Tops out at +32% for fair mobile/desktop play.
+ * A broken streak resets the score multiplier but not the lifetime score.
  */
-function chooseSafeTokenRushPowerSpot(s,chunks){
-  const ramps=chunks.flatMap(c=>c?.ramps||[]);
-  const rocks=chunks.flatMap(c=>c?.rocks||[]);
-  const sides=(s.icecreamPowerCount||0)%2 ? [-1,1] : [1,-1];
-  let best=null;
-  for(const dz of [105,120,90,135]){
-    const z=s.z-dz;
-    for(const side of sides)for(const offset of [2.4,3.7,5.2,6.6]){
-      const x=Math.max(-8.65,Math.min(8.65,s.x+side*offset));
-      const lateral=Math.abs(x-s.x);
-      if(lateral<1.65 || lateral>6.75)continue;
-      if(ramps.some(r=>Math.abs(z-r.z)<(r.length??3)*.5+7 && Math.abs(x-r.x)<5.4))continue;
-      if(rocks.some(r=>Math.abs(z-r.z)<(r.size+2.8) && Math.abs(x-r.x)<(r.size+2.6)))continue;
-      const score=Math.abs(lateral-2.9)*2.7+Math.abs(dz-105)*.11;
-      if(!best || score<best.score)best={x,z,score};
-    }
-  }
-  return best ? {x:best.x,z:best.z} : null;
+export function tokenRushScoreSpeedScale(score=0){
+  return 1 + 0.32*(1-Math.exp(-Math.max(0,Number(score)||0)/48000));
 }
 
-/** Rare Token Rush Ice-cream collectible, earned entirely through token pickups.
- * Uses the existing distant (90–135m) safe-spawn placement and cooldown.
- * Standard mode continues using its original score-surge spawn logic.
+/** Carving becomes more demanding as the run accelerates. The loss of
+ * steering responsiveness is gentle and bounded, never a random skid. */
+export function tokenRushArcadeHandling(score=0){
+  const progress=Math.min(1,Math.max(0,(tokenRushScoreSpeedScale(score)-1)/0.32));
+  return {lateral:1-0.22*progress,response:1-0.28*progress};
+}
+
+/** Earn a real Ice-cream Power only after ten consecutive STAR pickups.
+ * At streak 10 (and again every ten pickups if no power is active), the
+ * FIFTH future star becomes an Ice-cream collectible. The ten qualifying
+ * tokens remain real tokens, so the achievement is always reachable.
+ * While the streak is intact, picking up this reward provides up to x2
+ * powered speed. It never stacks to x4/x10 and never changes normal speed.
  */
 export function maybeSpawnTokenRushIcecreamPower(s,chunks=[]){
-  if(!s || s.gameMode!=="token" || s.icecreamPower || s.powerTime>0 || s.recovery)return false;
-  const distance=Math.max(0,-s.z);
-  if(distance<85 || (s.coins||0)<(s.tokenRushNextPowerAt??5))return false;
-  if(s.t-(s.icecreamPowerCooldownTime??-999)<27)return false;
-  if(distance-(s.icecreamPowerCooldownDistance??-999)<300)return false;
-  const spot=chooseSafeTokenRushPowerSpot(s,chunks.filter(Boolean));
-  if(!spot)return false;
-  s.icecreamPower=spot;
+  if(!s || s.gameMode!=="token" || s.recovery || s.powerTime>0 || s.icecreamPower)return false;
+  const streak=Math.max(0,Math.floor(s.tokenStreak||0));
+  if(streak<10 || streak%10!==0)return false;
+  const future=[];
+  const ids=new Set();
+  for(const chunk of chunks.filter(Boolean))for(const coin of chunk.coins||[]){
+    if(coin.z>=s.z-1 || ids.has(coin.id) || s.missedTokens?.has(coin.id)
+      || s.replacedTokens?.has(coin.id))continue;
+    ids.add(coin.id);
+    future.push(coin);
+  }
+  future.sort((a,b)=>b.z-a.z);
+  const fifth=future[4];
+  if(!fifth)return false;
+  s.replacedTokens ||= new Set();
+  s.replacedTokens.add(fifth.id);
+  s.tokenOmitVersion=(s.tokenOmitVersion||0)+1;
+  s.icecreamPower={x:fifth.x,z:fifth.z,tokenId:fifth.id,tier:2};
   s.icecreamPowerCount=(s.icecreamPowerCount||0)+1;
-  s.icecreamPowerCooldownTime=s.t;
-  s.icecreamPowerCooldownDistance=distance;
-  s.tokenRushNextPowerAt=(s.coins||0)+10;
-  return true;
+  return 'spawned';
 }
 
 /** Swept *physical* star/board contact. Never uses camera distance.
