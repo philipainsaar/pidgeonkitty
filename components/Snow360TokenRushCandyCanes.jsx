@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { useSnow64Obstacles } from "./snow64Obstacles";
 
 /**
  * SNOW360 TOKEN RUSH | Straight pastel candy-striped guide poles.
@@ -12,7 +13,9 @@ import * as THREE from "three";
  *   transparent CorePlanet-inspired thin-film hologram, like Mode 1 crystals.
  * • Slow six-color pastel cycle, animated interference bands and Fresnel glints.
  * • All visual-only: no hitboxes and no impact on Standard mode.
- * • One shared instanced mesh per layer, mobile-friendly, no texture downloads.
+ * • Large pearly crystal-textured orbs with the SAME pastel thin-film shader.
+ * • Orb maps reuse the existing snow64-obstacles.glb crystal family textures.
+ * • GPU-instanced layers; no new .glb or downloaded textures.
  */
 const POLE_HEIGHT = 2.72;
 const POLE_RADIUS = 0.145;
@@ -107,6 +110,21 @@ export default function Snow360TokenRushCandyCanes({markers=[],groundY}) {
   const poles=useRef(null);
   const filmMesh=useRef(null);
   const topCaps=useRef(null);
+  const topFilms=useRef(null);
+  // The Mode 1 crystal texture is already provided by the shared obstacle
+  // collection, loaded for the Token Rush rocks. Adapt its UV channel to a
+  // sphere while retaining the actual pastel crack/vein texture details.
+  const obstacleData=useSnow64Obstacles();
+  const orbCrystalMap=useMemo(()=>{
+    const crystal=obstacleData?.variants?.get("Crystals");
+    const source=crystal?.parts?.find(p=>p.material?.map)?.material?.map;
+    if(!source)return null;
+    const map=source.clone();
+    map.name="Snow360_CandyPoleOrb_RealCrystalTexture";
+    map.channel=0; // SphereGeometry has UV0; some GLB crystals use TEXCOORD_1.
+    map.needsUpdate=true;
+    return map;
+  },[obstacleData]);
   const texture=useMemo(makeStripesTexture,[]);
   const geometry=useMemo(()=>{
     const g=new THREE.CylinderGeometry(POLE_RADIUS,POLE_RADIUS,POLE_HEIGHT,12,1,false);
@@ -114,8 +132,9 @@ export default function Snow360TokenRushCandyCanes({markers=[],groundY}) {
     return g;
   },[]);
   const capGeometry=useMemo(()=>{
-    const g=new THREE.SphereGeometry(POLE_RADIUS,12,8);
-    g.translate(0,POLE_HEIGHT+.04,0);
+    // A clearly visible upright pearly orb, seated into the top of the pole.
+    const g=new THREE.SphereGeometry(.34,20,14);
+    g.translate(0,POLE_HEIGHT+.265,0);
     return g;
   },[]);
   const bodyMat=useMemo(()=>new THREE.MeshStandardMaterial({
@@ -125,12 +144,14 @@ export default function Snow360TokenRushCandyCanes({markers=[],groundY}) {
     emissive:"#a865a3",emissiveIntensity:.12,
   }),[texture]);
   const capMat=useMemo(()=>new THREE.MeshPhysicalMaterial({
-    name:"Snow360_Pearly_Candy_Top",
-    color:"#ffe5f5",metalness:.10,roughness:.20,
-    transparent:true,opacity:.72,depthWrite:false,
-    clearcoat:1,clearcoatRoughness:.14,
-    emissive:"#cfa4ee",emissiveIntensity:.22,
-  }),[]);
+    name:"Snow360_CrystalTextured_CandyPoleOrb",
+    map:orbCrystalMap,
+    color:"#ffe5f5",metalness:.06,roughness:.17,
+    transparent:true,opacity:.61,depthWrite:false,
+    clearcoat:1,clearcoatRoughness:.09,
+    emissive:"#cfa4ee",emissiveIntensity:.29,
+    side:THREE.DoubleSide,
+  }),[orbCrystalMap]);
   const filmMat=useMemo(()=>new THREE.ShaderMaterial({
     name:"Snow360_CorePlanet_CandyPole_ThinFilm",
     transparent:true,depthWrite:false,depthTest:true,
@@ -143,10 +164,10 @@ export default function Snow360TokenRushCandyCanes({markers=[],groundY}) {
   }),[]);
   const scratch=useMemo(()=>({matrix:new THREE.Matrix4(),pos:new THREE.Vector3(),
     rotation:new THREE.Quaternion(),scale:new THREE.Vector3(1,1,1),
-    a:new THREE.Color(),b:new THREE.Color()}),[]);
+    a:new THREE.Color(),b:new THREE.Color(),c:new THREE.Color()}),[]);
 
   useLayoutEffect(()=>{
-    if(!poles.current||!filmMesh.current||!topCaps.current)return;
+    if(!poles.current||!filmMesh.current||!topCaps.current||!topFilms.current)return;
     for(let i=0;i<markers.length;i++){
       const m=markers[i];
       scratch.pos.set(m.x,groundY(m.x,m.z)-.04,m.z);
@@ -155,10 +176,12 @@ export default function Snow360TokenRushCandyCanes({markers=[],groundY}) {
       poles.current.setMatrixAt(i,scratch.matrix);
       filmMesh.current.setMatrixAt(i,scratch.matrix);
       topCaps.current.setMatrixAt(i,scratch.matrix);
+      topFilms.current.setMatrixAt(i,scratch.matrix);
     }
     poles.current.instanceMatrix.needsUpdate=true;
     filmMesh.current.instanceMatrix.needsUpdate=true;
     topCaps.current.instanceMatrix.needsUpdate=true;
+    topFilms.current.instanceMatrix.needsUpdate=true;
   },[markers,groundY,scratch]);
 
   useFrame(({clock},dt)=>{
@@ -169,13 +192,19 @@ export default function Snow360TokenRushCandyCanes({markers=[],groundY}) {
     filmMat.uniforms.uTime.value=time;
     filmMat.uniforms.uColorA.value.copy(samplePastel(scratch.a,phase));
     filmMat.uniforms.uColorB.value.copy(samplePastel(scratch.b,phase+.65));
-    capMat.emissiveIntensity=.16+.16*(.5+.5*Math.sin(time*2.6));
+    // Crystal body and outer holographic shell track the SAME smooth
+    // twelve-second six-color cycle as Mode 1's crystal families.
+    capMat.color.copy(samplePastel(scratch.c,phase+.16));
+    capMat.emissive.copy(capMat.color).multiplyScalar(.38);
+    capMat.emissiveIntensity=.18+.20*(.5+.5*Math.sin(time*2.6));
   });
 
   useEffect(()=>()=>{
     geometry.dispose();capGeometry.dispose();
     bodyMat.dispose();capMat.dispose();filmMat.dispose();texture.dispose();
   },[geometry,capGeometry,bodyMat,capMat,filmMat,texture]);
+
+  useEffect(()=>()=>orbCrystalMap?.dispose(),[orbCrystalMap]);
 
   if(!markers.length)return null;
   return <group name="Token Rush Upright Holographic Candy Stripe Corner Poles">
@@ -185,5 +214,7 @@ export default function Snow360TokenRushCandyCanes({markers=[],groundY}) {
       frustumCulled={false} castShadow={false} receiveShadow={false} renderOrder={3}/>
     <instancedMesh ref={topCaps} args={[capGeometry,capMat,markers.length]}
       frustumCulled={false} castShadow={false} receiveShadow={false} renderOrder={4}/>
+    <instancedMesh ref={topFilms} args={[capGeometry,filmMat,markers.length]}
+      frustumCulled={false} castShadow={false} receiveShadow={false} renderOrder={5}/>
   </group>;
 }

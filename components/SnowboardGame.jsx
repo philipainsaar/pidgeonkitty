@@ -515,6 +515,62 @@ function CourseMarker({z,side,mobile=false}){
     })}
   </group>;
 }
+
+/** Tiny 3D star afterimage that flies from a physically touched star to the
+ * snowboard. The normal collectible still owns score/sound and its burst;
+ * this is purely the visible short-range absorption, NOT a second hitbox. */
+function Snow360TokenAbsorption({stateRef}){
+  const ref=useRef(null);
+  const capacity=20;
+  const geometry=useMemo(()=>{
+    const shape=new THREE.Shape();
+    for(let i=0;i<10;i++){
+      const a=Math.PI/2+i*Math.PI/5;
+      const r=i%2===0?.52:.255;
+      const x=Math.cos(a)*r,y=Math.sin(a)*r;
+      if(!i)shape.moveTo(x,y);else shape.lineTo(x,y);
+    }
+    shape.closePath();
+    const g=new THREE.ExtrudeGeometry(shape,{depth:.12,steps:1,
+      bevelEnabled:true,bevelSize:.045,bevelThickness:.045,bevelSegments:2});
+    g.center();return g;
+  },[]);
+  const material=useMemo(()=>new THREE.MeshBasicMaterial({color:"#ffe887",
+    transparent:true,opacity:.90,depthWrite:false,side:THREE.DoubleSide}),[]);
+  const dummy=useMemo(()=>new THREE.Object3D(),[]);
+  useEffect(()=>()=>{geometry.dispose();material.dispose();},[geometry,material]);
+  useFrame(({clock})=>{
+    const mesh=ref.current,s=stateRef.current;
+    if(!mesh||!s)return;
+    const now=s.t;
+    const events=s.tokenAbsorbs||[];
+    let count=0;
+    for(let i=events.length-1;i>=0&&count<capacity;i--){
+      const ev=events[i];
+      const p=clamp((now-ev.at)/.30,0,1);
+      if(p>=1)continue;
+      // Ease into the rider's current board position in world coordinates.
+      const ease=p*p*(3-2*p);
+      const sourceY=groundY(ev.x,ev.z)+1.30;
+      const destinationY=s.worldY+.66;
+      dummy.position.set(lerp(ev.x,s.x,ease),
+        lerp(sourceY,destinationY,ease)+Math.sin(p*Math.PI)*.42,
+        lerp(ev.z,s.z,ease));
+      dummy.rotation.set(0,clock.elapsedTime*5,clock.elapsedTime*7);
+      dummy.scale.setScalar(.50*(1-.72*ease));
+      dummy.updateMatrix();
+      mesh.setMatrixAt(count++,dummy.matrix);
+    }
+    for(let i=count;i<capacity;i++){
+      dummy.scale.setScalar(.000001);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate=true;
+  });
+  return <instancedMesh ref={ref} name="Token Rush Close-Range Star Absorption"
+    args={[geometry,material,capacity]} frustumCulled={false}
+    castShadow={false} receiveShadow={false} renderOrder={7}/>;
+}
+
 const CourseChunk = memo(function CourseChunk({index, collectedRef, stateRef, mobile, gameMode, tokenOmitVersion}) {
   const data = useMemo(() => getSnowModeChunk(index,gameMode), [index,gameMode]);
   const visibleCoins=useMemo(()=>gameMode==="token"
@@ -747,6 +803,7 @@ function initialState(cameraMode = 1, gameMode = "standard") {
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
     peakAir:0, flightTime:0, recovery:null,
     gameMode, tokenStreak:0, tokenMultiplier:1, tokenMisses:0, tokenRushPowerTier:1, tokenOmitVersion:0, replacedTokens:new Set(),
+    tokenRushExitGuideUntil:0, tokenAbsorbs:[],
     combo:0, score:gameMode==="token"?0:SNOW_INITIAL_SCORE, peakScore:gameMode==="token"?0:SNOW_INITIAL_SCORE, drainRate:gameMode==="token"?0:snowDrainPerSecond(0), coins:0, hits:0, lastText:"", textUntil:0,
     trick:null, airQueue:[], completedAirTricks:[], airYaw:0, airPitch:0,
     trickNonce:0, trickSequence:0, spamPressure:0, currentPose:"SnowboardIdle", cameraMode,
@@ -960,7 +1017,7 @@ function beginSnowRecovery(s, kind, reason, onSound, impact = null) {
   const tokenMode=s.gameMode==="token";
   const penalty = tokenMode ? 0 : (kind === "wipeout" ? 650 : 220) + Math.min(600, s.combo * 120);
   s.score = Math.max(0,s.score - penalty);
-  if(tokenMode)missTokenRush(s);
+  if(tokenMode){ missTokenRush(s); s.tokenRushExitGuideUntil=0; }
   s.combo = 0;
   s.hits += 1;
   // Sample a fresh impact trajectory before slowing momentum. Rock/ramp
@@ -1041,7 +1098,12 @@ function finishIcecreamHover(s, supportHeight) {
   s.launchSource = "none";
   s.launchSuper = false;
   s.fakie = false;
-  if(s.gameMode==="token")s.tokenRushPowerTier=1;
+  if(s.gameMode==="token"){
+    s.tokenRushPowerTier=1;
+    // While the existing landing shield is active, smoothly align the board
+    // with the approaching slalom stars. Steering input always wins.
+    s.tokenRushExitGuideUntil=s.t+ICECREAM_POST_SHIELD_SECONDS;
+  }
   // Hand control back gracefully instead of carrying a full-powered sideways
   // slalom velocity into the 2-second normal-riding collision shield.
   s.velX = clamp(s.velX, -4.0, 4.0);
@@ -1051,7 +1113,7 @@ function finishIcecreamHover(s, supportHeight) {
   s.icecreamPaidTricks = 0;
   s.icecreamRockTargetId = null;
   resetAirTrickChain(s);
-  s.lastText = "ICE-CREAM SHIELD • 2s SAFE LANDING";
+  s.lastText = s.gameMode==="token" ? "FOLLOW THE STARS • 2s LANDING GUIDE" : "ICE-CREAM SHIELD • 2s SAFE LANDING";
   s.textUntil = s.t + 1.1;
 }
 
@@ -1331,6 +1393,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
 
     if (playing) {
       s.t += dt;
+      if(s.gameMode==="token" && s.tokenAbsorbs?.length){
+        s.tokenAbsorbs=s.tokenAbsorbs.filter(e=>s.t-e.at<.52);
+      }
       // The rendered board drops gently after boost without changing collision
       // math. Clearing the offset exponentially prevents a final visible snap.
       if(!s.icecreamHover && s.icecreamExitLift>0){
@@ -1441,13 +1506,26 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
           : (s.inAir?2.8:snow360GripResponse(5.5))*(tokenHandling?.response??1);
         // The boost navigates the actual slalom route, but physical lateral
         // steps are capped. Normal Token Rush remains entirely player-steered.
-        const routeGuidance=poweredCarve && s.gameMode==="token";
+        const tokenExitAssist=s.gameMode==="token" && !poweredCarve &&
+          s.tokenRushExitGuideUntil>s.t && !s.recovery;
+        const routeGuidance=s.gameMode==="token" && (poweredCarve || tokenExitAssist);
         const routeX=routeGuidance
           ? tokenRushRouteX(localChunks,s.z-s.speed*dt,s.x,s.replacedTokens)
           : null;
-        if(routeGuidance){
+        if(poweredCarve && s.gameMode==="token"){
           const lateralLimit=TOKEN_RUSH_POWER_MAX_LATERAL_SPEED*dt;
           s.velX=clamp(routeX-s.x,-lateralLimit,lateralLimit)/Math.max(0.001,dt);
+        }else if(tokenExitAssist){
+          // Smooth two-second landing handoff. The route aid fades out and
+          // yields immediately to deliberate steering, so it never becomes a
+          // permanent autocollect mode or removes high-score difficulty.
+          const timeLeft=s.tokenRushExitGuideUntil-s.t;
+          const manualInput=Math.abs(steerWanted);
+          const strength=clamp(timeLeft/ICECREAM_POST_SHIELD_SECONDS,0,1) *
+            (manualInput>.18 ? .14 : 1);
+          const guideVelocity=clamp((routeX-s.x)*2.9,-12,12);
+          const blended=lerp(lateralTarget,guideVelocity,strength);
+          s.velX=lerp(s.velX,blended,Math.min(1,dt*6.5));
         }else s.velX=lerp(s.velX,lateralTarget,Math.min(1,dt*carveResponse));
         const previousX=s.x;
         s.x=clamp(s.x+s.velX*dt,-11.15,11.15);
@@ -1691,11 +1769,15 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
             // Test the actual board path, not the camera or a wide screen box.
             // A swept test still catches fast legitimate contacts between frames.
             const finish={x:s.x,z:s.z,y:s.worldY};
-            const normal=sweptStarTokenPickup(from,finish,coin,groundY,.80);
+            const normal=sweptStarTokenPickup(from,finish,coin,groundY,s.gameMode==="token"?1.38:.80);
             const magnet=tokenRushMagnetCanCollect(s,coin,from,finish,groundY);
             if (normal || magnet) {
               collectedRef.current.add(coin.id); s.coins++;
               if(s.gameMode==="token"){
+                // Only real close passes create a short, world-space candy
+                // suction trail. No screen/camera-based pickup distances.
+                s.tokenAbsorbs ||= [];
+                s.tokenAbsorbs.push({id:coin.id,x:coin.x,z:coin.z,at:s.t});
                 const earned=collectTokenRush(s);
                 s.score+=earned;
                 if(magnet)s.icecreamTokensCollected++;
@@ -2357,6 +2439,7 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
     <hemisphereLight args={["#e6f6ff","#597988",1.3]}/>
     <directionalLight position={[-8,20,-30]} intensity={2.2} color="#fff6e9"/>
     <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef} mobile={mobile} gameMode={gameMode} tokenOmitVersion={tokenOmitVersion}/>
+    {gameMode==="token" && <Snow360TokenAbsorption stateRef={stateRef}/>}
     <Snow360IcecreamShatterEffects stateRef={stateRef} mobile={mobile}/>
     <IcecreamPowerCollectible stateRef={stateRef} mobile={mobile}/>
     <Mountains stateRef={stateRef}/>

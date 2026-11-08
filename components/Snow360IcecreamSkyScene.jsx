@@ -61,12 +61,15 @@ export function Snow360IcecreamSkyClouds({stateRef, mobile=false, groundY}) {
     if(!group)return;
     const s=stateRef.current;
     const active=Boolean(s?.icecreamScene===2 && s.icecreamHover && s.powerTime>0);
-    group.visible=active;
-    if(!active)return;
+    // Mode 2 uses Scene 1 during Ice Cream Power, so its actual GLB sky
+    // clouds must also be visible in normal gameplay, not Scene 2 alone.
+    const ambient=s?.gameMode==="token";
+    group.visible=active||ambient;
+    if(!group.visible)return;
 
-    const spacing=33;
+    const spacing=active?33:60;
     const currentSegment=Math.floor((-s.z)/spacing);
-    const firstCell=currentSegment-2;
+    const firstCell=currentSegment-(active?2:3);
     const time=clock.elapsedTime;
     for(let i=0;i<count;i++){
       const g=refs.current[i];if(!g)continue;
@@ -76,10 +79,13 @@ export function Snow360IcecreamSkyClouds({stateRef, mobile=false, groundY}) {
       // 33-metre boundary is crossed, instead of all clouds teleporting at
       // once and appearing to reverse direction.
       const cell=i+count*Math.ceil((firstCell-i)/count);
-      const x=(seeded(cell*7+6)-.5)*15.0;
+      const x=active ? (seeded(cell*7+6)-.5)*15.0
+        : (seeded(cell*7+6)-.5)*49.0;
       const z=-(cell*spacing+spacing*.5);
-      const y=groundY(x,z)+11.4+seeded(cell*13+29)*6.6;
-      const sz=5.3+seeded(cell*5+10)*2.0;
+      const y=active ? groundY(x,z)+11.4+seeded(cell*13+29)*6.6
+        : groundY(x,z)+24+seeded(cell*13+29)*8;
+      const sz=active ? 5.3+seeded(cell*5+10)*2.0
+        : 3.3+seeded(cell*5+10)*1.1;
       g.position.set(x,y+Math.sin(time*.68+cell*1.7)*.17,z);
       g.scale.setScalar(mobile?sz*.85:sz);
 

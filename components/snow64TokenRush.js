@@ -188,7 +188,7 @@ export function sweptStarTokenPickup(from,to,coin,terrainHeight,radius=.80){
  */
 export function tokenRushMagnetCanCollect(s,coin,from,to,terrainHeight){
   if(!s||s.gameMode!=="token"||!s.icecreamHover||s.powerTime<=0||s.recovery)return false;
-  // Slightly wider than the normal 0.80m board contact only while powered:
+  // Slightly wider than the 1.38m Token Rush close-absorb zone while powered:
   // still a genuine close-range sweep, never a remote or camera pickup.
-  return sweptStarTokenPickup(from,to,coin,terrainHeight,1.15);
+  return sweptStarTokenPickup(from,to,coin,terrainHeight,1.48);
 }
