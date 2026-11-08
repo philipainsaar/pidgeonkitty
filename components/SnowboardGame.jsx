@@ -35,6 +35,7 @@ import Snow64SundaeTrees from "./Snow64SundaeTrees";
 import Snow64StarTokens from "./Snow64StarTokens";
 import Snow360TokenRushCandyCanes from "./Snow360TokenRushCandyCanes";
 import Snow64SnowboardGlow from "./Snow64SnowboardGlow";
+import Snow360HolographicSnowboardTracks from "./Snow360HolographicSnowboardTracks";
 import Snow64IcecreamPowerAura from "./Snow64IcecreamPowerAura";
 import Snow360IcecreamPowerScene from "./Snow360IcecreamPowerScene";
 import Snow360IcecreamBoardSprinkles from "./Snow360IcecreamBoardSprinkles";
@@ -2672,6 +2673,7 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
     </Snow360RiderBoundary>
     <Snowfall mobile={mobile} stateRef={stateRef}/>
     <BoardTrail mobile={mobile} stateRef={stateRef}/>
+    <Snow360HolographicSnowboardTracks key={`${gameMode}-${runKey}`} mobile={mobile} stateRef={stateRef} groundY={groundY} phase={phase}/>
     {/* Keep the Ice Cream Sky Surf cloud scene AFTER Rider in the React tree:
         its useFrame now sees the current cinematic camera direction, even on
         a hard edit cut. This changes update order only, not draw order. */}
