@@ -67,6 +67,12 @@ const ICECREAM_POST_SHIELD_SECONDS = 2; // Normal snowboarding, but collision-sa
 const ICECREAM_CARVE_AMPLITUDE = 4.45;
 const ICECREAM_CARVE_PERIOD = 2.95;
 const ICECREAM_CARVE_MAX_LATERAL_SPEED = 14.5;
+// Token Rush's stars are only 18.3m apart: at Ice-cream speed the normal
+// 14.5m/s carve cannot cover even a two-lane slalom before the next star.
+// Use a separate, quick-response *power-only* autopilot so Standard and
+// ordinary Token Rush steering remain untouched.
+const TOKEN_RUSH_POWER_MAX_LATERAL_SPEED = 64;
+const TOKEN_RUSH_POWER_CARVE_RESPONSE = 34;
 // V34: lock onto reachable obstacles ahead, instead of nudging only toward
 // rocks already close to the slalom line. Impact camera briefly stays with
 // the actual explosion, so it remains visible at Icecream speed.
@@ -734,7 +740,7 @@ function snow360CameraOffset(mode, mobile) {
   }
 }
 
-function initialState(cameraMode = 0, gameMode = "standard") {
+function initialState(cameraMode = 1, gameMode = "standard") {
   return {
     x:0,z:0,air:0,worldY:0,vy:0,speed:15.8,velX:0,steer:0,t:0,launchSource:"none",launchSpeed:0,
     inAir:false, impact:0, jumpCooldown:0, fakie:false,
@@ -1083,16 +1089,16 @@ function icecreamRockToChase(s, chunks) {
  * targets tokens early so the powered rider can reach each star in time.
  */
 function icecreamTokenToChase(s,chunks,collected){
-  let locked=null,candidate=null,best=Infinity;
+  let candidate=null, nearestAhead=Infinity;
   for(const chunk of chunks) for(const token of chunk.coins){
-    if(collected.has(token.id)) continue;
+    // A missed star is not collectible. Never waste the boost trying to
+    // chase it, and don't choose a later, nearer-lane token over the next
+    // star on the actual slalom course.
+    if(collected.has(token.id) || s.missedTokens.has(token.id))continue;
     const ahead=s.z-token.z;
-    if(ahead < -2 || ahead > 85)continue;
-    if(token.id===s.icecreamTokenTargetId){locked=token;continue;}
-    const rating=ahead+Math.abs(token.x-s.x)*3.5;
-    if(rating<best){candidate=token;best=rating;}
+    if(ahead < -1.5 || ahead > 85)continue;
+    if(ahead < nearestAhead){nearestAhead=ahead;candidate=token;}
   }
-  if(locked && s.z-locked.z>-3)return locked;
   s.icecreamTokenTargetId=candidate?.id||null;
   return candidate;
 }
@@ -1105,6 +1111,24 @@ function icecreamTokenToChase(s,chunks,collected){
  * Player touch/keyboard steering still overrides this automatic steering.
  */
 function icecreamAutoCarveVelocity(s,chunks,collected){
+  // Mode 2: predict the exact time to the next token. This is a physical
+  // steering correction, NOT a long-distance pickup or camera overlay.
+  // Stars still burst only after the board's swept collision reaches them.
+  if(s.gameMode==="token"){
+    const target=icecreamTokenToChase(s,chunks,collected);
+    if(target){
+      const ahead=Math.max(0,s.z-target.z);
+      // Account for the lateral velocity's response time; without this lead,
+      // fast (60m/s) boosts consistently arrive one lane too late.
+      const arrivalSeconds=Math.max(.038,ahead/Math.max(20,s.speed)-.080);
+      const requested=(target.x-s.x)/arrivalSeconds-s.velX*.06;
+      return clamp(requested,-TOKEN_RUSH_POWER_MAX_LATERAL_SPEED,
+        TOKEN_RUSH_POWER_MAX_LATERAL_SPEED);
+    }
+    // Center gently when the next token isn't loaded/visible yet.
+    return clamp(-s.x*2.4,-ICECREAM_CARVE_MAX_LATERAL_SPEED,
+      ICECREAM_CARVE_MAX_LATERAL_SPEED);
+  }
   const age=Math.max(0,s.t-(s.icecreamCarveStart??s.t));
   const omega=2*Math.PI/ICECREAM_CARVE_PERIOD;
   const phase=age*omega;
@@ -1113,7 +1137,7 @@ function icecreamAutoCarveVelocity(s,chunks,collected){
   const center=s.icecreamCarveCenter??clamp(s.x,-4,4);
   const waveX=center+dir*ICECREAM_CARVE_AMPLITUDE*Math.sin(phase)*fade;
   const waveSpeed=dir*ICECREAM_CARVE_AMPLITUDE*omega*Math.cos(phase)*fade;
-  const target=s.gameMode==="token" ? icecreamTokenToChase(s,chunks,collected) : icecreamRockToChase(s,chunks);
+  const target=icecreamRockToChase(s,chunks);
   if(target){
     const ahead=Math.max(0,s.z-target.z);
     const untilImpact=Math.max(.14,(ahead-1.0)/Math.max(s.speed,25));
@@ -1193,7 +1217,7 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
   const {camera}=useThree();
   useEffect(()=>{phaseRef.current=phase;},[phase]);
   useEffect(()=>{
-    stateRef.current=initialState(mobile ? 1 : 0,gameMode); collectedRef.current.clear(); queueRef.current.length=0;
+    stateRef.current=initialState(1,gameMode); collectedRef.current.clear(); queueRef.current.length=0;
     frame.current=0;cameraReady.current=false;crashCameraBlend.current=0;
     icecreamCamera.current={active:false,index:-1,nextAt:0,startAt:0,yaw:0,elevation:0,radius:0,lookHeight:.55,shot:null,exitYaw:null,exitTarget:null,lastBoard:null,lastShatterCount:0,lastCutAt:-99,speedShots:0,focusRock:null,actionFocus:null};
     nearby.current={index:-1,chunks:[]};
@@ -1232,10 +1256,15 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
     if(playing && s.icecreamHover && s.powerTime>0 && !s.recovery){
       // Auto-slalom is actually MOVEMENT, not just a subtle animation tilt.
       // A player steering deliberately can still override it at any time.
-      icecreamDesiredVelX=Math.abs(steerWanted)>.18
-        ? steerWanted * 13.2
-        : icecreamAutoCarveVelocity(s,localChunks,collectedRef.current);
-      steerWanted=clamp(icecreamDesiredVelX/13.2,-1,1);
+      // Token Rush's power-up must auto-collect the stars even if a held
+      // touch zone is producing a small steering input. Manual override is
+      // retained unchanged in Standard's Ice-cream Power.
+      icecreamDesiredVelX=s.gameMode==="token"
+        ? icecreamAutoCarveVelocity(s,localChunks,collectedRef.current)
+        : Math.abs(steerWanted)>.18
+          ? steerWanted * 13.2
+          : icecreamAutoCarveVelocity(s,localChunks,collectedRef.current);
+      steerWanted=clamp(icecreamDesiredVelX/(s.gameMode==="token"?20:13.2),-1,1);
     }
     if(phaseRef.current!=="paused")s.steer=lerp(s.steer,steerWanted,Math.min(1,dt*(icecreamDesiredVelX!==null?9:6)));
     const queue=queueRef.current.splice(0);
@@ -1364,7 +1393,9 @@ function Rider({ rider, onReady, mobile, phase, runKey, gameMode, keyRef, queueR
         const lateralTarget=poweredCarve
           ? (icecreamDesiredVelX??s.steer*13.2)
           : s.steer * (s.inAir ? 5.0 : 9.2);
-        const carveResponse=poweredCarve?8.5:s.inAir?2.8:snow360GripResponse(5.5);
+        const carveResponse=poweredCarve
+          ? (s.gameMode==="token"?TOKEN_RUSH_POWER_CARVE_RESPONSE:8.5)
+          : s.inAir?2.8:snow360GripResponse(5.5);
         s.velX=lerp(s.velX,lateralTarget,Math.min(1,dt*carveResponse));
         const previousX=s.x;
         s.x = clamp(s.x + s.velX * dt, -11.15, 11.15);
@@ -2801,7 +2832,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
       const next=mode==="token"?"token":"standard";
       if(lastPhase.current!=="ready")return;
       setGameMode(next);
-      state.current=initialState(mobile?1:0,next);
+      state.current=initialState(1,next);
       collected.current.clear();
       setHud(safeHud(state.current));
     };
@@ -2833,7 +2864,7 @@ export default function SnowboardGame({rider="alien-cat",onRiderChange,onRiderSt
   const start=useCallback(()=>{
     if(!riderReady)return;
     input.current.left=false;input.current.right=false;input.current.tuck=false;input.current.steerAnalog=0;input.current.touchTuck=false;
-    queue.current.length=0;collected.current.clear();state.current=initialState(mobile?1:0,gameMode);
+    queue.current.length=0;collected.current.clear();state.current=initialState(1,gameMode);
     cameraOrbit.current.yaw=0;cameraOrbit.current.pitch=0;cameraOrbit.current.dragging=false;
     // Start audio only on this user gesture (required by mobile browsers).
     if(soundRef.current)unlockSnow64Audio();
