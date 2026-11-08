@@ -2188,11 +2188,6 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
     <Course collectedRef={collectedRef} distance={distance} stateRef={stateRef} mobile={mobile}/>
     <Snow360IcecreamShatterEffects stateRef={stateRef} mobile={mobile}/>
     <IcecreamPowerCollectible stateRef={stateRef} mobile={mobile}/>
-    {/* Reuses the FOUR existing Big Air sky-cloud GLBs. Purely visual;
-        the rider's altitude, camera and collisions stay in the main game. */}
-    <Suspense fallback={null}>
-      <Snow360IcecreamSkyClouds stateRef={stateRef} mobile={mobile} groundY={groundY}/>
-    </Suspense>
     <Mountains stateRef={stateRef}/>
     <Snow360RiderBoundary key={`${rider}:${mobile}:${assetAttempt}`} onError={onRiderError}>
     <Suspense fallback={<Loading/>}>
@@ -2201,6 +2196,12 @@ function Scene({rider,assetAttempt,onRiderReady,onRiderError,mobile,phase,runKey
     </Snow360RiderBoundary>
     <Snowfall mobile={mobile} stateRef={stateRef}/>
     <BoardTrail mobile={mobile} stateRef={stateRef}/>
+    {/* Keep the Ice Cream Sky Surf cloud scene AFTER Rider in the React tree:
+        its useFrame now sees the current cinematic camera direction, even on
+        a hard edit cut. This changes update order only, not draw order. */}
+    <Suspense fallback={null}>
+      <Snow360IcecreamSkyClouds stateRef={stateRef} mobile={mobile} groundY={groundY}/>
+    </Suspense>
   </Snow64TextureProvider></Snow64ModelProvider>;
 }
 

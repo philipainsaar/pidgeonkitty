@@ -52,7 +52,11 @@ export function Snow360IcecreamSkyClouds({stateRef, mobile=false, groundY}) {
   const root=useRef(null);
   const slots=useMemo(()=>Array.from({length:count},(_,i)=>({id:i,modelIndex:i%4})),[count]);
 
-  useFrame(({clock})=>{
+  // Run after the rider's camera update (see Scene in SnowboardGame.jsx).
+  // The original GLBs have pearly decorations predominantly on one face.
+  // Camera-facing yaw keeps that decorated side visible even when the Sky Surf
+  // director cuts from rear chase to side or front views.
+  useFrame(({clock,camera})=>{
     const group=root.current;
     if(!group)return;
     const s=stateRef.current;
@@ -60,23 +64,34 @@ export function Snow360IcecreamSkyClouds({stateRef, mobile=false, groundY}) {
     group.visible=active;
     if(!active)return;
 
-    // These clouds have world coordinates, not camera-space billboards. As
-    // the board advances, new cloud banks appear down-course and actually
-    // sweep past the rider. World positions remain stable between 30m cells.
     const spacing=33;
     const currentSegment=Math.floor((-s.z)/spacing);
+    const firstCell=currentSegment-2;
     const time=clock.elapsedTime;
     for(let i=0;i<count;i++){
       const g=refs.current[i];if(!g)continue;
-      const cell=currentSegment+i-2;
+
+      // Stable modulo assignment: each cloud owns one world-space cell until
+      // it falls behind the rider. Only ONE retired clone moves ahead when a
+      // 33-metre boundary is crossed, instead of all clouds teleporting at
+      // once and appearing to reverse direction.
+      const cell=i+count*Math.ceil((firstCell-i)/count);
       const x=(seeded(cell*7+6)-.5)*15.0;
       const z=-(cell*spacing+spacing*.5);
       const y=groundY(x,z)+11.4+seeded(cell*13+29)*6.6;
       const sz=5.3+seeded(cell*5+10)*2.0;
-      g.position.set(x,y+Math.sin(time*.68+i*1.7)*.17,z);
+      g.position.set(x,y+Math.sin(time*.68+cell*1.7)*.17,z);
       g.scale.setScalar(mobile?sz*.85:sz);
-      // Clouds show their pearly decorations from different angles.
-      g.rotation.y=Math.PI+.28*Math.sin(cell*3.2);
+
+      // In the original chase view, a yaw of PI exposes the GLBs' pearly
+      // side. Rotate that same side toward the CURRENT camera for every
+      // cinematic shot. Only yaw changes: clouds stay upright in world space.
+      // Evaluate this AFTER camera cuts so no reversed frame is rendered.
+      const toCameraX=camera.position.x-x;
+      const toCameraZ=camera.position.z-z;
+      if(toCameraX*toCameraX+toCameraZ*toCameraZ>0.0001){
+        g.rotation.y=Math.PI+Math.atan2(toCameraX,toCameraZ);
+      }
       g.visible=true;
     }
   });
